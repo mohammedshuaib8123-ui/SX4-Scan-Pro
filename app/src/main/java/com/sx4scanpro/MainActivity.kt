@@ -106,6 +106,11 @@ class MainActivity : ComponentActivity() {
             speechReady = result == TextToSpeech.SUCCESS
             if (speechReady) {
                 textToSpeech?.language = Locale.UK
+                val installedEnglishFemaleVoice = textToSpeech?.voices
+                    ?.firstOrNull { it.locale.language == "en" && it.name.contains("female", ignoreCase = true) }
+                if (installedEnglishFemaleVoice != null) {
+                    textToSpeech?.voice = installedEnglishFemaleVoice
+                }
                 textToSpeech?.setSpeechRate(0.92f)
                 textToSpeech?.setPitch(1.0f)
                 if (welcomePending && welcomeChimeFinished) speakEngineWelcome()
@@ -359,7 +364,7 @@ class MainActivity : ComponentActivity() {
                                         Button(onClick = { playEngineWelcome() }, modifier = Modifier.fillMaxWidth()) {
                                             Text("PREVIEW WELCOME ANNOUNCEMENT")
                                         }
-                                        Text("Preview plays the same chime and announcement without requiring the engine to start. TTS voice identity depends on voices installed on the tablet.", color = muted)
+                                        Text("Preview plays the same chime and announcement without requiring the engine to start. The app prefers an installed English voice identified as female; if none is available, Android uses its English (UK) default voice.", color = muted)
                                         Divider(color = Color(0xFF26394C))
                                         Text("WARNING ALERT OUTPUT TEST", color = Color(0xFFFFB84D), style = MaterialTheme.typography.titleMedium)
                                         Text("Tests the dashboard warning banner, alert tone and spoken message. This is a manual preview only; no SX4 warning limits are enabled yet.", color = muted)
