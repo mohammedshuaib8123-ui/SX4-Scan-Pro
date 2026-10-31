@@ -672,3 +672,12 @@ When continuing this repository:
 - Navigation changes are local UI state only; they do not interrupt the ECU connection loop or change diagnostics/OBD behaviour.
 - This is a driver-oriented layout aid, not a claim that the tablet is safe to operate while moving. Configure the route before driving and use glance-only display while underway.
 - Build label remains v0.3.7 / UI PREVIEW / BUILD 18 pending the next verified release batch. Real tablet touch-target and layout review is still required.
+
+
+### CI failure investigation and corrections — 2026-11-01
+
+- GitHub Actions runs 81 and 82 compiled Kotlin successfully but failed in unit tests; APK assembly and artifact upload were skipped.
+- Root cause 1: DTC formatting emitted one extra zero nibble for standard codes (for example, Mode 03 response 43 01 33). Corrected the formatter to emit the second digit and final three code nibbles correctly.
+- Root cause 2: warning tests reused identical capture timestamps while expecting repeated evaluations to count as new samples. Updated the consecutive-sample test to use distinct fresh timestamps, matching the intended anti-duplicate-sample behaviour.
+- Corrected the stale-warning test: an actually stale low reading must not clear an active alert; a later fresh high reading must remain suppressed; only a later fresh low reading may clear it.
+- Kotlin compilation had succeeded in the failed runs; unit tests were the blocker. New Actions runs 83 and 84 were started by the fixes. APK readiness remains unconfirmed until the latest run completes successfully.
