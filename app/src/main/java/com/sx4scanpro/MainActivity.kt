@@ -44,6 +44,7 @@ class MainActivity : ComponentActivity() {
         setContent { MaterialTheme { Dashboard() } }
     }
 
+    @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     private fun Dashboard() {
         var status by remember { mutableStateOf("Not connected") }
