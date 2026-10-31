@@ -291,7 +291,7 @@ class MainActivity : ComponentActivity() {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                         Text("ANDROID AUTO • HEAD UNIT", color = cyan, style = MaterialTheme.typography.titleMedium)
                                         Text("Android Auto receiver: Open Headunit (separate app)", color = Color(0xFFFFB84D))
-                                        Text("The receiver is kept separate rather than merged into the OBD app. Wired USB is the first route to validate on your Realme Pad 2.", color = muted)
+                                        Text("Open Headunit is a separate Android Auto receiver. SX4 Scan Pro remains the OBD cockpit; projection runs independently so OBD polling, video and audio can be validated honestly.", color = muted)
                                         Button(onClick = {
                                             val launch = packageManager.getLaunchIntentForPackage("com.andrerinas.headunitrevived")
                                             if (launch != null) {
@@ -303,6 +303,10 @@ class MainActivity : ComponentActivity() {
                                             }
                                         }, modifier = Modifier.fillMaxWidth()) { Text("LAUNCH / INSTALL OPEN HEADUNIT") }
                                         Text(headUnitStatus, color = muted)
+                                        Divider(color = Color(0xFF26394C))
+                                        Text("WIRED USB SETUP — FIRST VALIDATION ROUTE", color = cyan, style = MaterialTheme.typography.titleSmall)
+                                        Text("1. Install Open Headunit from its official project source and review its AGPL-3.0 licence.\n2. Connect your Android Auto phone to the Realme Pad 2 with a known-good USB data cable and compatible OTG adapter/hub.\n3. Enable OTG in tablet settings if required; accept USB and Android Auto prompts.\n4. Confirm projection appears and touch input works.\n5. Route sound separately to the SX4 stereo using an input it supports (Bluetooth or AUX), then test media, navigation and calls.\n6. Test reconnect, screen-off, app switching and tablet charging.", color = muted)
+                                        Text("Not yet verified: USB host compatibility, phone pairing, touch, video, audio routing and charging on this exact setup. Wireless mode comes later; wired USB is the first target.", color = Color(0xFFFFB84D))
                                     }
                                 }
                             }
