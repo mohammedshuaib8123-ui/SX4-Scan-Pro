@@ -89,53 +89,145 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        var selectedTab by remember { mutableIntStateOf(0) }
+        var dtcStatus by remember { mutableStateOf("Connect the Vgate adapter to read ECU fault codes.") }
+        var dtcCodes by remember { mutableStateOf<List<String>>(emptyList()) }
+        var scanningCodes by remember { mutableStateOf(false) }
+
+        fun scanFaultCodes() {
+            if (socket?.isConnected != true) {
+                dtcStatus = "Not connected. Fault-code scanning needs the vehicle and adapter."
+                return
+            }
+            scope.launch {
+                scanningCodes = true
+                dtcStatus = "Reading ECU fault-code modes…"
+                try {
+                    val found = withContext(Dispatchers.IO) {
+                        listOf("03", "07", "0A").flatMap { mode ->
+                            val response = sendCommand(mode)
+                            decodeTroubleCodes(response, mode)
+                        }.distinct()
+                    }
+                    dtcCodes = found
+                    dtcStatus = if (found.isEmpty()) "No codes returned by the ECU, or these modes are unsupported. This is not proof that every vehicle module is fault-free."
+                    else "Codes returned by the engine ECU. BCM and other modules are not included."
+                } catch (e: Exception) {
+                    dtcStatus = "Scan failed: ${e.message ?: "communication error"}"
+                } finally {
+                    scanningCodes = false
+                }
+            }
+        }
+
         Scaffold(
             topBar = {
                 TopAppBar(
                     title = { Text("SX4 Scan Pro") },
-                    actions = { Text("v0.1.0", modifier = Modifier.padding(end = 16.dp), style = MaterialTheme.typography.labelMedium) }
+                    actions = { Text("v0.2.0", modifier = Modifier.padding(end = 16.dp), style = MaterialTheme.typography.labelMedium) }
                 )
             }
         ) { padding ->
-            LazyColumn(
-                modifier = Modifier.fillMaxSize().padding(padding).padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                contentPadding = PaddingValues(bottom = 24.dp)
-            ) {
-                item {
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("ADAPTER STATUS", style = MaterialTheme.typography.labelMedium)
-                            Text(status, style = MaterialTheme.typography.titleLarge)
-                            Text(adapterName, style = MaterialTheme.typography.bodyMedium)
-                            Button(onClick = { connect() }, modifier = Modifier.fillMaxWidth()) {
-                                Text(if (status == "Connected") "Reconnect" else "Connect to Vgate")
-                            }
-                            Text(note, style = MaterialTheme.typography.bodySmall)
-                        }
+            Column(Modifier.fillMaxSize().padding(padding)) {
+                TabRow(selectedTabIndex = selectedTab) {
+                    listOf("Dashboard", "Fault codes", "Modules").forEachIndexed { index, label ->
+                        Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(label) })
                     }
                 }
-                item { Text("LIVE ENGINE DATA", style = MaterialTheme.typography.titleMedium) }
-                items(gauges) { gauge ->
-                    Card(Modifier.fillMaxWidth()) {
-                        Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Column(Modifier.weight(1f)) {
-                                Text(gauge.label, style = MaterialTheme.typography.bodyMedium)
-                                Text(if (gauge.available) gauge.value else "Unavailable", style = MaterialTheme.typography.headlineSmall)
+                when (selectedTab) {
+                    0 -> LazyColumn(
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = PaddingValues(vertical = 16.dp)
+                    ) {
+                        item {
+                            Card(Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("ADAPTER STATUS", style = MaterialTheme.typography.labelMedium)
+                                    Text(status, style = MaterialTheme.typography.titleLarge)
+                                    Text(adapterName, style = MaterialTheme.typography.bodyMedium)
+                                    Button(onClick = { connect() }, modifier = Modifier.fillMaxWidth()) {
+                                        Text(if (status == "Connected") "Reconnect" else "Connect to Vgate")
+                                    }
+                                    Text(note, style = MaterialTheme.typography.bodySmall)
+                                }
                             }
-                            Text(gauge.unit, style = MaterialTheme.typography.labelLarge)
                         }
-                    }
-                }
-                item {
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("OTHER MODULES", style = MaterialTheme.typography.titleMedium)
-                            Text("BCM / body module: Not queried. Generic ELM327 OBD-II access does not guarantee Suzuki BCM support.")
-                            Text("Oil pressure, oil temperature and radiator fan status: shown only if a supported ECU data definition is identified; not assumed available.")
-                            Text("Use this dashboard while parked or have a passenger operate it. Do not interact with the phone while driving.")
-                            OutlinedButton(onClick = { closeSocket(); status = "Disconnected"; note = "Adapter disconnected." }) {
+                        item { Text("LIVE ENGINE DATA", style = MaterialTheme.typography.titleMedium) }
+                        items(gauges) { gauge ->
+                            Card(Modifier.fillMaxWidth()) {
+                                Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(gauge.label, style = MaterialTheme.typography.bodyMedium)
+                                        Text(if (gauge.available) gauge.value else "Unavailable", style = MaterialTheme.typography.headlineSmall)
+                                    }
+                                    Text(gauge.unit, style = MaterialTheme.typography.labelLarge)
+                                }
+                            }
+                        }
+                        item {
+                            OutlinedButton(onClick = { closeSocket(); status = "Disconnected"; note = "Adapter disconnected." }, modifier = Modifier.fillMaxWidth()) {
                                 Text("Disconnect")
+                            }
+                            Text("Use while parked or have a passenger operate it. Do not interact with the phone while driving.", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    1 -> LazyColumn(
+                        modifier = Modifier.fillMaxSize().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        item {
+                            Card(Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                    Text("ENGINE ECU DIAGNOSTICS", style = MaterialTheme.typography.titleMedium)
+                                    Text("Reads standard OBD-II stored (Mode 03), pending (Mode 07) and permanent (Mode 0A) codes when supported by the ECU.")
+                                    Button(onClick = { scanFaultCodes() }, enabled = !scanningCodes && status == "Connected", modifier = Modifier.fillMaxWidth()) {
+                                        Text(if (scanningCodes) "Scanning…" else "Scan fault codes")
+                                    }
+                                    Text(dtcStatus, style = MaterialTheme.typography.bodyMedium)
+                                }
+                            }
+                        }
+                        if (dtcCodes.isEmpty()) {
+                            item {
+                                Card(Modifier.fillMaxWidth()) {
+                                    Text("No scan results yet", modifier = Modifier.padding(16.dp), style = MaterialTheme.typography.titleMedium)
+                                }
+                            }
+                        } else {
+                            items(dtcCodes) { code ->
+                                Card(Modifier.fillMaxWidth()) {
+                                    Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text(code, style = MaterialTheme.typography.titleLarge)
+                                        Text("Engine ECU", style = MaterialTheme.typography.labelMedium)
+                                    }
+                                }
+                            }
+                        }
+                        item {
+                            Text("This first version does not clear codes. It does not scan ABS, airbag, immobilizer or BCM modules.", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                    else -> LazyColumn(
+                        modifier = Modifier.fillMaxSize().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        item {
+                            Card(Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("BODY CONTROL MODULE (BCM)", style = MaterialTheme.typography.titleMedium)
+                                    Text("Not yet supported. Generic ELM327 OBD-II access does not guarantee Suzuki BCM communication.")
+                                    Text("Status: Awaiting read-only protocol investigation with the vehicle.")
+                                }
+                            }
+                        }
+                        item {
+                            Card(Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("ADDITIONAL ENGINE DATA", style = MaterialTheme.typography.titleMedium)
+                                    Text("Oil pressure, oil temperature and radiator fan status are not assumed to be available. We'll add them only if the ECU exposes valid data definitions.")
+                                    Text("ABS, airbag and other modules will remain marked unsupported until their protocols are verified.")
+                                }
                             }
                         }
                     }
@@ -209,6 +301,32 @@ class MainActivity : ComponentActivity() {
             else GaugeValue("Turbo boost", "--", "kPa", false)
         } else GaugeValue("Turbo boost", "--", "kPa", false)
         return results.take(4) + listOf(map["Manifold pressure"]!!) + boost + results.drop(5)
+    }
+
+    private fun decodeTroubleCodes(response: String, mode: String): List<String> {
+        val prefix = when (mode) {
+            "03" -> "43"
+            "07" -> "47"
+            "0A" -> "4A"
+            else -> return emptyList()
+        }
+        val payload = response.substringAfter(prefix, "")
+        if (payload.isBlank() || payload.contains("NODATA") || payload.contains("UNABLE")) return emptyList()
+        val hex = payload.filter { it in "0123456789ABCDEF" }
+        return hex.chunked(4).filter { it.length == 4 }.mapNotNull { bytes ->
+            val a = bytes.substring(0, 2).toIntOrNull(16) ?: return@mapNotNull null
+            val b = bytes.substring(2, 4).toIntOrNull(16) ?: return@mapNotNull null
+            if (a == 0 && b == 0) return@mapNotNull null
+            val first = when ((a shr 6) and 0x03) {
+                0 -> "P"
+                1 -> "C"
+                2 -> "B"
+                else -> "U"
+            }
+            val second = ((a shr 4) and 0x03).toString()
+            val remaining = "%02X%02X".format(a and 0x0F, b)
+            first + second + remaining
+        }
     }
 
     private fun parsePid(command: String, data: String): String? {
