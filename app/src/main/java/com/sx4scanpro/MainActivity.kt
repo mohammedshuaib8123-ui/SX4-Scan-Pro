@@ -405,7 +405,7 @@ class MainActivity : ComponentActivity() {
         if (!promptReceived) throw IOException("Timed out waiting for the OBD prompt")
         val response = out.toString().replace("\r", "").replace("\n", "").replace(" ", "").uppercase()
         if (response.contains("STOPPED") || response == "?") throw IOException("OBD adapter rejected command: $command")
-        response
+        return response
     }
 
     @Synchronized
