@@ -5,7 +5,7 @@
 > **Last updated:** 2026-11-01  
 > **Repository:** `mohammedshuaib8123-ui/SX4-Scan-Pro`  
 > **Primary branch:** `main`  
-> **Current UI label in source:** `v0.2.0 • UI PREVIEW • BUILD 10`  
+> **Current UI label in source:** `v0.3.4 • UI PREVIEW • BUILD 15`  
 > **Document status:** Living specification; requirements below distinguish confirmed requests, decisions, implemented foundations, and work still pending.
 
 ---
@@ -156,6 +156,7 @@ Safety and correctness:
 - Handle socket failures, timeouts, app backgrounding, activity destruction and reconnects without leaking sockets or leaving stale live values on screen.
 - Do not block the UI thread with Bluetooth I/O.
 - Serialize ELM327 commands; avoid interleaved request/response traffic.
+- If a command times out or the stream becomes ambiguous, invalidate and close the socket rather than sending another command that could consume a late reply. First ECU PID discovery uses an extended timeout. This is a defensive foundation, not a substitute for real K-line/CAN timing validation.
 
 ### 4.2 ELM327 initialization and protocol
 Current initialization sequence in source:
@@ -550,3 +551,28 @@ When continuing this repository:
 - PID discovery is now source-implemented but still requires the deferred real ECU check. It does not imply that the Indian SX4 exposes all PIDs or that calculated boost is validated.
 - Build 15 source commit: `4fda4df990c34c37afcb6366f12e475439ae60fa`; PID decoder `0e10805d4aa111a2404b84c13a96485f5bf752a5`; tests `001005ab3b5770ab7e1143b4f8fc7b1de1d040d7`; polling integration `6f24e4de9aa565cfd16a8290963dd0f4d2ab44be`.
 - Build 15 follow-up correction: the validated ELM response reader now explicitly returns its response string (`92935825327d3b2dc2b57622a35737183929fc14`). Earlier intermediate Actions attempts failed during Kotlin compilation; the current source commit's workflow is the one to use for final verification.
+
+
+---
+
+## 13. Verified implementation log — 2026-11-01
+
+### Baseline confirmed before this change
+- Source contains `MainActivity.kt`, `EngineStartDetector.kt`, `ObdPidSupport.kt`, and unit tests for engine-start transitions and PID bitmap decoding.
+- The latest verified baseline workflow was run #46, which completed unit tests, debug APK assembly and artifact upload successfully.
+- Current vehicle ECU behaviour remains unverified because the SX4 is not connected during software development.
+
+### Change in progress — ELM transaction desynchronisation guard
+- Commit: `7ce05288f2c6d18d73d76764f9eec51911b871a2`.
+- Increased the default command response timeout from 3 seconds to 5 seconds and allowed 12 seconds for initial supported-PID discovery.
+- Drains already-buffered input before a new command, within a bounded limit.
+- Treats timeout, stream read/write failure, rejected command and oversized response as a broken transaction; closes the socket and propagates an error.
+- Dashboard PID reads no longer convert command I/O exceptions into empty strings and continue polling on a potentially desynchronised stream.
+- Pending CI verification: do not call this change build-verified until its own Actions run is green and the APK artifact exists.
+
+### Remaining work after this patch
+- Extract DTC decoding into a pure tested component; handle supported ELM response forms and reject ECU headers rather than interpreting them as DTC bytes.
+- Fix UI state after a DTC scan causes a transport failure.
+- Move Bluetooth connection ownership out of the Activity before claiming rotation/background resilience.
+- Reconcile the UI label with the next verified build number; keep the preview marker until user approval.
+- Test actual protocol timing, PID support and DTC responses on the user's SX4 before declaring vehicle compatibility.
