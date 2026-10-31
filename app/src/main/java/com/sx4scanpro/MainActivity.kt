@@ -108,7 +108,7 @@ class MainActivity : ComponentActivity() {
                 textToSpeech?.language = Locale.UK
                 textToSpeech?.setSpeechRate(0.92f)
                 textToSpeech?.setPitch(1.0f)
-                if (welcomePending) speakEngineWelcome()
+                if (welcomePending && welcomeChimeFinished) speakEngineWelcome()
             }
         }
         chime = ToneGenerator(AudioManager.STREAM_MUSIC, 72)
@@ -541,22 +541,26 @@ class MainActivity : ComponentActivity() {
     }
 
     @Volatile private var welcomePending = false
+    @Volatile private var welcomeChimeFinished = false
 
     private fun playEngineWelcome() {
         // Production call site is the fresh-RPM engine-start transition; preview is manual.
         welcomePending = true
+        welcomeChimeFinished = false
         chime?.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
         mainHandler.postDelayed({
             chime?.startTone(ToneGenerator.TONE_PROP_ACK, 180)
             mainHandler.postDelayed({
+                welcomeChimeFinished = true
                 if (speechReady) speakEngineWelcome()
             }, 280)
         }, 190)
     }
 
     private fun speakEngineWelcome() {
-        if (!speechReady || !welcomePending) return
+        if (!speechReady || !welcomePending || !welcomeChimeFinished) return
         welcomePending = false
+        welcomeChimeFinished = false
         textToSpeech?.speak("Welcome to SX4 Airlines 2874", TextToSpeech.QUEUE_FLUSH, null, "sx4_engine_start")
     }
 
