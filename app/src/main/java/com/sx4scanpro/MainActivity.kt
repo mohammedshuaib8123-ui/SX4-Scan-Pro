@@ -146,6 +146,13 @@ class MainActivity : ComponentActivity() {
             gauges = gauges.map { it.copy(value = "--", available = false) }
         }
         fun connect() {
+            if (android.os.Build.VERSION.SDK_INT >= 31 &&
+                ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
+            ) {
+                status = "Bluetooth permission required — allow it, then tap Connect again"
+                permissionRequest.launch(Manifest.permission.BLUETOOTH_CONNECT)
+                return
+            }
             scope.launch {
                 disconnect()
                 status = "Connecting…"
@@ -193,7 +200,7 @@ class MainActivity : ComponentActivity() {
                     status = "Permission required"
                 } catch (e: Exception) {
                     closeSocket()
-                    status = "Connection failed"
+                    status = e.message ?: "Connection failed"
                 }
             }
         }
