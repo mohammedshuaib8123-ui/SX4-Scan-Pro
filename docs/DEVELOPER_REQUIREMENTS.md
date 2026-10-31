@@ -637,3 +637,6 @@ When continuing this repository:
 - The warning engine is intentionally constructed with an empty rule list. This completes the event/output plumbing without activating unverified warning limits. No automatic vehicle alert can currently fire until evidence-backed SX4 rules are explicitly configured.
 - The manual preview remains visibly labelled as a preview and is separate from the live event pipeline.
 - Follow-up source commit: `b947533c2b5f8c7a363ad9281d574f86af2da679`.
+
+- Tablet cockpit follow-up: MainActivity is now explicitly requested in landscape orientation to match the Realme Pad 2's landscape-first 2000×1200 layout. This is a UI orientation request; Android large-screen policy/device behaviour still needs on-tablet confirmation.
+- Manifest change commit: `5f6181d091a8b216cc8ee5511ea7117148c11203`.
