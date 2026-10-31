@@ -454,3 +454,27 @@ When continuing this repository:
 - Android Auto receiver remains a separate technical workstream: evaluate AGPL-3.0 Open Headunit, wired USB first, Realme Pad 2 OTG, phone compatibility, touch, audio routing and lifecycle. No proprietary receiver implementation is claimed.
 - Next source release must include the real four-section Compose UI and keep existing Bluetooth/OBD behavior intact. Subsequent changes must harden PID discovery / parsing / freshness / DTC handling, then add the RPM-triggered welcome sequence and safe alert framework. All changes require a successful Actions build; vehicle-dependent features remain unverified until tested on the user's SX4.
 - Build run #16 (commit `1a037e24`) succeeded for the documentation-only screenshot embed. It does not validate any missing app features.
+
+
+## 16. Build 11 implementation update — 2026-11-01
+
+### Source changes committed
+- Replaced the previous Dashboard / Fault codes / Modules navigation with the agreed four-section navigation: Cockpit / Diagnostics / Head Unit / Settings.
+- Added a dark graphite landscape-first cockpit layout with cyan/amber accents, prominent RPM and speed arc instruments, and compact telemetry cards for boost, coolant, MAF and calculated load.
+- Kept the preview/build marker visible: `v0.3.0 • UI PREVIEW • BUILD 11`.
+- Diagnostics page now presents engine ECU scan scope and clearly states that BCM / ABS / airbag / immobilizer are not scanned.
+- Head Unit page now explicitly identifies Android Auto receiver integration as not yet available, with wired Open Headunit evaluation documented as the intended isolated workstream.
+- Settings page describes current Bluetooth Classic adapter status and the planned welcome/alert feature; it does not claim those features are active.
+
+### Known remaining work — not completed in Build 11
+- The previous OBD Bluetooth and PID/DTC implementation is still a basic foundation. Supported-PID bitmap discovery, rigorous response-frame parsing, automated parser tests, reliable timestamps/data-age handling, adapter selection UI and lifecycle hardening remain outstanding.
+- Engine-start welcome voice/chime and warning system are not implemented in Build 11.
+- Android Auto receiver is not integrated in Build 11.
+- Suzuki-specific BCM / ABS / airbag / immobilizer protocols remain unverified and unsupported.
+- Real SX4 + Vgate testing has not been performed for this build.
+- The current instrument arcs are a first cockpit implementation pass, not the final animated dial / needle / lighting polish from the earlier concept direction.
+
+### Verification
+- Source commit: `3f6ebf2bf41f3083442a6c91b2bdccb61b314732`.
+- GitHub Actions run #18 was started for this commit; result must be checked before treating the APK as ready.
+- This build's UI changes do not establish vehicle compatibility or Android Auto functionality.
