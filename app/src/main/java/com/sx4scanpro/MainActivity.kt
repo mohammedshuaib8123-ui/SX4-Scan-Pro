@@ -197,7 +197,7 @@ class MainActivity : ComponentActivity() {
                         }
                         Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
                             Text(if (connected) "● ECU LINK ACTIVE" else "○ ECU OFFLINE", color = if (connected) cyan else muted)
-                            Text("v0.3.3 • UI PREVIEW • BUILD 14", color = muted, style = MaterialTheme.typography.labelSmall)
+                            Text("v0.3.4 • UI PREVIEW • BUILD 15", color = muted, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     NavigationBar(containerColor = Color(0xFF09111D), tonalElevation = 0.dp) {
@@ -308,7 +308,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
-                            item { Text("Build v0.3.3 • UI PREVIEW • BUILD 14", color = muted) }
+                            item { Text("Build v0.3.4 • UI PREVIEW • BUILD 15", color = muted) }
                         }
                     }
                 }
