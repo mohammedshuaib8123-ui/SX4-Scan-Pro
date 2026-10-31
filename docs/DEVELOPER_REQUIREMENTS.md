@@ -348,11 +348,24 @@ Do not state that a source commit means an APK has been built. A source change o
 - Screenshot folder: `docs/screenshots/`.
 - Screenshot currently present in the repository: `docs/screenshots/Screenshot_20261101_010815.jpg`.
 
-### Current uploaded screenshot
+### User-uploaded application screenshot (not the concept mockups)
 
-![SX4 Scan Pro current UI screenshot](screenshots/Screenshot_20261101_010815.jpg)
+![SX4 Scan Pro uploaded application screenshot](screenshots/Screenshot_20261101_010815.jpg)
 
-[Open the original screenshot file](screenshots/Screenshot_20261101_010815.jpg).
+[Open the original uploaded application screenshot](screenshots/Screenshot_20261101_010815.jpg).
+
+**Important distinction:** this is the user's uploaded screenshot of the existing application. It is not one of the previously presented cockpit / diagnostics / head-unit concept mockups. Do not treat it as the target visual design or as evidence that the cockpit design is implemented.
+
+### Target screen concepts to recreate in the application
+
+The earlier visual concepts are the design target, and must be recreated as actual Compose screens rather than substituted with the uploaded app screenshot.
+
+1. **Cockpit / home screen:** full-bleed near-black graphite background; restrained neon-cyan instrument illumination; large circular RPM dial and speed dial as the visual anchors; subtle illuminated arcs / tick marks / needle treatment; compact telemetry panels for boost, coolant, MAF and engine load; amber caution and red critical states; a clear ECU connection indicator; landscape tablet composition with no clipping.
+2. **Diagnostics screen:** same dark visual language; clear engine ECU scan area; stored / pending / permanent DTC groups; scan progress and timestamp; separate module tiles for BCM, ABS, airbag and immobilizer with explicit unsupported / not verified states until real communication is proven.
+3. **Head Unit screen:** a separate, uncluttered receiver launch / connection surface, with wired Android Auto as the first integration target. It must not imply Android Auto is working until the receiver module is actually integrated and tested.
+4. **Settings screen:** adapter selection and connection controls, sound / welcome preferences, display and brightness options, diagnostic data freshness / protocol information, and build/version identification.
+
+**Visual review rule:** when the earlier generated concept images are available in chat history or re-uploaded, attach those exact concept references here as separate files. Do not rename the user's existing screenshot or present a newly invented generic image as an original prior mockup.
 
 - The repository confirms that this image file exists (401,677 bytes). In the current review session, the GitHub file reader could list the JPG but could not decode its binary contents. Therefore, no visual assessment of this specific screenshot is claimed yet.
 - When a screenshot is visually accessible, assess layout, clipping, hierarchy, typography, colors and tablet landscape fit. Record actionable feedback and resulting changes here.
@@ -430,3 +443,14 @@ When continuing this repository:
 
 - **2026-11-01:** Initial consolidated developer/AI handover created from project requirements, decisions and current source inspection. Includes target hardware, cockpit UI, OBD-II, diagnostics, welcome announcement, warning behavior, Android Auto investigation, safety constraints, implementation snapshot, CI/release workflow and acceptance criteria.
 - **2026-11-01:** Embedded the uploaded current-UI screenshot in this document and recorded the image-inspection limitation. Updated build history after confirming Actions runs #14 and #15 succeeded.
+
+
+## 15. Correction and active implementation plan (2026-11-01)
+
+- Corrected the screenshot documentation: the JPG in `docs/screenshots/` is the user's uploaded current-app screenshot, not the previously shown cockpit/head-unit design mockups.
+- The prior concept mockups are currently not stored in the repository. Their design requirements are now explicitly described in Section 10 so they are not lost or confused with the uploaded screenshot.
+- Recovered user-confirmed requirements: Realme Pad 2 landscape cockpit, dark graphite / cyan / amber / red palette, dominant RPM and speed dials, four sections (Cockpit / Diagnostics / Head Unit / Settings), “Welcome to SX4 Airlines 2874” with calm female English TTS and original seat-belt-style chime, RPM-based engine-start detection, valid-data-only alerts, and separate Android Auto receiver functionality.
+- Current source still needs implementation work. Do not mark cockpit, welcome audio, warning engine, or Android Auto receiver as complete merely because their requirements or placeholder screens exist.
+- Android Auto receiver remains a separate technical workstream: evaluate AGPL-3.0 Open Headunit, wired USB first, Realme Pad 2 OTG, phone compatibility, touch, audio routing and lifecycle. No proprietary receiver implementation is claimed.
+- Next source release must include the real four-section Compose UI and keep existing Bluetooth/OBD behavior intact. Subsequent changes must harden PID discovery / parsing / freshness / DTC handling, then add the RPM-triggered welcome sequence and safe alert framework. All changes require a successful Actions build; vehicle-dependent features remain unverified until tested on the user's SX4.
+- Build run #16 (commit `1a037e24`) succeeded for the documentation-only screenshot embed. It does not validate any missing app features.
