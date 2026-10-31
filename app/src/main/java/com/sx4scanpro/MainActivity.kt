@@ -394,7 +394,8 @@ class MainActivity : ComponentActivity() {
 
     // Hold the same Activity monitor for the complete PID batch so a DTC scan cannot
     // consume a response intended for the live dashboard (sendCommand is re-entrant).
-    @Synchronized\n    private fun readDashboard(): List<GaugeValue> {
+    @Synchronized
+    private fun readDashboard(): List<GaugeValue> {
         val specs = listOf(
             Triple("Engine RPM", "010C", "rpm"),
             Triple("Vehicle speed", "010D", "km/h"),
