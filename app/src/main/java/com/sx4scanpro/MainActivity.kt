@@ -6,6 +6,11 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.speech.tts.TextToSpeech
+import android.media.AudioManager
+import android.media.ToneGenerator
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -38,6 +43,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.UUID
+import java.util.Locale
 
 
 @Composable
@@ -81,6 +87,11 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { }
     private var socket: BluetoothSocket? = null
+    private val engineStartDetector = EngineStartDetector()
+    private var speechReady = false
+    private var textToSpeech: TextToSpeech? = null
+    private var chime: ToneGenerator? = null
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -88,6 +99,11 @@ class MainActivity : ComponentActivity() {
             ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
         ) permissionRequest.launch(Manifest.permission.BLUETOOTH_CONNECT)
 
+        textToSpeech = TextToSpeech(this) { result ->
+            speechReady = result == TextToSpeech.SUCCESS
+            if (speechReady) textToSpeech?.language = Locale.UK
+        }
+        chime = ToneGenerator(AudioManager.STREAM_MUSIC, 72)
         setContent { MaterialTheme { Dashboard() } }
     }
 
@@ -129,6 +145,10 @@ class MainActivity : ComponentActivity() {
                     status = "Connected"
                     while (isActive && socket?.isConnected == true) {
                         gauges = withContext(Dispatchers.IO) { readDashboard() }
+                        val rpmGauge = gauges.firstOrNull { it.label == "Engine RPM" }
+                        if (engineStartDetector.update(rpmGauge?.value?.toIntOrNull(), rpmGauge?.available == true)) {
+                            playEngineWelcome()
+                        }
                         delay(1300)
                     }
                     if (status == "Connected") {
@@ -446,6 +466,17 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun playEngineWelcome() {
+        // Fresh positive RPM samples trigger this; Bluetooth connection alone never does.
+        chime?.startTone(ToneGenerator.TONE_PROP_BEEP, 130)
+        mainHandler.postDelayed({
+            chime?.startTone(ToneGenerator.TONE_PROP_BEEP, 180)
+            mainHandler.postDelayed({
+                if (speechReady) textToSpeech?.speak("Welcome to SX4 Airlines 2874", TextToSpeech.QUEUE_FLUSH, null, "sx4_engine_start")
+            }, 260)
+        }, 190)
+    }
+
     private fun closeSocket() {
         try { socket?.close() } catch (_: Exception) { }
         socket = null
@@ -453,6 +484,10 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         closeSocket()
+        mainHandler.removeCallbacksAndMessages(null)
+        textToSpeech?.stop()
+        textToSpeech?.shutdown()
+        chime?.release()
         super.onDestroy()
     }
 }
