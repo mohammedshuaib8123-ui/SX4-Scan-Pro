@@ -5,6 +5,8 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
 import android.content.pm.PackageManager
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -127,6 +129,7 @@ class MainActivity : ComponentActivity() {
         var dtcStatus by remember { mutableStateOf("Connect the Vgate adapter to read engine ECU fault codes.") }
         var dtcCodes by remember { mutableStateOf<List<String>>(emptyList()) }
         var scanningCodes by remember { mutableStateOf(false) }
+        var headUnitStatus by remember { mutableStateOf("Open Headunit runs as a separate receiver app.") }
         val scope = rememberCoroutineScope()
         val connected = status == "Connected"
 
@@ -269,12 +272,23 @@ class MainActivity : ComponentActivity() {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                         Text("ANDROID AUTO • HEAD UNIT", color = cyan, style = MaterialTheme.typography.titleMedium)
-                                        Text("Receiver integration is not yet installed in this build.", color = Color(0xFFFFB84D))
-                                        Text("Planned path: evaluate Open Headunit (AGPL-3.0) as an isolated module, starting with wired USB projection. Verify Realme Pad 2 OTG, phone compatibility, touch and audio routing first.", color = muted)
+                                        Text("Android Auto receiver: Open Headunit (separate app)", color = Color(0xFFFFB84D))
+                                        Text("The receiver is kept separate rather than merged into the OBD app. Wired USB is the first route to validate on your Realme Pad 2.", color = muted)
+                                        Button(onClick = {
+                                            val launch = packageManager.getLaunchIntentForPackage("com.andrerinas.headunitrevived")
+                                            if (launch != null) {
+                                                startActivity(launch)
+                                                headUnitStatus = "Launching Open Headunit…"
+                                            } else {
+                                                headUnitStatus = "Open Headunit is not installed. Opening its official project page."
+                                                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/andreknieriem/open-headunit")))
+                                            }
+                                        }, modifier = Modifier.fillMaxWidth()) { Text("LAUNCH / INSTALL OPEN HEADUNIT") }
+                                        Text(headUnitStatus, color = muted)
                                     }
                                 }
                             }
-                            item { Text("This page is an honest integration placeholder, not a functioning Android Auto receiver.", color = muted) }
+                            item { Text("Projection, touch and audio still require on-device testing. Android Auto 17.4+ has changed legacy wireless launch behaviour; start with wired USB.", color = muted) }
                         }
                         else -> LazyColumn(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             item {
