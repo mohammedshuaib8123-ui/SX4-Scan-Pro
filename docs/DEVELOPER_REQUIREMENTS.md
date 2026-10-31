@@ -286,7 +286,7 @@ This section records what was observed in source on 2026-11-01. It is not a clai
 - Explicit UI notes that BCM and other modules are unsupported.
 - Basic connect/reconnect/disconnect controls.
 - GitHub Actions debug APK build and artifact upload.
-- Four-section Compose UI (Cockpit / Diagnostics / Head Unit / Settings) with first-pass landscape cockpit gauges.\n- Visible source label: `v0.3.2 • UI PREVIEW • BUILD 13`.
+- Four-section Compose UI (Cockpit / Diagnostics / Head Unit / Settings) with first-pass landscape cockpit gauges.\n- Visible source label: `v0.3.3 • UI PREVIEW • BUILD 14`.
 
 ### Present but requires validation/hardening
 - Bluetooth selection requires exactly one paired device whose name contains Vgate, iCar or OBD; zero or multiple matches fail safely. This name match is a guardrail, not cryptographic adapter identification.
@@ -534,3 +534,13 @@ When continuing this repository:
 ### Validation status
 - GitHub Actions build and unit-test execution must be checked before distributing an APK.
 - User's only deferred tasks are intended to be physical Vgate/SX4 ECU connection, on-vehicle validation, and final audio/head-unit routing checks that require the actual tablet/car setup. Software work can continue independently.
+
+
+### Build 14 follow-up — Android Auto hand-off and CI (2026-11-01)
+- Added a Head Unit page action that launches the official Open Headunit app when package `com.andrerinas.headunitrevived` is installed; otherwise it opens the official project page. Added Android package-visibility declaration for that package.
+- Open Headunit is deliberately treated as a separate receiver application, not falsely presented as code merged into SX4 Scan Pro. Its upstream README documents wired USB phone-to-tablet projection and current wireless limitations; Android Auto 17.4+ has changed older wireless launch methods. Wired USB remains the initial validation route.
+- Upstream project: https://github.com/andreknieriem/open-headunit. The upstream app uses applicationId `com.andrerinas.headunitrevived`, namespace `com.andrerinas.openheadunit`, and the repository identifies AGPL-3.0. Do not bundle or modify its code without preserving licence notices and satisfying source-distribution obligations.
+- CI now runs `gradle testDebugUnitTest` before `gradle assembleDebug`, so the offline engine-start detector tests are part of the build gate.
+- Visible app label advanced to `v0.3.3 • UI PREVIEW • BUILD 14`.
+- This makes the Head Unit page useful for hand-off but does not claim Android Auto is integrated into the SX4 Scan Pro APK. USB/OTG compatibility, touch, video and audio routing remain to be validated on the Realme Pad 2 and phone.
+- Additional source commits: parser syntax correction `5907644487eaa14bcc6aa79cb7ece4957d307a7f`; follow-up annotation fix `09978a9102f8c8587b58265006afe50be7060f8a`; CI tests `5bbe530b6b665d785d326113ffbfe7050cd28a5c`; Head Unit launcher `d0cf196b02f475975f51015e97e01ceee07355e5`; manifest package visibility `9b8a966e4a53fe4afb23e65b6bce921e8cedc4fb`; Build 14 version label `6ee563bef7508b9a70d5b314336464dc9e32bfc8`.
