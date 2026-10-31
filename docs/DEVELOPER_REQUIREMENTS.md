@@ -577,3 +577,27 @@ When continuing this repository:
 - Move Bluetooth connection ownership out of the Activity before claiming rotation/background resilience.
 - Reconcile the UI label with the next verified build number; keep the preview marker until user approval.
 - Test actual protocol timing, PID support and DTC responses on the user's SX4 before declaring vehicle compatibility.
+
+
+## Build 17 development — welcome audio and warning framework (2026-11-01)
+
+### Welcome experience refinement
+- Kept the exact requested announcement: “Welcome to SX4 Airlines 2874”.
+- Refined the original generated chime into two distinct short tones before speech, with a short pause.
+- Set English (UK) TTS, a slightly slower speaking rate and neutral pitch for a calmer delivery. Android TTS does not expose a dependable cross-device female-voice selector; the installed tablet voice must be checked on-device.
+- Added a Settings preview action so the chime and announcement can be heard without starting the engine.
+- Added a pending-speech hand-off so a slow TTS engine does not silently lose the welcome after the chime. Speech is sequenced after the chime.
+- Automatic welcome remains tied only to the existing two-fresh-positive-RPM start detector. The manual preview is an explicit user action.
+
+### Warning framework foundation
+- Added pure Kotlin `WarningEngine` and unit tests.
+- Rules support sensor validity/support/freshness checks, consecutive-sample confirmation, separate trigger and clear levels (hysteresis), active-state suppression and cooldown.
+- No warning rules or SX4 thresholds are enabled by default. The evaluator is a framework only; no temperature/boost/load alert is presented as vehicle-calibrated.
+- Next warning work: map each candidate warning to an authoritative SX4 diesel specification, decide safe display/voice/sound behaviour and test the configured rule with unit tests before enabling it.
+- Voice, warning sound and dashboard flash must all be coordinated by one validated alert event; stale/disconnected data must suppress the event.
+
+### Build marker and validation
+- Preview marker advanced to `v0.3.6 • UI PREVIEW • BUILD 17`.
+- Warning evaluator source: `7e65e0c8a5b796531025d2274ed87e41bbe04e19`; tests: `5a203dee8b4a86d3df1f170affe2df544cc12c39`.
+- Welcome refinement source: `8748aae139a8364030f61e9ce068072f133d36d3`; chime/TTS sequencing correction: `ed7b3726f39ffecbd0336d6d2848628cab899474`; Build 17 label: `693422e56bc2379a4793eb93c155a2c730312e93`.
+- These changes require the latest GitHub Actions run to pass before an APK is distributed. Audio voice identity, loudness, timing and tablet speaker behaviour still require Realme Pad 2 testing; engine-start detection and all warning rules still require real SX4 validation.
