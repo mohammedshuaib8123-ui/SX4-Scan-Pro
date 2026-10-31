@@ -286,15 +286,15 @@ This section records what was observed in source on 2026-11-01. It is not a clai
 - Explicit UI notes that BCM and other modules are unsupported.
 - Basic connect/reconnect/disconnect controls.
 - GitHub Actions debug APK build and artifact upload.
-- Version/preview/build label in the top app bar source: `v0.2.0 • UI PREVIEW • BUILD 10`.
+- Four-section Compose UI (Cockpit / Diagnostics / Head Unit / Settings) with first-pass landscape cockpit gauges.\n- Visible source label: `v0.3.1 • UI PREVIEW • BUILD 12` (the next source update advances this).
 
 ### Present but requires validation/hardening
-- Bluetooth device selection currently prefers a paired name containing Vgate, iCar or OBD, otherwise falls back to the first paired device. This fallback may select an unrelated device and should be improved.
+- Bluetooth selection requires exactly one paired device whose name contains Vgate, iCar or OBD; zero or multiple matches fail safely. This name match is a guardrail, not cryptographic adapter identification.
 - ELM command reader uses a prompt timeout and simple character collection. It requires robust framing and parsing.
 - PID parser uses basic byte extraction and formulas; it does not yet perform complete supported-PID discovery.
 - DTC decoder is basic and must be tested against real ECU responses and edge cases.
 - Current gauge cards are generic small semicircle gauges, not the requested final cockpit instruments.
-- Current navigation is Dashboard / Fault codes / Modules, not the intended Cockpit / Diagnostics / Head Unit / Settings.
+- The four-section navigation exists, but its current visual treatment is still a minimal first pass and does not meet the desired gaming-style cockpit finish.
 - Current code has not been validated against the actual SX4 in this development session because the vehicle was not available for live testing.
 
 ### Not implemented yet
@@ -486,6 +486,17 @@ When continuing this repository:
 - Increased the visible preview identifier to v0.3.1 / Build 12.
 - Removed the unsafe fallback that selected the first arbitrary paired Bluetooth device when no OBD adapter name matched. Connection now requires exactly one paired device identified as Vgate, iCar or OBD; zero or multiple matches produce an explicit error instead of risking connection to an unrelated device.
 - This is a connection-selection safeguard only. It does not certify live ECU communication or vehicle compatibility.
-- Build 11 source commit: 20371d5? No — Build 11 remains 3f6ebf2bf41f3083442a6c91b2bdccb61b314732.
+- Build 11 source commit: `3f6ebf2bf41f3083442a6c91b2bdccb61b314732`.
 - Build 12 source commit: 20371d5f7d0b86f710910d01ddfc888425140aa3.
 - Still outstanding: serialise complete polling and DTC transactions; robust ELM response framing and PID support discovery; stale-data handling; verified SX4 alert thresholds; RPM-based welcome/chime; genuine Android Auto receiver integration; tablet visual validation and live SX4 testing.
+
+
+## 17. Build 13 — OBD transaction serialization (2026-11-01)
+
+- Serialized each complete live PID polling batch and each complete DTC scan batch on the Activity monitor. This prevents a DTC scan from interleaving commands with dashboard polling and consuming the wrong ELM response. The synchronized command method is re-entrant on the same monitor.
+- DTC scan now uses one dedicated transaction method for modes 03 / 07 / 0A.
+- Numeric formatting for RPM, MAF, load, throttle and boost now explicitly uses Locale.US so decimal separators remain stable regardless of the tablet's regional locale.
+- This is a source-level concurrency and formatting hardening change. It does not yet add supported-PID bitmap discovery, a full ELM framing/parser rewrite, timestamps, or real-car validation.
+- Build 12 source commit `20371d5f7d0b86f710910d01ddfc888425140aa3`; Build 12 workflow run #20 succeeded. Documentation workflow run #21 also succeeded.
+- Build 13 source commit: `afe9ddfae81a01c2ec089cf2760528ee6db81ec2`. Its Actions result must be checked before treating an APK as ready.
+- User has clarified that the current UI feels too minimal and not gaming-like. The next UI pass must be a deliberate visual redesign, not incremental color tweaks: immersive landscape cockpit composition, oversized illuminated instruments, richer layered panels and clear typography, while retaining the four sections and truthful ECU states. The user has approved another redesign pass.
