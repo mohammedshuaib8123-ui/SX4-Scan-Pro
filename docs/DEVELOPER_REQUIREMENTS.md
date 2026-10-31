@@ -662,3 +662,13 @@ When continuing this repository:
 
 
 - Source review also corrected two literal escaped line-break sequences that had landed in Kotlin property declarations during earlier edits. Intentional escaped newlines inside user-facing strings and response parsing were retained.
+
+
+### Cockpit navigation and motion pass — 2026-11-01
+
+- Replaced the compact Material navigation strip above the content with a persistent bottom dock designed for the landscape tablet. Four large, evenly distributed touch surfaces remain visible: Cockpit, Diagnostics, Head Unit and Settings.
+- Selected destination is shown with a cyan outline and highlighted panel; inactive destinations retain clear contrast and labels. The dock uses large glyphs and uppercase labels rather than icon-only controls.
+- Added a short crossfade when switching destinations to avoid abrupt page replacement. Existing RPM and speed gauge easing remains in place.
+- Navigation changes are local UI state only; they do not interrupt the ECU connection loop or change diagnostics/OBD behaviour.
+- This is a driver-oriented layout aid, not a claim that the tablet is safe to operate while moving. Configure the route before driving and use glance-only display while underway.
+- Build label remains v0.3.7 / UI PREVIEW / BUILD 18 pending the next verified release batch. Real tablet touch-target and layout review is still required.
