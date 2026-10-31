@@ -286,7 +286,7 @@ This section records what was observed in source on 2026-11-01. It is not a clai
 - Explicit UI notes that BCM and other modules are unsupported.
 - Basic connect/reconnect/disconnect controls.
 - GitHub Actions debug APK build and artifact upload.
-- Four-section Compose UI (Cockpit / Diagnostics / Head Unit / Settings) with first-pass landscape cockpit gauges.\n- Visible source label: `v0.3.3 • UI PREVIEW • BUILD 14`.
+- Four-section Compose UI (Cockpit / Diagnostics / Head Unit / Settings) with first-pass landscape cockpit gauges.\n- Visible source label: `v0.3.4 • UI PREVIEW • BUILD 15`.
 
 ### Present but requires validation/hardening
 - Bluetooth selection requires exactly one paired device whose name contains Vgate, iCar or OBD; zero or multiple matches fail safely. This name match is a guardrail, not cryptographic adapter identification.
@@ -544,3 +544,8 @@ When continuing this repository:
 - Visible app label advanced to `v0.3.3 • UI PREVIEW • BUILD 14`.
 - This makes the Head Unit page useful for hand-off but does not claim Android Auto is integrated into the SX4 Scan Pro APK. USB/OTG compatibility, touch, video and audio routing remain to be validated on the Realme Pad 2 and phone.
 - Additional source commits: parser syntax correction `5907644487eaa14bcc6aa79cb7ece4957d307a7f`; follow-up annotation fix `09978a9102f8c8587b58265006afe50be7060f8a`; CI tests `5bbe530b6b665d785d326113ffbfe7050cd28a5c`; Head Unit launcher `d0cf196b02f475975f51015e97e01ceee07355e5`; manifest package visibility `9b8a966e4a53fe4afb23e65b6bce921e8cedc4fb`; Build 14 version label `6ee563bef7508b9a70d5b314336464dc9e32bfc8`.
+
+- Build 15 adds Mode 01 supported-PID bitmap discovery (0100 and, when PID 20 indicates continuation, 0120). Dashboard requests are now limited to PIDs advertised by the ECU; unsupported readings remain unavailable. The BARO-based boost calculation also requires advertised PID 33 and a valid one-byte response.
+- Added unit tests for bitmap decoding, malformed responses and continuation-block gating. The CI workflow runs these unit tests before assembling the debug APK.
+- PID discovery is now source-implemented but still requires the deferred real ECU check. It does not imply that the Indian SX4 exposes all PIDs or that calculated boost is validated.
+- Build 15 source commit: `4fda4df990c34c37afcb6366f12e475439ae60fa`; PID decoder `0e10805d4aa111a2404b84c13a96485f5bf752a5`; tests `001005ab3b5770ab7e1143b4f8fc7b1de1d040d7`; polling integration `6f24e4de9aa565cfd16a8290963dd0f4d2ab44be`.
