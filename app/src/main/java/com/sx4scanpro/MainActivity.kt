@@ -10,6 +10,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -349,18 +350,26 @@ class MainActivity : ComponentActivity() {
         s.outputStream.write((command + "\r").toByteArray(Charsets.US_ASCII))
         s.outputStream.flush()
         val out = StringBuilder()
-        val deadline = System.currentTimeMillis() + 2500
+        val deadline = System.currentTimeMillis() + 3000
+        var promptReceived = false
         while (System.currentTimeMillis() < deadline) {
             if (s.inputStream.available() > 0) {
                 val b = s.inputStream.read()
-                if (b == -1) break
-                if (b.toChar() == '>') break
+                if (b == -1) throw IOException("OBD adapter closed the connection")
+                if (b.toChar() == '>') {
+                    promptReceived = true
+                    break
+                }
+                if (out.length >= 4096) throw IOException("OBD response exceeded the safety limit")
                 out.append(b.toChar())
             } else {
-                Thread.sleep(15)
+                Thread.sleep(12)
             }
         }
-        return out.toString().replace("\r", "").replace("\n", "").replace(" ", "").uppercase()
+        if (!promptReceived) throw IOException("Timed out waiting for the OBD prompt")
+        val response = out.toString().replace("\r", "").replace("\n", "").replace(" ", "").uppercase()
+        if (response.contains("STOPPED") || response == "?") throw IOException("OBD adapter rejected command: $command")
+        response
     }
 
     // Hold the same Activity monitor for the complete PID batch so a DTC scan cannot\n    // consume a response intended for the live dashboard (sendCommand is re-entrant).\n    @Synchronized\n    private fun readDashboard(): List<GaugeValue> {
@@ -399,9 +408,11 @@ class MainActivity : ComponentActivity() {
             "0A" -> "4A"
             else -> return emptyList()
         }
-        val payload = response.substringAfter(prefix, "")
-        if (payload.isBlank() || payload.contains("NODATA") || payload.contains("UNABLE")) return emptyList()
-        val hex = payload.filter { it in "0123456789ABCDEF" }
+        if (!response.startsWith(prefix)) return emptyList()
+        if (response.contains("NODATA") || response.contains("UNABLE") || response.contains("STOPPED")) return emptyList()
+        val payload = response.removePrefix(prefix)
+        if (payload.isBlank() || payload.length % 4 != 0 || payload.any { it !in "0123456789ABCDEF" }) return emptyList()
+        val hex = payload
         return hex.chunked(4).filter { it.length == 4 }.mapNotNull { bytes ->
             val a = bytes.substring(0, 2).toIntOrNull(16) ?: return@mapNotNull null
             val b = bytes.substring(2, 4).toIntOrNull(16) ?: return@mapNotNull null
@@ -419,10 +430,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun parsePid(command: String, data: String): String? {
-        val bytes = data.take(4)
-        if (bytes.length < 2) return null
+        val expectedLength = if (command in setOf("010C", "0110")) 4 else 2
+        if (data.length < expectedLength || data.take(expectedLength).any { it !in "0123456789ABCDEF" }) return null
+        val bytes = data.take(expectedLength)
         val a = bytes.substring(0, 2).toIntOrNull(16) ?: return null
-        val b = if (bytes.length >= 4) bytes.substring(2, 4).toIntOrNull(16) ?: 0 else 0
+        val b = if (bytes.length == 4) bytes.substring(2, 4).toIntOrNull(16) ?: return null else 0
         return when (command) {
             "010C" -> String.format(java.util.Locale.US, "%.0f", (a * 256 + b) / 4.0)
             "0105", "010F" -> (a - 40).toString()
