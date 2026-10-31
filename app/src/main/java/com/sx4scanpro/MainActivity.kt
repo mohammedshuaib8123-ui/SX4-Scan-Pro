@@ -89,6 +89,7 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestPermission()
     ) { }
     private var socket: BluetoothSocket? = null
+    private var supportedPids: Set<Int> = emptySet()
     private val engineStartDetector = EngineStartDetector()
     private var speechReady = false
     private var textToSpeech: TextToSpeech? = null
@@ -295,7 +296,7 @@ class MainActivity : ComponentActivity() {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text("OBD CONNECTION", color = cyan, style = MaterialTheme.typography.titleMedium)
-                                        Text("Adapter: " + adapterName + "\nTransport: Bluetooth Classic SPP\nStatus: " + status, color = muted)
+                                        Text("Adapter: " + adapterName + "\nTransport: Bluetooth Classic SPP\nStatus: " + status + "\nSupported standard PIDs: " + supportedPids.size, color = muted)
                                     }
                                 }
                             }
@@ -375,6 +376,7 @@ class MainActivity : ComponentActivity() {
         s.connect()
         socket = s
         listOf("ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0").forEach { sendCommand(it) }
+        supportedPids = discoverSupportedPids()
         return (device.name ?: "Bluetooth OBD adapter") to Unit
     }
 
@@ -406,6 +408,15 @@ class MainActivity : ComponentActivity() {
         response
     }
 
+    @Synchronized
+    private fun discoverSupportedPids(): Set<Int> {
+        val first = try { sendCommand("0100") } catch (_: Exception) { "" }
+        val second = if (ObdPidSupport.decode(first).contains(32)) {
+            try { sendCommand("0120") } catch (_: Exception) { "" }
+        } else ""
+        return ObdPidSupport.decode(first + second)
+    }
+
     // Hold the same Activity monitor for the complete PID batch so a DTC scan cannot
     // consume a response intended for the live dashboard (sendCommand is re-entrant).
     @Synchronized
@@ -421,17 +432,22 @@ class MainActivity : ComponentActivity() {
             Triple("Throttle position", "0111", "%")
         )
         val results = specs.map { (label, command, unit) ->
-            val response = try { sendCommand(command) } catch (_: Exception) { "" }
-            val bytes = response.substringAfter("41" + command.substring(2), "")
-            val parsed = parsePid(command, bytes)
-            GaugeValue(label, parsed ?: "--", unit, parsed != null)
+            val pid = command.substring(2).toIntOrNull(16)
+            if (pid == null || pid !in supportedPids) {
+                GaugeValue(label, "--", unit, false)
+            } else {
+                val response = try { sendCommand(command) } catch (_: Exception) { "" }
+                val bytes = response.substringAfter("41" + command.substring(2), "")
+                val parsed = parsePid(command, bytes)
+                GaugeValue(label, parsed ?: "--", unit, parsed != null)
+            }
         }
         val map = results.associateBy { it.label }
         val mapPressure = map["Manifold pressure"]?.value?.toDoubleOrNull()
         val boost = if (mapPressure != null) {
-            val baroResponse = try { sendCommand("0133") } catch (_: Exception) { "" }
+            val baroResponse = if (51 in supportedPids) try { sendCommand("0133") } catch (_: Exception) { "" } else ""
             val baroBytes = baroResponse.substringAfter("4133", "")
-            val baro = baroBytes.take(2).toIntOrNull(16)?.toDouble()
+            val baro = if (baroBytes.take(2).length == 2 && baroBytes.take(2).all { it in "0123456789ABCDEF" }) baroBytes.take(2).toIntOrNull(16)?.toDouble() else null
             if (baro != null) GaugeValue("Turbo boost", String.format(java.util.Locale.US, "%.1f", (mapPressure - baro).coerceAtLeast(0.0)), "kPa", true)
             else GaugeValue("Turbo boost", "--", "kPa", false)
         } else GaugeValue("Turbo boost", "--", "kPa", false)
