@@ -30,7 +30,7 @@ object ObdTroubleCodeDecoder {
                 else -> "U"
             }
             val digit2 = ((a shr 4) and 0x03).toString()
-            system + digit2 + "%02X%02X".format(a and 0x0F, b)
+            system + digit2 + "%X%02X".format(a and 0x0F, b)
         }
     }
 }
