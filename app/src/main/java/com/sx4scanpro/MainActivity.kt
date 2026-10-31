@@ -147,9 +147,7 @@ class MainActivity : ComponentActivity() {
                 scanningCodes = true
                 dtcStatus = "Reading engine ECU modes 03 / 07 / 0A…"
                 try {
-                    dtcCodes = withContext(Dispatchers.IO) {
-                        listOf("03", "07", "0A").flatMap { decodeTroubleCodes(sendCommand(it), it) }.distinct()
-                    }
+                    dtcCodes = withContext(Dispatchers.IO) { readTroubleCodes() }
                     dtcStatus = if (dtcCodes.isEmpty())
                         "No codes returned, or modes unsupported. This does not prove every module is fault-free."
                     else "Engine ECU results only. BCM, ABS, airbag and other modules were not scanned."
@@ -347,7 +345,7 @@ class MainActivity : ComponentActivity() {
         return out.toString().replace("\r", "").replace("\n", "").replace(" ", "").uppercase()
     }
 
-    private fun readDashboard(): List<GaugeValue> {
+    // Hold the same Activity monitor for the complete PID batch so a DTC scan cannot\n    // consume a response intended for the live dashboard (sendCommand is re-entrant).\n    @Synchronized\n    private fun readDashboard(): List<GaugeValue> {
         val specs = listOf(
             Triple("Engine RPM", "010C", "rpm"),
             Triple("Vehicle speed", "010D", "km/h"),
@@ -370,13 +368,13 @@ class MainActivity : ComponentActivity() {
             val baroResponse = try { sendCommand("0133") } catch (_: Exception) { "" }
             val baroBytes = baroResponse.substringAfter("4133", "")
             val baro = baroBytes.take(2).toIntOrNull(16)?.toDouble()
-            if (baro != null) GaugeValue("Turbo boost", "%.1f".format((mapPressure - baro).coerceAtLeast(0.0)), "kPa", true)
+            if (baro != null) GaugeValue("Turbo boost", String.format(java.util.Locale.US, "%.1f", (mapPressure - baro).coerceAtLeast(0.0)), "kPa", true)
             else GaugeValue("Turbo boost", "--", "kPa", false)
         } else GaugeValue("Turbo boost", "--", "kPa", false)
         return results.take(4) + listOf(map["Manifold pressure"]!!) + boost + results.drop(5)
     }
 
-    private fun decodeTroubleCodes(response: String, mode: String): List<String> {
+    // DTC modes are one transaction: do not interleave them with live PID polling.\n    @Synchronized\n    private fun readTroubleCodes(): List<String> {\n        return listOf("03", "07", "0A")\n            .flatMap { mode -> decodeTroubleCodes(sendCommand(mode), mode) }\n            .distinct()\n    }\n\n    private fun decodeTroubleCodes(response: String, mode: String): List<String> {
         val prefix = when (mode) {
             "03" -> "43"
             "07" -> "47"
@@ -408,12 +406,12 @@ class MainActivity : ComponentActivity() {
         val a = bytes.substring(0, 2).toIntOrNull(16) ?: return null
         val b = if (bytes.length >= 4) bytes.substring(2, 4).toIntOrNull(16) ?: 0 else 0
         return when (command) {
-            "010C" -> "%.0f".format((a * 256 + b) / 4.0)
+            "010C" -> String.format(java.util.Locale.US, "%.0f", (a * 256 + b) / 4.0)
             "0105", "010F" -> (a - 40).toString()
             "010D" -> a.toString()
             "010B" -> a.toString()
-            "0110" -> "%.2f".format((a * 256 + b) / 100.0)
-            "0104", "0111" -> "%.1f".format(a * 100.0 / 255.0)
+            "0110" -> String.format(java.util.Locale.US, "%.2f", (a * 256 + b) / 100.0)
+            "0104", "0111" -> String.format(java.util.Locale.US, "%.1f", a * 100.0 / 255.0)
             else -> null
         }
     }
