@@ -681,3 +681,11 @@ When continuing this repository:
 - Root cause 2: warning tests reused identical capture timestamps while expecting repeated evaluations to count as new samples. Updated the consecutive-sample test to use distinct fresh timestamps, matching the intended anti-duplicate-sample behaviour.
 - Corrected the stale-warning test: an actually stale low reading must not clear an active alert; a later fresh high reading must remain suppressed; only a later fresh low reading may clear it.
 - Kotlin compilation had succeeded in the failed runs; unit tests were the blocker. New Actions runs 83 and 84 were started by the fixes. APK readiness remains unconfirmed until the latest run completes successfully.
+
+
+### Cockpit navigation refinement — 2026-11-01
+- Added animated colour transitions to the four persistent bottom-dock destinations.
+- Added a cyan selection indicator that eases into view for the active destination; inactive destinations retain a subdued track for consistent alignment.
+- The selection animation is visual only. Tap targets remain the same full-height dock surfaces, and navigation remains one tap with no hidden menus or gestures required.
+- Existing page crossfade and live-value gauge interpolation are unchanged.
+- This is a source change pending CI. Tablet touch/layout review is still required; do not treat the UI as driver-safe for interaction while moving.
