@@ -104,7 +104,12 @@ class MainActivity : ComponentActivity() {
 
         textToSpeech = TextToSpeech(this) { result ->
             speechReady = result == TextToSpeech.SUCCESS
-            if (speechReady) textToSpeech?.language = Locale.UK
+            if (speechReady) {
+                textToSpeech?.language = Locale.UK
+                textToSpeech?.setSpeechRate(0.92f)
+                textToSpeech?.setPitch(1.0f)
+                if (welcomePending) speakEngineWelcome()
+            }
         }
         chime = ToneGenerator(AudioManager.STREAM_MUSIC, 72)
         setContent { MaterialTheme { Dashboard() } }
@@ -310,7 +315,11 @@ class MainActivity : ComponentActivity() {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text("WELCOME & ALERTS", color = cyan, style = MaterialTheme.typography.titleMedium)
-                                        Text("Implemented foundation: fresh RPM-based start detection, original two-tone chime and “Welcome to SX4 Airlines 2874” TTS. Voice selection and audio behaviour still require tablet testing.", color = muted)
+                                        Text("Engine-start welcome: two-tone cabin chime followed by a calm-paced English announcement. Automatic playback requires two fresh positive RPM samples; Bluetooth connection alone never triggers it.", color = muted)
+                                        Button(onClick = { playEngineWelcome() }, modifier = Modifier.fillMaxWidth()) {
+                                            Text("PREVIEW WELCOME ANNOUNCEMENT")
+                                        }
+                                        Text("Preview plays the same chime and announcement without requiring the engine to start. TTS voice identity depends on voices installed on the tablet.", color = muted)
                                     }
                                 }
                             }
@@ -531,15 +540,24 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    @Volatile private var welcomePending = false
+
     private fun playEngineWelcome() {
-        // Fresh positive RPM samples trigger this; Bluetooth connection alone never does.
-        chime?.startTone(ToneGenerator.TONE_PROP_BEEP, 130)
+        // Production call site is the fresh-RPM engine-start transition; preview is manual.
+        welcomePending = true
+        chime?.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
         mainHandler.postDelayed({
-            chime?.startTone(ToneGenerator.TONE_PROP_BEEP, 180)
+            chime?.startTone(ToneGenerator.TONE_PROP_ACK, 180)
             mainHandler.postDelayed({
-                if (speechReady) textToSpeech?.speak("Welcome to SX4 Airlines 2874", TextToSpeech.QUEUE_FLUSH, null, "sx4_engine_start")
-            }, 260)
+                if (speechReady) speakEngineWelcome()
+            }, 280)
         }, 190)
+    }
+
+    private fun speakEngineWelcome() {
+        if (!speechReady || !welcomePending) return
+        welcomePending = false
+        textToSpeech?.speak("Welcome to SX4 Airlines 2874", TextToSpeech.QUEUE_FLUSH, null, "sx4_engine_start")
     }
 
     private fun closeSocket() {
