@@ -11,6 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -203,11 +204,11 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
-                        gridItem(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                        item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
                             Text("ENGINE INSTRUMENTS", style = MaterialTheme.typography.titleMedium)
                         }
                         items(gauges) { gauge -> GaugeCard(gauge) }
-                        gridItem(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                        item(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
                             Text("Readings depend on ECU support. Unavailable means no valid response was received.", style = MaterialTheme.typography.bodySmall)
                             Text("Use while parked or have a passenger operate it. Do not interact with the phone while driving.", style = MaterialTheme.typography.bodySmall)
                         }
