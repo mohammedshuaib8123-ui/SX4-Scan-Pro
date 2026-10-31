@@ -601,3 +601,30 @@ When continuing this repository:
 - Warning evaluator source: `7e65e0c8a5b796531025d2274ed87e41bbe04e19`; tests: `5a203dee8b4a86d3df1f170affe2df544cc12c39`.
 - Welcome refinement source: `8748aae139a8364030f61e9ce068072f133d36d3`; chime/TTS sequencing correction: `ed7b3726f39ffecbd0336d6d2848628cab899474`; Build 17 label: `693422e56bc2379a4793eb93c155a2c730312e93`.
 - These changes require the latest GitHub Actions run to pass before an APK is distributed. Audio voice identity, loudness, timing and tablet speaker behaviour still require Realme Pad 2 testing; engine-start detection and all warning rules still require real SX4 validation.
+
+
+## Build 18 development — warning output preview, DTC decoder and head-unit guidance (2026-11-01)
+
+### Warning experience
+- Added a manual Settings preview that drives a visible red warning banner on the Cockpit page, a distinct warning tone and a spoken warning message.
+- The preview is explicitly labelled as a test and is not presented as an active vehicle fault.
+- Automatic warning rules remain at zero. The WarningEngine remains conservative and is not connected to invented thresholds or unverified SX4 calibration.
+- Actual warning activation still requires authoritative engine-specific limits, validation against the SX4 ZDi/1.3 DDiS, and coordinated dispatch of a real WarningEvent to the same visual/audio outputs.
+
+### DTC decoder hardening
+- Extracted standard Mode 03/07/0A DTC conversion into pure Kotlin `ObdTroubleCodeDecoder`.
+- Added tests for stored, pending and permanent code prefixes, zero padding, no-data/wrong-mode responses, malformed and unaligned payloads, and rejection of a leading ISO-TP/count byte.
+- Decoder is deliberately conservative: it does not guess at CAN headers, ISO-TP PCI bytes or multiple ECU frames. The current ELM configuration suppresses headers, so multi-ECU attribution is not claimed.
+- Real ELM/SX4 responses still need validation before relying on DTC output.
+
+### Android Auto / Head Unit
+- Expanded the Head Unit tab with a practical wired USB validation sequence for the Realme Pad 2: install the separate Open Headunit receiver, USB data/OTG connection, permission prompts, projection/touch validation, separate SX4 stereo audio routing, and reconnect/screen-off/charging checks.
+- Reiterates the upstream AGPL-3.0 licence and separate-app architecture. SX4 Scan Pro does not embed or claim to implement the Android Auto receiver protocol.
+- No claim of successful Android Auto projection, USB OTG, touch, video, audio or charging validation has been made. Wired USB remains the first target; wireless is deferred.
+
+### Preview/build marker
+- Advanced the preview marker to `v0.3.7 • UI PREVIEW • BUILD 18`.
+- DTC decoder source commit: `2485d405f803cdc4d284e876fdce3fb2d9950498`; tests: `194042e6f2403d998a6863ba5da4602363ed6f5e`.
+- Warning preview + decoder integration: `ca759a9eef88254447cdd21edd70a52ac595fcab`.
+- Head Unit setup guidance: `474c285ec840068a17a679904b3833dedbb6b67c`.
+- The latest source and test changes must pass GitHub Actions before distributing an APK. Tablet audio and real vehicle testing remain outstanding.
