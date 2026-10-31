@@ -642,3 +642,5 @@ When continuing this repository:
 - Manifest change commit: `5f6181d091a8b216cc8ee5511ea7117148c11203`.
 
 - Bluetooth permission recovery: Connect now rechecks Android 12+ BLUETOOTH_CONNECT permission and reopens the runtime prompt after denial; the user can tap Connect again after granting it. Connection exceptions now surface their message rather than always collapsing to a generic failure. Source commit: `300b76dd6e09f1eca26b4865e0a9ed58891de02f`.
+
+- Welcome voice selection refinement: TTS now prefers an installed English voice whose Android voice identifier contains “female”; if none is available, it falls back to the device's English (UK) default. This is a best-effort device voice preference, not a guarantee that every OEM TTS engine labels voices consistently. Source commit: `117d7180dc83fe9753059578742af025e2e5b5e9`.
