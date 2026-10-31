@@ -392,7 +392,9 @@ class MainActivity : ComponentActivity() {
         response
     }
 
-    // Hold the same Activity monitor for the complete PID batch so a DTC scan cannot\n    // consume a response intended for the live dashboard (sendCommand is re-entrant).\n    @Synchronized\n    private fun readDashboard(): List<GaugeValue> {
+    // Hold the same Activity monitor for the complete PID batch so a DTC scan cannot
+    // consume a response intended for the live dashboard (sendCommand is re-entrant).
+    @Synchronized\n    private fun readDashboard(): List<GaugeValue> {
         val specs = listOf(
             Triple("Engine RPM", "010C", "rpm"),
             Triple("Vehicle speed", "010D", "km/h"),
@@ -421,7 +423,15 @@ class MainActivity : ComponentActivity() {
         return results.take(4) + listOf(map["Manifold pressure"]!!) + boost + results.drop(5)
     }
 
-    // DTC modes are one transaction: do not interleave them with live PID polling.\n    @Synchronized\n    private fun readTroubleCodes(): List<String> {\n        return listOf("03", "07", "0A")\n            .flatMap { mode -> decodeTroubleCodes(sendCommand(mode), mode) }\n            .distinct()\n    }\n\n    private fun decodeTroubleCodes(response: String, mode: String): List<String> {
+    // DTC modes are one transaction: do not interleave them with live PID polling.
+    @Synchronized
+    private fun readTroubleCodes(): List<String> {
+        return listOf("03", "07", "0A")
+            .flatMap { mode -> decodeTroubleCodes(sendCommand(mode), mode) }
+            .distinct()
+    }
+
+    private fun decodeTroubleCodes(response: String, mode: String): List<String> {
         val prefix = when (mode) {
             "03" -> "43"
             "07" -> "47"
