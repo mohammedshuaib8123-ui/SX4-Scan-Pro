@@ -14,6 +14,11 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -159,28 +164,28 @@ class MainActivity : ComponentActivity() {
 
         MaterialTheme(colorScheme = darkColorScheme(primary = cyan, secondary = Color(0xFFFFB84D), background = bg, surface = panel, onBackground = Color.White, onSurface = Color.White, onSurfaceVariant = muted)) {
             Scaffold(containerColor = bg) { padding ->
-                Column(Modifier.fillMaxSize().padding(padding)) {
+                Column(Modifier.fillMaxSize().padding(padding).background(Brush.verticalGradient(listOf(Color(0xFF05080E), Color(0xFF0B1421), Color(0xFF05080E))))) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                         Column {
-                            Text("SX4  /  SCAN PRO", color = cyan, style = MaterialTheme.typography.labelLarge)
-                            Text("DIGITAL COCKPIT", color = Color.White, style = MaterialTheme.typography.titleLarge)
+                            Text("S X 4   /   S C A N   P R O", color = cyan, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                            Text("DIGITAL COCKPIT", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black, letterSpacing = 1.5.sp)
                         }
                         Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
                             Text(if (connected) "● ECU LINK ACTIVE" else "○ ECU OFFLINE", color = if (connected) cyan else muted)
                             Text("v0.3.2 • UI PREVIEW • BUILD 13", color = muted, style = MaterialTheme.typography.labelSmall)
                         }
                     }
-                    NavigationBar(containerColor = Color(0xFF0D1520)) {
+                    NavigationBar(containerColor = Color(0xFF09111D), tonalElevation = 0.dp) {
                         listOf("Cockpit", "Diagnostics", "Head Unit", "Settings").forEachIndexed { i, label ->
                             NavigationBarItem(selected = selectedTab == i, onClick = { selectedTab = i },
-                                icon = { Text(listOf("◉", "⌁", "▣", "⚙")[i]) }, label = { Text(label, maxLines = 1) })
+                                icon = { Text(listOf("◉", "⌁", "▣", "⚙")[i], color = if (selectedTab == i) cyan else muted) }, label = { Text(label, maxLines = 1, fontWeight = if (selectedTab == i) FontWeight.Bold else FontWeight.Normal) })
                         }
                     }
                     when (selectedTab) {
                         0 -> Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("ENGINE TELEMETRY", color = muted, style = MaterialTheme.typography.labelMedium)
-                                Text(if (connected) "LIVE DATA" else "AWAITING ECU", color = if (connected) cyan else muted)
+                                Text("ENGINE TELEMETRY   /   REAL-TIME INSTRUMENTATION", color = cyan, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp)
+                                Text(if (connected) "● LIVE DATA" else "◌ ECU STANDBY", color = if (connected) cyan else muted, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                             }
                             Row(Modifier.fillMaxWidth().weight(1.1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 CockpitGauge("ENGINE RPM", gauges[0], "0 — 5,000 rpm", 5000f, cyan, Modifier.weight(1.15f))
@@ -188,11 +193,11 @@ class MainActivity : ComponentActivity() {
                             }
                             Row(Modifier.fillMaxWidth().weight(.7f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 listOf(gauges[5], gauges[2], gauges[6], gauges[7]).forEach { g ->
-                                    Card(Modifier.weight(1f), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Card(Modifier.weight(1f), colors = CardDefaults.cardColors(containerColor = Color(0xE6121F2D)), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF26394C))) {
                                         Column(Modifier.padding(10.dp)) {
-                                            Text(g.label.uppercase(), color = muted, style = MaterialTheme.typography.labelSmall, maxLines = 1)
-                                            Text(if (g.available) g.value + " " + g.unit else "—", color = Color.White, style = MaterialTheme.typography.titleLarge)
-                                            Text(if (g.available) "LIVE" else "UNAVAILABLE", color = if (g.available) cyan else muted, style = MaterialTheme.typography.labelSmall)
+                                            Text(g.label.uppercase(), color = muted, style = MaterialTheme.typography.labelSmall, maxLines = 1, fontWeight = FontWeight.Bold, letterSpacing = .7.sp)
+                                            Text(if (g.available) g.value + " " + g.unit else "—", color = if (g.available) Color.White else muted, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
+                                            Text(if (g.available) "● LIVE SIGNAL" else "○ NO SIGNAL", color = if (g.available) cyan else muted, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
                                         }
                                     }
                                 }
@@ -277,20 +282,33 @@ class MainActivity : ComponentActivity() {
 
     @Composable
     private fun CockpitGauge(title: String, gauge: GaugeValue, scale: String, max: Float, accent: Color, modifier: Modifier) {
-        Card(modifier.fillMaxHeight().padding(vertical = 7.dp), colors = CardDefaults.cardColors(containerColor = Color(0xFF111B27))) {
+        Card(modifier.fillMaxHeight().padding(vertical = 7.dp), colors = CardDefaults.cardColors(containerColor = Color(0xE6101B29)), border = androidx.compose.foundation.BorderStroke(1.dp, accent.copy(alpha = 0.45f))) {
             Column(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.SpaceBetween, horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
-                Text(title, color = Color(0xFF8FA6B9), style = MaterialTheme.typography.labelLarge)
+                Text(title, color = accent, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Black, letterSpacing = 1.8.sp)
                 Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = androidx.compose.ui.Alignment.Center) {
                     Canvas(Modifier.fillMaxSize()) {
                         val stroke = 12.dp.toPx()
                         val arc = Size(size.width * .82f, size.height * 1.45f)
                         val top = androidx.compose.ui.geometry.Offset((size.width - arc.width) / 2f, size.height * .22f)
-                        drawArc(Color(0xFF263747), 180f, 180f, false, top, arc, style = Stroke(stroke, cap = StrokeCap.Round))
+                        drawArc(Color(0xFF263747), 180f, 180f, false, top, arc, style = Stroke(stroke * 1.9f, cap = StrokeCap.Round))
+                        drawArc(accent.copy(alpha = 0.12f), 180f, 180f, false, top, arc, style = Stroke(stroke * 3.2f, cap = StrokeCap.Round))
                         val fraction = (gauge.value.toFloatOrNull()?.div(max) ?: 0f).coerceIn(0f, 1f)
-                        if (gauge.available) drawArc(accent, 180f, 180f * fraction, false, top, arc, style = Stroke(stroke, cap = StrokeCap.Round))
+                        if (gauge.available) {
+                            drawArc(accent.copy(alpha = 0.18f), 180f, 180f * fraction, false, top, arc, style = Stroke(stroke * 2.8f, cap = StrokeCap.Round))
+                            drawArc(accent, 180f, 180f * fraction, false, top, arc, style = Stroke(stroke, cap = StrokeCap.Round))
+                            val cx = size.width / 2f; val cy = size.height * 0.92f
+                            for (tick in 0..20) {
+                                val angle = Math.PI * (1.0 + tick / 20.0)
+                                val r1 = size.width * 0.34f; val r2 = r1 + if (tick % 5 == 0) 12.dp.toPx() else 5.dp.toPx()
+                                drawLine(if (tick % 5 == 0) accent else Color(0xFF607589), androidx.compose.ui.geometry.Offset(cx + kotlin.math.cos(angle).toFloat() * r1, cy + kotlin.math.sin(angle).toFloat() * r1), androidx.compose.ui.geometry.Offset(cx + kotlin.math.cos(angle).toFloat() * r2, cy + kotlin.math.sin(angle).toFloat() * r2), strokeWidth = if (tick % 5 == 0) 2.dp.toPx() else 1.dp.toPx())
+                            }
+                            val needleAngle = Math.PI * (1.0 + fraction)
+                            drawLine(Color.White, androidx.compose.ui.geometry.Offset(cx, cy), androidx.compose.ui.geometry.Offset(cx + kotlin.math.cos(needleAngle).toFloat() * size.width * 0.31f, cy + kotlin.math.sin(needleAngle).toFloat() * size.width * 0.31f), strokeWidth = 3.dp.toPx(), cap = StrokeCap.Round)
+                            drawCircle(accent, radius = 6.dp.toPx(), center = androidx.compose.ui.geometry.Offset(cx, cy))
+                        }
                     }
                     Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
-                        Text(if (gauge.available) gauge.value else "—", color = Color.White, style = MaterialTheme.typography.displayMedium)
+                        Text(if (gauge.available) gauge.value else "—", color = Color.White, style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Black)
                         Text(gauge.unit, color = accent)
                     }
                 }
