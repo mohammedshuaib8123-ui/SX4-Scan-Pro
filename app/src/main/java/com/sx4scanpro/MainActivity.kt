@@ -165,7 +165,7 @@ class MainActivity : ComponentActivity() {
             topBar = {
                 TopAppBar(
                     title = { Text("SX4 Scan Pro") },
-                    actions = { Text("v0.2.0", modifier = Modifier.padding(end = 16.dp), style = MaterialTheme.typography.labelMedium) }
+                    actions = { Text("v0.2.0 • UI PREVIEW • BUILD 10", modifier = Modifier.padding(end = 16.dp), style = MaterialTheme.typography.labelMedium) }
                 )
             }
         ) { padding ->
