@@ -183,6 +183,12 @@ class MainActivity : ComponentActivity() {
                     else "Engine ECU results only. BCM, ABS, airbag and other modules were not scanned."
                 } catch (e: Exception) {
                     dtcStatus = "Scan failed: " + (e.message ?: "communication error")
+                    if (socket?.isConnected != true) {
+                        closeSocket()
+                        supportedPids = emptySet()
+                        status = "Disconnected — adapter communication lost"
+                        gauges = gauges.map { it.copy(value = "--", available = false) }
+                    }
                 } finally { scanningCodes = false }
             }
         }
@@ -197,7 +203,7 @@ class MainActivity : ComponentActivity() {
                         }
                         Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
                             Text(if (connected) "● ECU LINK ACTIVE" else "○ ECU OFFLINE", color = if (connected) cyan else muted)
-                            Text("v0.3.4 • UI PREVIEW • BUILD 15", color = muted, style = MaterialTheme.typography.labelSmall)
+                            Text("v0.3.5 • UI PREVIEW • BUILD 16", color = muted, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     NavigationBar(containerColor = Color(0xFF09111D), tonalElevation = 0.dp) {
@@ -304,11 +310,11 @@ class MainActivity : ComponentActivity() {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text("WELCOME & ALERTS", color = cyan, style = MaterialTheme.typography.titleMedium)
-                                        Text("Planned: “Welcome to SX4 Airlines 2874”, calm female English TTS, original chime and RPM-based engine-start detection. Not active in this build.", color = muted)
+                                        Text("Implemented foundation: fresh RPM-based start detection, original two-tone chime and “Welcome to SX4 Airlines 2874” TTS. Voice selection and audio behaviour still require tablet testing.", color = muted)
                                     }
                                 }
                             }
-                            item { Text("Build v0.3.4 • UI PREVIEW • BUILD 15", color = muted) }
+                            item { Text("Build v0.3.5 • UI PREVIEW • BUILD 16", color = muted) }
                         }
                     }
                 }
