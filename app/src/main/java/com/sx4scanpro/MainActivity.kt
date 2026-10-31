@@ -36,6 +36,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -396,21 +397,39 @@ class MainActivity : ComponentActivity() {
                     ) {
                         listOf("Cockpit", "Diagnostics", "Head Unit", "Settings").forEachIndexed { i, label ->
                             val selected = selectedTab == i
+                            val dockColor by animateColorAsState(
+                                targetValue = if (selected) Color(0xFF123447) else Color(0xFF101B28),
+                                animationSpec = tween(240),
+                                label = "dock-item-color-$i"
+                            )
+                            val iconColor by animateColorAsState(
+                                targetValue = if (selected) cyan else muted,
+                                animationSpec = tween(240),
+                                label = "dock-icon-color-$i"
+                            )
+                            val indicatorProgress by animateFloatAsState(
+                                targetValue = if (selected) 1f else 0f,
+                                animationSpec = tween(280),
+                                label = "dock-indicator-$i"
+                            )
                             Surface(
                                 onClick = { selectedTab = i },
                                 modifier = Modifier.weight(1f).fillMaxHeight(),
                                 shape = RoundedCornerShape(14.dp),
-                                color = if (selected) Color(0xFF123447) else Color(0xFF101B28),
-                                border = if (selected) androidx.compose.foundation.BorderStroke(1.dp, cyan.copy(alpha = 0.75f)) else null
+                                color = dockColor,
+                                border = androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (selected) cyan.copy(alpha = 0.75f) else Color(0xFF26394C)
+                                )
                             ) {
                                 Column(
-                                    Modifier.fillMaxSize().padding(vertical = 5.dp),
+                                    Modifier.fillMaxSize().padding(vertical = 4.dp),
                                     horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.Center
                                 ) {
                                     Text(
                                         listOf("◉", "⌁", "▣", "⚙")[i],
-                                        color = if (selected) cyan else muted,
+                                        color = iconColor,
                                         fontSize = 23.sp,
                                         fontWeight = FontWeight.Bold
                                     )
@@ -422,6 +441,15 @@ class MainActivity : ComponentActivity() {
                                         letterSpacing = 0.7.sp,
                                         maxLines = 1
                                     )
+                                    Box(
+                                        Modifier.fillMaxWidth(0.62f).height(3.dp)
+                                            .background(Color(0xFF26394C), RoundedCornerShape(3.dp))
+                                    ) {
+                                        Box(
+                                            Modifier.fillMaxWidth(indicatorProgress).height(3.dp)
+                                                .background(cyan, RoundedCornerShape(3.dp))
+                                        )
+                                    }
                                 }
                             }
                         }
