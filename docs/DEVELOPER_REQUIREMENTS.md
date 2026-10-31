@@ -628,3 +628,12 @@ When continuing this repository:
 - Warning preview + decoder integration: `ca759a9eef88254447cdd21edd70a52ac595fcab`.
 - Head Unit setup guidance: `474c285ec840068a17a679904b3833dedbb6b67c`.
 - The latest source and test changes must pass GitHub Actions before distributing an APK. Tablet audio and real vehicle testing remain outstanding.
+
+
+### Build 18 follow-up — coordinated warning event pipeline
+- Each gauge now carries a capture timestamp in addition to value/availability.
+- The live polling loop maps supported fresh telemetry into the pure WarningEngine input model for coolant, boost, MAF, calculated load and RPM.
+- A validated WarningEvent is wired to the same dashboard warning banner, warning tone and severity-appropriate spoken message.
+- The warning engine is intentionally constructed with an empty rule list. This completes the event/output plumbing without activating unverified warning limits. No automatic vehicle alert can currently fire until evidence-backed SX4 rules are explicitly configured.
+- The manual preview remains visibly labelled as a preview and is separate from the live event pipeline.
+- Follow-up source commit: `b947533c2b5f8c7a363ad9281d574f86af2da679`.
