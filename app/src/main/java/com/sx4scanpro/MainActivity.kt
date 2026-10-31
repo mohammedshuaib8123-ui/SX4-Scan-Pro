@@ -381,38 +381,56 @@ class MainActivity : ComponentActivity() {
     }
 
     @Synchronized
-    private fun sendCommand(command: String): String {
+    private fun sendCommand(command: String, timeoutMs: Long = 5000): String {
         val s = socket ?: throw IOException("Not connected")
-        s.outputStream.write((command + "\r").toByteArray(Charsets.US_ASCII))
-        s.outputStream.flush()
-        val out = StringBuilder()
-        val deadline = System.currentTimeMillis() + 3000
-        var promptReceived = false
-        while (System.currentTimeMillis() < deadline) {
-            if (s.inputStream.available() > 0) {
-                val b = s.inputStream.read()
-                if (b == -1) throw IOException("OBD adapter closed the connection")
-                if (b.toChar() == '>') {
-                    promptReceived = true
-                    break
-                }
-                if (out.length >= 4096) throw IOException("OBD response exceeded the safety limit")
-                out.append(b.toChar())
-            } else {
-                Thread.sleep(12)
+        if (!s.isConnected) throw IOException("OBD adapter connection is closed")
+
+        // A timed-out transaction makes the byte stream ambiguous. Never send another
+        // command on that stream; close it so a late ECU reply cannot be misread.
+        try {
+            val input = s.inputStream
+            // Drain bytes already waiting from a completed/abandoned transaction.
+            // This is bounded to avoid hanging if an adapter continuously streams data.
+            var drained = 0
+            while (input.available() > 0 && drained < 4096) {
+                if (input.read() == -1) throw IOException("OBD adapter closed the connection")
+                drained++
             }
+
+            s.outputStream.write((command + "\r").toByteArray(Charsets.US_ASCII))
+            s.outputStream.flush()
+            val out = StringBuilder()
+            val deadline = System.currentTimeMillis() + timeoutMs
+            var promptReceived = false
+            while (System.currentTimeMillis() < deadline) {
+                if (input.available() > 0) {
+                    val b = input.read()
+                    if (b == -1) throw IOException("OBD adapter closed the connection")
+                    if (b.toChar() == '>') {
+                        promptReceived = true
+                        break
+                    }
+                    if (out.length >= 4096) throw IOException("OBD response exceeded the safety limit")
+                    out.append(b.toChar())
+                } else {
+                    Thread.sleep(12)
+                }
+            }
+            if (!promptReceived) throw IOException("Timed out waiting for OBD response to $command")
+            val response = out.toString().replace("\r", "").replace("\n", "").replace(" ", "").uppercase()
+            if (response.contains("STOPPED") || response == "?") throw IOException("OBD adapter rejected command: $command")
+            return response
+        } catch (e: Exception) {
+            closeSocket()
+            throw if (e is IOException) e else IOException("OBD transaction failed for $command", e)
         }
-        if (!promptReceived) throw IOException("Timed out waiting for the OBD prompt")
-        val response = out.toString().replace("\r", "").replace("\n", "").replace(" ", "").uppercase()
-        if (response.contains("STOPPED") || response == "?") throw IOException("OBD adapter rejected command: $command")
-        return response
     }
 
     @Synchronized
     private fun discoverSupportedPids(): Set<Int> {
-        val first = try { sendCommand("0100") } catch (_: Exception) { "" }
+        val first = sendCommand("0100", timeoutMs = 12000)
         val second = if (ObdPidSupport.decode(first).contains(32)) {
-            try { sendCommand("0120") } catch (_: Exception) { "" }
+            sendCommand("0120", timeoutMs = 12000)
         } else ""
         return ObdPidSupport.decode(first + second)
     }
@@ -436,7 +454,7 @@ class MainActivity : ComponentActivity() {
             if (pid == null || pid !in supportedPids) {
                 GaugeValue(label, "--", unit, false)
             } else {
-                val response = try { sendCommand(command) } catch (_: Exception) { "" }
+                val response = sendCommand(command)
                 val bytes = response.substringAfter("41" + command.substring(2), "")
                 val parsed = parsePid(command, bytes)
                 GaugeValue(label, parsed ?: "--", unit, parsed != null)
@@ -445,7 +463,7 @@ class MainActivity : ComponentActivity() {
         val map = results.associateBy { it.label }
         val mapPressure = map["Manifold pressure"]?.value?.toDoubleOrNull()
         val boost = if (mapPressure != null) {
-            val baroResponse = if (51 in supportedPids) try { sendCommand("0133") } catch (_: Exception) { "" } else ""
+            val baroResponse = if (51 in supportedPids) sendCommand("0133") else ""
             val baroBytes = baroResponse.substringAfter("4133", "")
             val baro = if (baroBytes.take(2).length == 2 && baroBytes.take(2).all { it in "0123456789ABCDEF" }) baroBytes.take(2).toIntOrNull(16)?.toDouble() else null
             if (baro != null) GaugeValue("Turbo boost", String.format(java.util.Locale.US, "%.1f", (mapPressure - baro).coerceAtLeast(0.0)), "kPa", true)
