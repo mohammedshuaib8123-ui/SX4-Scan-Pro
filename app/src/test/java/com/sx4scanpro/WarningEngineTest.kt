@@ -21,10 +21,9 @@ class WarningEngineTest {
 
     @Test fun requiresConsecutiveFreshSamples() {
         val engine = WarningEngine(listOf(rule()))
-        val data = mapOf("coolant" to reading(112.0))
-        assertTrue(engine.evaluate(data, 1_000L).isEmpty())
-        assertTrue(engine.evaluate(data, 1_100L).isEmpty())
-        assertEquals("coolant-high", engine.evaluate(data, 1_200L).single().ruleId)
+        assertTrue(engine.evaluate(mapOf("coolant" to reading(112.0, at = 1_000L)), 1_000L).isEmpty())
+        assertTrue(engine.evaluate(mapOf("coolant" to reading(112.0, at = 1_100L)), 1_100L).isEmpty())
+        assertEquals("coolant-high", engine.evaluate(mapOf("coolant" to reading(112.0, at = 1_200L)), 1_200L).single().ruleId)
     }
 
     @Test fun staleUnsupportedAndInvalidSamplesCannotTrigger() {
@@ -71,8 +70,11 @@ class WarningEngineTest {
         val engine = WarningEngine(listOf(rule(samples = 1, cooldown = 0L)))
         assertEquals(1, engine.evaluate(mapOf("coolant" to reading(111.0)), 1_000L).size)
         assertTrue(engine.evaluate(mapOf("coolant" to reading(90.0, at = 1_000L)), 6_000L).isEmpty())
-        assertTrue(engine.evaluate(mapOf("coolant" to reading(90.0, at = 6_100L)), 6_100L).isEmpty())
-        assertTrue(engine.evaluate(mapOf("coolant" to reading(111.0, at = 6_200L)), 6_200L).isEmpty())
+        // A fresh high reading must not retrigger: the stale low sample did not clear the alert.
+        assertTrue(engine.evaluate(mapOf("coolant" to reading(111.0, at = 6_100L)), 6_100L).isEmpty())
+        // Only a fresh low sample clears the active alert.
+        assertTrue(engine.evaluate(mapOf("coolant" to reading(90.0, at = 6_200L)), 6_200L).isEmpty())
+        assertEquals(1, engine.evaluate(mapOf("coolant" to reading(111.0, at = 6_300L)), 6_300L).size)
     }
 
     @Test fun futureDatedAndNonFiniteSamplesCannotTrigger() {
