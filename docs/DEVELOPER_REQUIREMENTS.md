@@ -340,15 +340,23 @@ Do not state that a source commit means an APK has been built. A source change o
 | Date | Version / label | Change | Verification |
 |---|---|---|---|
 | 2026-10-31 | Early starter / build 9 artifact | Kotlin/Compose app, basic Bluetooth OBD connection, live standard PID dashboard, basic DTC modes, GitHub Actions APK artifact. | GitHub Actions run #9 succeeded; debug artifact was available. Not a validated vehicle release. |
-| 2026-11-01 | `v0.2.0 • UI PREVIEW • BUILD 10` source label | Added visible preview/version/build label to top bar. | Source committed; a new APK build from this commit still needs confirmation. |
+| 2026-11-01 | `v0.2.0 • UI PREVIEW • BUILD 10` source label | Added visible preview/version/build label to top bar. | GitHub Actions run #14 succeeded for the version-label commit. Run #15 also succeeded for the documentation commit. Neither success proves real-vehicle validation. |
 
 ## 10. Screenshot and visual feedback workflow
 
 - The user wants to provide screenshots by uploading them into the repository when direct chat attachment limits are reached.
 - Screenshot folder: `docs/screenshots/`.
-- A screenshot currently present in the repository: `docs/screenshots/Screenshot_20261101_010815.jpg`.
-- A repository file listing confirms the screenshot exists, but the binary image has not yet been visually inspected in this development context. Do not claim to have reviewed it until the image is actually opened and inspected.
-- When a screenshot is accessible, assess layout, clipping, hierarchy, typography, colors and tablet landscape fit. Record actionable feedback and resulting changes here.
+- Screenshot currently present in the repository: `docs/screenshots/Screenshot_20261101_010815.jpg`.
+
+### Current uploaded screenshot
+
+![SX4 Scan Pro current UI screenshot](screenshots/Screenshot_20261101_010815.jpg)
+
+[Open the original screenshot file](screenshots/Screenshot_20261101_010815.jpg).
+
+- The repository confirms that this image file exists (401,677 bytes). In the current review session, the GitHub file reader could list the JPG but could not decode its binary contents. Therefore, no visual assessment of this specific screenshot is claimed yet.
+- When a screenshot is visually accessible, assess layout, clipping, hierarchy, typography, colors and tablet landscape fit. Record actionable feedback and resulting changes here.
+- Add each new review screenshot to this folder and embed it here with a short date/build caption. Keep older screenshots so visual progress can be compared over time.
 
 ## 11. Development priorities / suggested implementation sequence
 
@@ -421,3 +429,4 @@ When continuing this repository:
 ## 14. Change log for this document
 
 - **2026-11-01:** Initial consolidated developer/AI handover created from project requirements, decisions and current source inspection. Includes target hardware, cockpit UI, OBD-II, diagnostics, welcome announcement, warning behavior, Android Auto investigation, safety constraints, implementation snapshot, CI/release workflow and acceptance criteria.
+- **2026-11-01:** Embedded the uploaded current-UI screenshot in this document and recorded the image-inspection limitation. Updated build history after confirming Actions runs #14 and #15 succeeded.
