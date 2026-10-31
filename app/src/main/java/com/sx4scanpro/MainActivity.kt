@@ -417,7 +417,7 @@ class MainActivity : ComponentActivity() {
                                     Text(
                                         label.uppercase(),
                                         color = if (selected) Color.White else muted,
-                                        fontSize = 11.sp,
+                                        fontSize = 13.sp,
                                         fontWeight = if (selected) FontWeight.Black else FontWeight.Medium,
                                         letterSpacing = 0.7.sp,
                                         maxLines = 1
