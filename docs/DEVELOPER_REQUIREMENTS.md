@@ -5,7 +5,7 @@
 > **Last updated:** 2026-11-01  
 > **Repository:** `mohammedshuaib8123-ui/SX4-Scan-Pro`  
 > **Primary branch:** `main`  
-> **Current UI label in source:** `v0.3.4 • UI PREVIEW • BUILD 15`  
+> **Current UI label in source:** `v0.3.5 • UI PREVIEW • BUILD 16`  
 > **Document status:** Living specification; requirements below distinguish confirmed requests, decisions, implemented foundations, and work still pending.
 
 ---
@@ -568,7 +568,8 @@ When continuing this repository:
 - Drains already-buffered input before a new command, within a bounded limit.
 - Treats timeout, stream read/write failure, rejected command and oversized response as a broken transaction; closes the socket and propagates an error.
 - Dashboard PID reads no longer convert command I/O exceptions into empty strings and continue polling on a potentially desynchronised stream.
-- Pending CI verification: do not call this change build-verified until its own Actions run is green and the APK artifact exists.
+- Follow-up commit `abff975fd6f35284505c68b9bdf5f79a03946d43` advances the visible preview label to Build 16, corrects the Settings description of the welcome feature, and clears live gauges/PID state when a DTC transaction loses the adapter connection.
+- Pending CI verification: do not call these changes build-verified until the latest Actions run is green and the APK artifact exists.
 
 ### Remaining work after this patch
 - Extract DTC decoding into a pure tested component; handle supported ELM response forms and reject ECU headers rather than interpreting them as DTC bytes.
