@@ -659,3 +659,6 @@ When continuing this repository:
 - Added Compose value interpolation to the two primary cockpit dials. RPM and road-speed arc sweeps and needles now ease toward each newly received value instead of snapping instantly between polling updates.
 - The animation is presentation-only: it does not alter, predict or fabricate ECU readings. Unavailable gauges remain unavailable.
 - Tablet visual review and CI validation are still required before this preview can be treated as a release.
+
+
+- Source review also corrected two literal escaped line-break sequences that had landed in Kotlin property declarations during earlier edits. Intentional escaped newlines inside user-facing strings and response parsing were retained.
