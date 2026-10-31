@@ -640,3 +640,5 @@ When continuing this repository:
 
 - Tablet cockpit follow-up: MainActivity is now explicitly requested in landscape orientation to match the Realme Pad 2's landscape-first 2000×1200 layout. This is a UI orientation request; Android large-screen policy/device behaviour still needs on-tablet confirmation.
 - Manifest change commit: `5f6181d091a8b216cc8ee5511ea7117148c11203`.
+
+- Bluetooth permission recovery: Connect now rechecks Android 12+ BLUETOOTH_CONNECT permission and reopens the runtime prompt after denial; the user can tap Connect again after granting it. Connection exceptions now surface their message rather than always collapsing to a generic failure. Source commit: `300b76dd6e09f1eca26b4865e0a9ed58891de02f`.
