@@ -293,7 +293,7 @@ This section records what was observed in source on 2026-11-01. It is not a clai
 - ELM command reader uses a prompt timeout and simple character collection. It requires robust framing and parsing.
 - PID parser uses basic byte extraction and formulas; it does not yet perform complete supported-PID discovery.
 - DTC decoder is basic and must be tested against real ECU responses and edge cases.
-- Current gauge cards are generic small semicircle gauges, not the requested final cockpit instruments.
+- The cockpit now has a more aggressive instrument treatment: layered dark gradient, cyan/amber accents, brighter dial rings, tick marks, centre hub and needle. This is an improved preview, not final visual sign-off; tablet screenshot review remains required.
 - The four-section navigation exists, but its current visual treatment is still a minimal first pass and does not meet the desired gaming-style cockpit finish.
 - Current code has not been validated against the actual SX4 in this development session because the vehicle was not available for live testing.
 
@@ -306,7 +306,7 @@ This section records what was observed in source on 2026-11-01. It is not a clai
 - Validated full DTC presentation.
 - Suzuki-specific BCM / ABS / airbag / immobilizer communication.
 - Verified extra oil/fan data.
-- Engine-start RPM detection and “Welcome to SX4 Airlines 2874” voice/chime sequence.
+- Engine-start RPM detection and “Welcome to SX4 Airlines 2874” voice/chime sequence (implemented in source with offline debounce tests; actual TTS voice/audio and vehicle trigger remain to be checked on-device).
 - Caution/critical voice and visual warning engine.
 - Android Auto receiver / Open Headunit integration.
 - Final audio routing/in-car installation validation.
@@ -502,3 +502,35 @@ When continuing this repository:
 - User has clarified that the current UI feels too minimal and not gaming-like. The next UI pass must be a deliberate visual redesign, not incremental color tweaks: immersive landscape cockpit composition, oversized illuminated instruments, richer layered panels and clear typography, while retaining the four sections and truthful ECU states. The user has approved another redesign pass.
 
 - Build 13 source label was synchronized to `v0.3.2 • UI PREVIEW • BUILD 13`; this does not change the vehicle-validation status.
+
+
+## 18. Build 14 — cockpit visual pass, ELM validation and welcome sequence (2026-11-01)
+
+### Implemented in source
+- Reworked cockpit visual styling with a deeper layered graphite background, stronger typography/letter spacing, instrument-colour hierarchy, outlined telemetry panels, luminous gauge rings, tick marks, centre hub and a needle. This is a richer gaming-inspired preview; it still needs a Realme Pad 2 screenshot review and user approval.
+- Hardened ELM command handling: requires the adapter prompt before considering a command complete, applies a bounded response size and timeout, and surfaces adapter command rejection instead of silently parsing an incomplete response.
+- PID decoding now checks the expected payload length and hexadecimal characters before applying the standard formulas.
+- DTC decoding now requires the correct positive-response prefix and a clean, correctly aligned hexadecimal payload. Malformed/no-data responses are ignored rather than accidentally interpreted as DTCs.
+- Added `EngineStartDetector`: two fresh positive RPM samples confirm a start; five fresh zero-RPM samples confirm a stop; missing, stale or negative readings cannot trigger it. This is a transition detector, not a warning threshold.
+- Added the “Welcome to SX4 Airlines 2874” TTS announcement with an original two-tone generated chime. It is triggered from fresh RPM polling only, never from Bluetooth connection alone. Android TTS voice/gender availability is device-engine dependent.
+- Added JUnit tests for start debounce, stale/missing samples, stop/restart behaviour and invalid RPM.
+- Added JUnit test dependency.
+
+### Explicitly not claimed complete
+- The warning system is not activated with arbitrary coolant/boost thresholds. It remains disabled until SX4-specific limits are sourced and then validated.
+- Supported-PID bitmap discovery and full ISO-TP / ELM protocol support remain outstanding.
+- The current OBD parser hardening is not a substitute for testing real Vgate/SX4 responses.
+- Android Auto receiver is still not integrated. The Head Unit tab remains an honest placeholder until a compliant receiver implementation is built and tested.
+- No ECU connection or live vehicle test has been performed as part of this build.
+
+### Source commits
+- Gaming cockpit pass: `d7d71a9722e7110015cce0f8cf0fd31bef863670`.
+- ELM/PID/DTC validation: `523ead2cc114847b942cab554e4287ba584dd8b6`.
+- RPM welcome/TTS integration: `8743e59b1b9d3b6d00ef8278316ab866c9107efb`.
+- Engine start detector: `7414e77882d3de42e0e5ff4e6fb0592313a37852`.
+- JUnit support: `1ba0e2223a9f2166e9ae76eb5078385520d8d135`.
+- Detector tests: `fa79c19046b4e02a15f4a650e85c573f253f9e1e`.
+
+### Validation status
+- GitHub Actions build and unit-test execution must be checked before distributing an APK.
+- User's only deferred tasks are intended to be physical Vgate/SX4 ECU connection, on-vehicle validation, and final audio/head-unit routing checks that require the actual tablet/car setup. Software work can continue independently.
