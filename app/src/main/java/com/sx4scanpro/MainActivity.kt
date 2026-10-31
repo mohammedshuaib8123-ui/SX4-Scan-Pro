@@ -92,7 +92,9 @@ class MainActivity : ComponentActivity() {
     ) { }
     private var socket: BluetoothSocket? = null
     private var supportedPids: Set<Int> = emptySet()
-    private val engineStartDetector = EngineStartDetector()\n    // Empty until verified SX4-specific rules are approved; pipeline is wired but inactive.\n    private val warningEngine = WarningEngine()
+    private val engineStartDetector = EngineStartDetector()
+    // Empty until verified SX4-specific rules are approved; pipeline is wired but inactive.
+    private val warningEngine = WarningEngine()
     private var speechReady = false
     private var textToSpeech: TextToSpeech? = null
     private var chime: ToneGenerator? = null
@@ -143,7 +145,8 @@ class MainActivity : ComponentActivity() {
         var dtcCodes by remember { mutableStateOf<List<String>>(emptyList()) }
         var scanningCodes by remember { mutableStateOf(false) }
         var headUnitStatus by remember { mutableStateOf("Open Headunit runs as a separate receiver app.") }
-        var warningPreview by remember { mutableStateOf(false) }\n        var warningMessage by remember { mutableStateOf("") }
+        var warningPreview by remember { mutableStateOf(false) }
+        var warningMessage by remember { mutableStateOf("") }
         val scope = rememberCoroutineScope()
         val connected = status == "Connected"
 
