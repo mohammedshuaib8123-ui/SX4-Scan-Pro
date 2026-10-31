@@ -169,7 +169,7 @@ class MainActivity : ComponentActivity() {
                         }
                         Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
                             Text(if (connected) "● ECU LINK ACTIVE" else "○ ECU OFFLINE", color = if (connected) cyan else muted)
-                            Text("v0.3.0 • UI PREVIEW • BUILD 11", color = muted, style = MaterialTheme.typography.labelSmall)
+                            Text("v0.3.1 • UI PREVIEW • BUILD 12", color = muted, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     NavigationBar(containerColor = Color(0xFF0D1520)) {
@@ -269,7 +269,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
-                            item { Text("Build v0.3.0 • UI PREVIEW • BUILD 11", color = muted) }
+                            item { Text("Build v0.3.1 • UI PREVIEW • BUILD 12", color = muted) }
                         }
                     }
                 }
@@ -308,10 +308,17 @@ class MainActivity : ComponentActivity() {
         ) throw SecurityException("Bluetooth permission not granted")
         val adapter = BluetoothAdapter.getDefaultAdapter() ?: throw IOException("Bluetooth is not supported on this device")
         if (!adapter.isEnabled) throw IOException("Turn on Bluetooth")
-        val device: BluetoothDevice = adapter.bondedDevices.firstOrNull {
+        val candidates = adapter.bondedDevices.filter {
             val n = it.name.orEmpty()
             n.contains("Vgate", true) || n.contains("iCar", true) || n.contains("OBD", true)
-        } ?: adapter.bondedDevices.firstOrNull() ?: throw IOException("No paired OBD adapter. Pair Vgate in Android settings.")
+        }
+        if (candidates.isEmpty()) {
+            throw IOException("No recognised OBD adapter found. Pair your Vgate iCar Pro, then try again.")
+        }
+        if (candidates.size > 1) {
+            throw IOException("Multiple OBD adapters are paired. Keep only the intended Vgate adapter connected.")
+        }
+        val device: BluetoothDevice = candidates.single()
         val s = device.createRfcommSocketToServiceRecord(SPP_UUID)
         adapter.cancelDiscovery()
         s.connect()
