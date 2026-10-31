@@ -644,3 +644,11 @@ When continuing this repository:
 - Bluetooth permission recovery: Connect now rechecks Android 12+ BLUETOOTH_CONNECT permission and reopens the runtime prompt after denial; the user can tap Connect again after granting it. Connection exceptions now surface their message rather than always collapsing to a generic failure. Source commit: `300b76dd6e09f1eca26b4865e0a9ed58891de02f`.
 
 - Welcome voice selection refinement: TTS now prefers an installed English voice whose Android voice identifier contains “female”; if none is available, it falls back to the device's English (UK) default. This is a best-effort device voice preference, not a guarantee that every OEM TTS engine labels voices consistently. Source commit: `117d7180dc83fe9753059578742af025e2e5b5e9`.
+
+
+### Build 18 follow-up — warning sample integrity
+
+- Tightened the warning evaluator so each consecutive confirmation must come from a strictly newer sensor capture timestamp. Re-evaluating a cached sample or receiving an older sample out of order cannot manufacture a warning confirmation.
+- Invalid, unsupported, stale, future-dated and non-finite readings cannot trigger an alert. Stale data also cannot clear an already-active alert; only a later fresh reading below the configured hysteresis clear level can do that.
+- Added unit coverage for duplicate/out-of-order timestamps, stale data while an alert is active, future timestamps and non-finite sensor values.
+- No SX4 alert thresholds were enabled by this change. Real vehicle calibration remains outstanding.
