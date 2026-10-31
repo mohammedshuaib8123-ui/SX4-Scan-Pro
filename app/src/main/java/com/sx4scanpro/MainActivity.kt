@@ -136,6 +136,7 @@ class MainActivity : ComponentActivity() {
         var dtcCodes by remember { mutableStateOf<List<String>>(emptyList()) }
         var scanningCodes by remember { mutableStateOf(false) }
         var headUnitStatus by remember { mutableStateOf("Open Headunit runs as a separate receiver app.") }
+        var warningPreview by remember { mutableStateOf(false) }
         val scope = rememberCoroutineScope()
         val connected = status == "Connected"
 
@@ -208,7 +209,7 @@ class MainActivity : ComponentActivity() {
                         }
                         Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
                             Text(if (connected) "● ECU LINK ACTIVE" else "○ ECU OFFLINE", color = if (connected) cyan else muted)
-                            Text("v0.3.6 • UI PREVIEW • BUILD 17", color = muted, style = MaterialTheme.typography.labelSmall)
+                            Text("v0.3.7 • UI PREVIEW • BUILD 18", color = muted, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     NavigationBar(containerColor = Color(0xFF09111D), tonalElevation = 0.dp) {
@@ -219,6 +220,11 @@ class MainActivity : ComponentActivity() {
                     }
                     when (selectedTab) {
                         0 -> Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
+                            if (warningPreview) {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF5B171D)), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF5252))) {
+                                    Text("⚠ WARNING SYSTEM PREVIEW — NOT A LIVE VEHICLE FAULT", Modifier.padding(12.dp), color = Color.White, fontWeight = FontWeight.Black)
+                                }
+                            }
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text("ENGINE TELEMETRY   /   REAL-TIME INSTRUMENTATION", color = cyan, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp)
                                 Text(if (connected) "● LIVE DATA" else "◌ ECU STANDBY", color = if (connected) cyan else muted, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
@@ -320,10 +326,22 @@ class MainActivity : ComponentActivity() {
                                             Text("PREVIEW WELCOME ANNOUNCEMENT")
                                         }
                                         Text("Preview plays the same chime and announcement without requiring the engine to start. TTS voice identity depends on voices installed on the tablet.", color = muted)
+                                        Divider(color = Color(0xFF26394C))
+                                        Text("WARNING ALERT OUTPUT TEST", color = Color(0xFFFFB84D), style = MaterialTheme.typography.titleMedium)
+                                        Text("Tests the dashboard warning banner, alert tone and spoken message. This is a manual preview only; no SX4 warning limits are enabled yet.", color = muted)
+                                        Button(onClick = {
+                                            warningPreview = true
+                                            chime?.startTone(ToneGenerator.TONE_PROP_NACK, 520)
+                                            if (speechReady) textToSpeech?.speak("Warning. Please check the vehicle condition.", TextToSpeech.QUEUE_FLUSH, null, "sx4_warning_preview")
+                                            mainHandler.postDelayed({ warningPreview = false }, 2200)
+                                        }, modifier = Modifier.fillMaxWidth()) {
+                                            Text("PREVIEW WARNING ALERT")
+                                        }
+                                        Text("Configured automatic warning rules: 0 — awaiting verified SX4 specifications.", color = muted)
                                     }
                                 }
                             }
-                            item { Text("Build v0.3.6 • UI PREVIEW • BUILD 17", color = muted) }
+                            item { Text("Build v0.3.7 • UI PREVIEW • BUILD 18", color = muted) }
                         }
                     }
                 }
@@ -495,33 +513,8 @@ class MainActivity : ComponentActivity() {
             .distinct()
     }
 
-    private fun decodeTroubleCodes(response: String, mode: String): List<String> {
-        val prefix = when (mode) {
-            "03" -> "43"
-            "07" -> "47"
-            "0A" -> "4A"
-            else -> return emptyList()
-        }
-        if (!response.startsWith(prefix)) return emptyList()
-        if (response.contains("NODATA") || response.contains("UNABLE") || response.contains("STOPPED")) return emptyList()
-        val payload = response.removePrefix(prefix)
-        if (payload.isBlank() || payload.length % 4 != 0 || payload.any { it !in "0123456789ABCDEF" }) return emptyList()
-        val hex = payload
-        return hex.chunked(4).filter { it.length == 4 }.mapNotNull { bytes ->
-            val a = bytes.substring(0, 2).toIntOrNull(16) ?: return@mapNotNull null
-            val b = bytes.substring(2, 4).toIntOrNull(16) ?: return@mapNotNull null
-            if (a == 0 && b == 0) return@mapNotNull null
-            val first = when ((a shr 6) and 0x03) {
-                0 -> "P"
-                1 -> "C"
-                2 -> "B"
-                else -> "U"
-            }
-            val second = ((a shr 4) and 0x03).toString()
-            val remaining = "%02X%02X".format(a and 0x0F, b)
-            first + second + remaining
-        }
-    }
+    private fun decodeTroubleCodes(response: String, mode: String): List<String> =
+        ObdTroubleCodeDecoder.decode(response, mode)
 
     private fun parsePid(command: String, data: String): String? {
         val expectedLength = if (command in setOf("010C", "0110")) 4 else 2
