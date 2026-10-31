@@ -652,3 +652,10 @@ When continuing this repository:
 - Invalid, unsupported, stale, future-dated and non-finite readings cannot trigger an alert. Stale data also cannot clear an already-active alert; only a later fresh reading below the configured hysteresis clear level can do that.
 - Added unit coverage for duplicate/out-of-order timestamps, stale data while an alert is active, future timestamps and non-finite sensor values.
 - No SX4 alert thresholds were enabled by this change. Real vehicle calibration remains outstanding.
+
+
+### Build 18 follow-up — cockpit instrument motion
+
+- Added Compose value interpolation to the two primary cockpit dials. RPM and road-speed arc sweeps and needles now ease toward each newly received value instead of snapping instantly between polling updates.
+- The animation is presentation-only: it does not alter, predict or fabricate ECU readings. Unavailable gauges remain unavailable.
+- Tablet visual review and CI validation are still required before this preview can be treated as a release.
