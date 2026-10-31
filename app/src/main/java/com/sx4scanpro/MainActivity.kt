@@ -10,6 +10,15 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.grid.item as gridItem
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
@@ -24,6 +33,39 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.IOException
 import java.util.UUID
+
+
+@Composable
+private fun GaugeCard(gauge: GaugeValue) {
+    val number = gauge.value.toFloatOrNull()
+    val range = when (gauge.label) {
+        "Engine RPM" -> 5000f
+        "Vehicle speed" -> 180f
+        "Coolant temperature" -> 120f
+        "Intake air temperature" -> 100f
+        "Manifold pressure" -> 250f
+        "Turbo boost" -> 200f
+        "MAF airflow" -> 100f
+        else -> 100f
+    }
+    val fraction = if (gauge.available && number != null) (number / range).coerceIn(0f, 1f) else 0f
+    Card(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+            Text(gauge.label, style = MaterialTheme.typography.labelLarge, minLines = 2)
+            Box(Modifier.fillMaxWidth().height(82.dp), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                Canvas(Modifier.fillMaxSize()) {
+                    val stroke = 9.dp.toPx()
+                    val arcSize = Size(size.width * 0.78f, size.height * 1.55f)
+                    val topLeft = androidx.compose.ui.geometry.Offset((size.width - arcSize.width) / 2f, size.height * 0.22f)
+                    drawArc(color = Color(0xFF344252), startAngle = 180f, sweepAngle = 180f, useCenter = false, topLeft = topLeft, size = arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
+                    if (gauge.available) drawArc(color = Color(0xFF35B887), startAngle = 180f, sweepAngle = 180f * fraction, useCenter = false, topLeft = topLeft, size = arcSize, style = Stroke(stroke, cap = StrokeCap.Round))
+                }
+                Text(if (gauge.available) gauge.value else "—", style = MaterialTheme.typography.headlineSmall)
+            }
+            Text(if (gauge.available) gauge.unit else "Waiting for ECU", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
 
 private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
@@ -135,40 +177,40 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 when (selectedTab) {
-                    0 -> LazyColumn(
-                        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+                    0 -> LazyVerticalGrid(
+                        columns = GridCells.Adaptive(minSize = 158.dp),
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
                         contentPadding = PaddingValues(vertical = 16.dp)
                     ) {
-                        item {
+                        gridItem(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
                             Card(Modifier.fillMaxWidth()) {
                                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Text("ADAPTER STATUS", style = MaterialTheme.typography.labelMedium)
+                                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                        Text("ADAPTER", style = MaterialTheme.typography.labelMedium)
+                                        Text(if (status == "Connected") "● LIVE" else "○ OFFLINE",
+                                            color = if (status == "Connected") Color(0xFF2E9D68) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            style = MaterialTheme.typography.labelMedium)
+                                    }
                                     Text(status, style = MaterialTheme.typography.titleLarge)
                                     Text(adapterName, style = MaterialTheme.typography.bodyMedium)
-                                    Button(onClick = { connect() }, modifier = Modifier.fillMaxWidth()) {
-                                        Text(if (status == "Connected") "Reconnect" else "Connect to Vgate")
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Button(onClick = { connect() }, modifier = Modifier.weight(1f)) {
+                                            Text(if (status == "Connected") "Reconnect" else "Connect")
+                                        }
+                                        OutlinedButton(onClick = { closeSocket(); status = "Disconnected"; note = "Adapter disconnected." }) { Text("Disconnect") }
                                     }
                                     Text(note, style = MaterialTheme.typography.bodySmall)
                                 }
                             }
                         }
-                        item { Text("LIVE ENGINE DATA", style = MaterialTheme.typography.titleMedium) }
-                        items(gauges) { gauge ->
-                            Card(Modifier.fillMaxWidth()) {
-                                Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                                    Column(Modifier.weight(1f)) {
-                                        Text(gauge.label, style = MaterialTheme.typography.bodyMedium)
-                                        Text(if (gauge.available) gauge.value else "Unavailable", style = MaterialTheme.typography.headlineSmall)
-                                    }
-                                    Text(gauge.unit, style = MaterialTheme.typography.labelLarge)
-                                }
-                            }
+                        gridItem(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                            Text("ENGINE INSTRUMENTS", style = MaterialTheme.typography.titleMedium)
                         }
-                        item {
-                            OutlinedButton(onClick = { closeSocket(); status = "Disconnected"; note = "Adapter disconnected." }, modifier = Modifier.fillMaxWidth()) {
-                                Text("Disconnect")
-                            }
+                        gridItems(gauges) { gauge -> GaugeCard(gauge) }
+                        gridItem(span = { androidx.compose.foundation.lazy.grid.GridItemSpan(maxLineSpan) }) {
+                            Text("Readings depend on ECU support. Unavailable means no valid response was received.", style = MaterialTheme.typography.bodySmall)
                             Text("Use while parked or have a passenger operate it. Do not interact with the phone while driving.", style = MaterialTheme.typography.bodySmall)
                         }
                     }
