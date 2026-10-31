@@ -404,17 +404,16 @@ class MainActivity : ComponentActivity() {
                         val top = androidx.compose.ui.geometry.Offset((size.width - arc.width) / 2f, size.height * .22f)
                         drawArc(Color(0xFF263747), 180f, 180f, false, top, arc, style = Stroke(stroke * 1.9f, cap = StrokeCap.Round))
                         drawArc(accent.copy(alpha = 0.12f), 180f, 180f, false, top, arc, style = Stroke(stroke * 3.2f, cap = StrokeCap.Round))
-                        val fraction = (gauge.value.toFloatOrNull()?.div(max) ?: 0f).coerceIn(0f, 1f)
                         if (gauge.available) {
-                            drawArc(accent.copy(alpha = 0.18f), 180f, 180f * fraction, false, top, arc, style = Stroke(stroke * 2.8f, cap = StrokeCap.Round))
-                            drawArc(accent, 180f, 180f * fraction, false, top, arc, style = Stroke(stroke, cap = StrokeCap.Round))
+                            drawArc(accent.copy(alpha = 0.18f), 180f, 180f * animatedFraction, false, top, arc, style = Stroke(stroke * 2.8f, cap = StrokeCap.Round))
+                            drawArc(accent, 180f, 180f * animatedFraction, false, top, arc, style = Stroke(stroke, cap = StrokeCap.Round))
                             val cx = size.width / 2f; val cy = size.height * 0.92f
                             for (tick in 0..20) {
                                 val angle = Math.PI * (1.0 + tick / 20.0)
                                 val r1 = size.width * 0.34f; val r2 = r1 + if (tick % 5 == 0) 12.dp.toPx() else 5.dp.toPx()
                                 drawLine(if (tick % 5 == 0) accent else Color(0xFF607589), androidx.compose.ui.geometry.Offset(cx + kotlin.math.cos(angle).toFloat() * r1, cy + kotlin.math.sin(angle).toFloat() * r1), androidx.compose.ui.geometry.Offset(cx + kotlin.math.cos(angle).toFloat() * r2, cy + kotlin.math.sin(angle).toFloat() * r2), strokeWidth = if (tick % 5 == 0) 2.dp.toPx() else 1.dp.toPx())
                             }
-                            val needleAngle = Math.PI * (1.0 + fraction)
+                            val needleAngle = Math.PI * (1.0 + animatedFraction)
                             drawLine(Color.White, androidx.compose.ui.geometry.Offset(cx, cy), androidx.compose.ui.geometry.Offset(cx + kotlin.math.cos(needleAngle).toFloat() * size.width * 0.31f, cy + kotlin.math.sin(needleAngle).toFloat() * size.width * 0.31f), strokeWidth = 3.dp.toPx(), cap = StrokeCap.Round)
                             drawCircle(accent, radius = 6.dp.toPx(), center = androidx.compose.ui.geometry.Offset(cx, cy))
                         }
