@@ -37,6 +37,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -252,13 +254,9 @@ class MainActivity : ComponentActivity() {
                             Text("v0.3.7 • UI PREVIEW • BUILD 18", color = muted, style = MaterialTheme.typography.labelSmall)
                         }
                     }
-                    NavigationBar(containerColor = Color(0xFF09111D), tonalElevation = 0.dp) {
-                        listOf("Cockpit", "Diagnostics", "Head Unit", "Settings").forEachIndexed { i, label ->
-                            NavigationBarItem(selected = selectedTab == i, onClick = { selectedTab = i },
-                                icon = { Text(listOf("◉", "⌁", "▣", "⚙")[i], color = if (selectedTab == i) cyan else muted) }, label = { Text(label, maxLines = 1, fontWeight = if (selectedTab == i) FontWeight.Bold else FontWeight.Normal) })
-                        }
-                    }
-                    when (selectedTab) {
+                    Box(Modifier.weight(1f).fillMaxWidth()) {
+                        Crossfade(targetState = selectedTab, animationSpec = tween(220), label = "cockpit-page-transition") { page ->
+                            when (page) {
                         0 -> Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
                             if (warningPreview || warningMessage.isNotBlank()) {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF5B171D)), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF5252))) {
@@ -386,6 +384,46 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                             item { Text("Build v0.3.7 • UI PREVIEW • BUILD 18", color = muted) }
+                        }
+                            }
+                        }
+                    }
+                    Row(
+                        Modifier.fillMaxWidth().height(84.dp)
+                            .background(Color(0xFF070E18))
+                            .padding(horizontal = 8.dp, vertical = 5.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("Cockpit", "Diagnostics", "Head Unit", "Settings").forEachIndexed { i, label ->
+                            val selected = selectedTab == i
+                            Surface(
+                                onClick = { selectedTab = i },
+                                modifier = Modifier.weight(1f).fillMaxHeight(),
+                                shape = RoundedCornerShape(14.dp),
+                                color = if (selected) Color(0xFF123447) else Color(0xFF101B28),
+                                border = if (selected) androidx.compose.foundation.BorderStroke(1.dp, cyan.copy(alpha = 0.75f)) else null
+                            ) {
+                                Column(
+                                    Modifier.fillMaxSize().padding(vertical = 5.dp),
+                                    horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.Center
+                                ) {
+                                    Text(
+                                        listOf("◉", "⌁", "▣", "⚙")[i],
+                                        color = if (selected) cyan else muted,
+                                        fontSize = 23.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        label.uppercase(),
+                                        color = if (selected) Color.White else muted,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (selected) FontWeight.Black else FontWeight.Medium,
+                                        letterSpacing = 0.7.sp,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
                         }
                     }
                 }
