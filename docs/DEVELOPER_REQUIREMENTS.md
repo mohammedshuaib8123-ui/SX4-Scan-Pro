@@ -286,7 +286,7 @@ This section records what was observed in source on 2026-11-01. It is not a clai
 - Explicit UI notes that BCM and other modules are unsupported.
 - Basic connect/reconnect/disconnect controls.
 - GitHub Actions debug APK build and artifact upload.
-- Four-section Compose UI (Cockpit / Diagnostics / Head Unit / Settings) with first-pass landscape cockpit gauges.\n- Visible source label: `v0.3.1 • UI PREVIEW • BUILD 12` (the next source update advances this).
+- Four-section Compose UI (Cockpit / Diagnostics / Head Unit / Settings) with first-pass landscape cockpit gauges.\n- Visible source label: `v0.3.2 • UI PREVIEW • BUILD 13`.
 
 ### Present but requires validation/hardening
 - Bluetooth selection requires exactly one paired device whose name contains Vgate, iCar or OBD; zero or multiple matches fail safely. This name match is a guardrail, not cryptographic adapter identification.
@@ -498,5 +498,7 @@ When continuing this repository:
 - Numeric formatting for RPM, MAF, load, throttle and boost now explicitly uses Locale.US so decimal separators remain stable regardless of the tablet's regional locale.
 - This is a source-level concurrency and formatting hardening change. It does not yet add supported-PID bitmap discovery, a full ELM framing/parser rewrite, timestamps, or real-car validation.
 - Build 12 source commit `20371d5f7d0b86f710910d01ddfc888425140aa3`; Build 12 workflow run #20 succeeded. Documentation workflow run #21 also succeeded.
-- Build 13 source commit: `afe9ddfae81a01c2ec089cf2760528ee6db81ec2`. Its Actions result must be checked before treating an APK as ready.
+- Build 13 OBD source commit: `afe9ddfae81a01c2ec089cf2760528ee6db81ec2`. The visible build-label synchronization commit is `dc9d53fefc1e692e75fcfcbfa6f5ef95580ea2f6`. Actions results must be checked before treating an APK as ready.
 - User has clarified that the current UI feels too minimal and not gaming-like. The next UI pass must be a deliberate visual redesign, not incremental color tweaks: immersive landscape cockpit composition, oversized illuminated instruments, richer layered panels and clear typography, while retaining the four sections and truthful ECU states. The user has approved another redesign pass.
+
+- Build 13 source label was synchronized to `v0.3.2 • UI PREVIEW • BUILD 13`; this does not change the vehicle-validation status.
