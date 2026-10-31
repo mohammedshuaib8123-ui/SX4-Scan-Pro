@@ -44,7 +44,8 @@ class WarningEngine(private val rules: List<WarningRule> = emptyList()) {
     private data class State(
         var consecutiveHigh: Int = 0,
         var active: Boolean = false,
-        var lastEmittedAtMs: Long = Long.MIN_VALUE
+        var lastEmittedAtMs: Long = Long.MIN_VALUE,
+        var lastSampleAtMs: Long = Long.MIN_VALUE
     )
 
     private val states = rules.associate { it.id to State() }
@@ -73,6 +74,11 @@ class WarningEngine(private val rules: List<WarningRule> = emptyList()) {
                 state.consecutiveHigh = 0
                 continue
             }
+
+            // A confirmation must represent a new sensor sample, not the same cached
+            // value evaluated again or an older sample arriving out of order.
+            if (reading!!.capturedAtMs <= state.lastSampleAtMs) continue
+            state.lastSampleAtMs = reading.capturedAtMs
 
             if (state.active) {
                 if (value!! < rule.clearBelow) {
