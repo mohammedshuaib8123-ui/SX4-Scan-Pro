@@ -82,7 +82,7 @@ private fun GaugeCard(gauge: GaugeValue) {
 
 private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
-data class GaugeValue(val label: String, val value: String, val unit: String = "", val available: Boolean = true)
+data class GaugeValue(val label: String, val value: String, val unit: String = "", val available: Boolean = true, val capturedAtMs: Long = System.currentTimeMillis())
 
 class MainActivity : ComponentActivity() {
     private val permissionRequest = registerForActivityResult(
@@ -90,7 +90,7 @@ class MainActivity : ComponentActivity() {
     ) { }
     private var socket: BluetoothSocket? = null
     private var supportedPids: Set<Int> = emptySet()
-    private val engineStartDetector = EngineStartDetector()
+    private val engineStartDetector = EngineStartDetector()\n    // Empty until verified SX4-specific rules are approved; pipeline is wired but inactive.\n    private val warningEngine = WarningEngine()
     private var speechReady = false
     private var textToSpeech: TextToSpeech? = null
     private var chime: ToneGenerator? = null
@@ -136,7 +136,7 @@ class MainActivity : ComponentActivity() {
         var dtcCodes by remember { mutableStateOf<List<String>>(emptyList()) }
         var scanningCodes by remember { mutableStateOf(false) }
         var headUnitStatus by remember { mutableStateOf("Open Headunit runs as a separate receiver app.") }
-        var warningPreview by remember { mutableStateOf(false) }
+        var warningPreview by remember { mutableStateOf(false) }\n        var warningMessage by remember { mutableStateOf("") }
         val scope = rememberCoroutineScope()
         val connected = status == "Connected"
 
@@ -158,6 +158,29 @@ class MainActivity : ComponentActivity() {
                         val rpmGauge = gauges.firstOrNull { it.label == "Engine RPM" }
                         if (engineStartDetector.update(rpmGauge?.value?.toIntOrNull(), rpmGauge?.available == true)) {
                             playEngineWelcome()
+                        }
+                        val sensorReadings = gauges.mapNotNull { gauge ->
+                            val sensor = when (gauge.label) {
+                                "Coolant temperature" -> "coolant"
+                                "Turbo boost" -> "boost"
+                                "MAF airflow" -> "maf"
+                                "Calculated engine load" -> "load"
+                                "Engine RPM" -> "rpm"
+                                else -> null
+                            } ?: return@mapNotNull null
+                            sensor to SensorReading(
+                                value = gauge.value.toDoubleOrNull(),
+                                capturedAtMs = gauge.capturedAtMs,
+                                supported = gauge.available,
+                                valid = gauge.available
+                            )
+                        }.toMap()
+                        warningEngine.evaluate(sensorReadings, System.currentTimeMillis()).forEach { event ->
+                            warningMessage = "⚠ ${event.severity}: ${event.ruleId.replace('-', ' ').uppercase()}"
+                            val spoken = if (event.severity == WarningSeverity.CRITICAL) "Critical warning. Please stop safely and check the vehicle." else "Caution. Please check the vehicle condition."
+                            chime?.startTone(ToneGenerator.TONE_PROP_NACK, 520)
+                            if (speechReady) textToSpeech?.speak(spoken, TextToSpeech.QUEUE_FLUSH, null, "sx4_warning_${event.ruleId}")
+                            mainHandler.postDelayed({ warningMessage = "" }, 8000)
                         }
                         delay(1300)
                     }
@@ -220,9 +243,9 @@ class MainActivity : ComponentActivity() {
                     }
                     when (selectedTab) {
                         0 -> Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                            if (warningPreview) {
+                            if (warningPreview || warningMessage.isNotBlank()) {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF5B171D)), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF5252))) {
-                                    Text("⚠ WARNING SYSTEM PREVIEW — NOT A LIVE VEHICLE FAULT", Modifier.padding(12.dp), color = Color.White, fontWeight = FontWeight.Black)
+                                    Text(if (warningMessage.isNotBlank()) warningMessage else "⚠ WARNING SYSTEM PREVIEW — NOT A LIVE VEHICLE FAULT", Modifier.padding(12.dp), color = Color.White, fontWeight = FontWeight.Black)
                                 }
                             }
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
