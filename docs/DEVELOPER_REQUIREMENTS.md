@@ -478,3 +478,14 @@ When continuing this repository:
 - Source commit: `3f6ebf2bf41f3083442a6c91b2bdccb61b314732`.
 - GitHub Actions run #18 was started for this commit; result must be checked before treating the APK as ready.
 - This build's UI changes do not establish vehicle compatibility or Android Auto functionality.
+
+
+## Build 12 — adapter selection safety (2026-11-01)
+
+- Retained the approved landscape-first tablet cockpit direction: large illuminated RPM/speed gauges, clear engine telemetry, graphite background, cyan/blue instrument lighting, amber caution and red critical states, with the four sections Cockpit / Diagnostics / Head Unit / Settings.
+- Increased the visible preview identifier to v0.3.1 / Build 12.
+- Removed the unsafe fallback that selected the first arbitrary paired Bluetooth device when no OBD adapter name matched. Connection now requires exactly one paired device identified as Vgate, iCar or OBD; zero or multiple matches produce an explicit error instead of risking connection to an unrelated device.
+- This is a connection-selection safeguard only. It does not certify live ECU communication or vehicle compatibility.
+- Build 11 source commit: 20371d5? No — Build 11 remains 3f6ebf2bf41f3083442a6c91b2bdccb61b314732.
+- Build 12 source commit: 20371d5f7d0b86f710910d01ddfc888425140aa3.
+- Still outstanding: serialise complete polling and DTC transactions; robust ELM response framing and PID support discovery; stale-data handling; verified SX4 alert thresholds; RPM-based welcome/chime; genuine Android Auto receiver integration; tablet visual validation and live SX4 testing.
