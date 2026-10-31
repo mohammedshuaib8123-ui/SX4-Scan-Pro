@@ -35,7 +35,7 @@ class WarningEngineTest {
     }
 
     @Test fun activeWarningNeedsHysteresisToClear() {
-        val engine = WarningEngine(listOf(rule(samples = 1)))
+        val engine = WarningEngine(listOf(rule(samples = 1, cooldown = 0L)))
         assertEquals(1, engine.evaluate(mapOf("coolant" to reading(111.0)), 1_000L).size)
         assertTrue(engine.evaluate(mapOf("coolant" to reading(107.0, at = 1_100L)), 1_100L).isEmpty())
         assertTrue(engine.evaluate(mapOf("coolant" to reading(104.0, at = 1_200L)), 1_200L).isEmpty())
