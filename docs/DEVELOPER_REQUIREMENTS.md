@@ -549,3 +549,4 @@ When continuing this repository:
 - Added unit tests for bitmap decoding, malformed responses and continuation-block gating. The CI workflow runs these unit tests before assembling the debug APK.
 - PID discovery is now source-implemented but still requires the deferred real ECU check. It does not imply that the Indian SX4 exposes all PIDs or that calculated boost is validated.
 - Build 15 source commit: `4fda4df990c34c37afcb6366f12e475439ae60fa`; PID decoder `0e10805d4aa111a2404b84c13a96485f5bf752a5`; tests `001005ab3b5770ab7e1143b4f8fc7b1de1d040d7`; polling integration `6f24e4de9aa565cfd16a8290963dd0f4d2ab44be`.
+- Build 15 follow-up correction: the validated ELM response reader now explicitly returns its response string (`92935825327d3b2dc2b57622a35737183929fc14`). Earlier intermediate Actions attempts failed during Kotlin compilation; the current source commit's workflow is the one to use for final verification.
