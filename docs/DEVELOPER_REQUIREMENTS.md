@@ -696,3 +696,7 @@ When continuing this repository:
 - Moving to a later dock destination slides the incoming page from the right; moving backward slides it from the left. The outgoing page moves in the opposite direction.
 - Timing is intentionally brief to keep one-tap navigation responsive. This is presentation-only and does not alter the ECU polling or diagnostic transactions.
 - Pending GitHub Actions verification and Realme Pad 2 visual review.
+
+### Directional section transition compile fix — 2026-11-01
+- GitHub Actions runs #88 and #89 exposed a missing Compose animation extension import for `togetherWith`.
+- Added the explicit `androidx.compose.animation.togetherWith` import. Awaiting CI verification; APK is not yet considered releasable.
