@@ -420,10 +420,11 @@ class MainActivity : ComponentActivity() {
                                                 startActivity(launch)
                                                 headUnitStatus = "Open Headunit launch requested. Complete its USB/Android Auto prompts."
                                             } else {
-                                                headUnitStatus = "Receiver not installed. Opening the official Open Headunit project."
-                                                startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/andreknieriem/open-headunit")))
+                                                headUnitStatus = "Open Headunit is not installed. SX4 Scan Pro does not include an Android Auto receiver yet. Install a compatible receiver separately to use projection."
                                             }
-                                        }, modifier = Modifier.fillMaxWidth()) { Text("START ANDROID AUTO RECEIVER") }
+                                        }, modifier = Modifier.fillMaxWidth()) {
+                                            Text(if (packageManager.getLaunchIntentForPackage("com.andrerinas.headunitrevived") != null) "OPEN INSTALLED RECEIVER" else "RECEIVER NOT INSTALLED")
+                                        }
                                         Text(headUnitStatus, color = Color(0xFFFFB84D), style = MaterialTheme.typography.bodyMedium)
                                     }
                                 }
