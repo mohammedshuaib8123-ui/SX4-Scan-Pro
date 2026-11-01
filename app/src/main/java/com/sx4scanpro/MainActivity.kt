@@ -104,7 +104,7 @@ private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34
 
 data class GaugeValue(val label: String, val value: String, val unit: String = "", val available: Boolean = true, val capturedAtMs: Long = System.currentTimeMillis())
 data class TroubleCodeResult(val category: String, val code: String)
-private data class DtcScanSummary(val codes: List<TroubleCodeResult>, val supportedModes: Int, val noDataModes: Int, val invalidModes: Int)
+private data class DtcScanSummary(val codes: List<TroubleCodeResult>, val supportedModes: Int, val noDataModes: Int, val invalidModes: Int, val failedModes: Int)
 
 class MainActivity : ComponentActivity() {
     private val permissionRequest = registerForActivityResult(
@@ -272,10 +272,10 @@ class MainActivity : ComponentActivity() {
                             "The engine ECU did not return a valid response for modes 03 / 07 / 0A. Check protocol support and adapter communication."
                         summary.codes.isNotEmpty() ->
                             "Valid responses from ${summary.supportedModes}/3 engine ECU modes. BCM, ABS, airbag and other modules were not scanned."
-                        summary.noDataModes == summary.supportedModes ->
+                        summary.noDataModes == summary.supportedModes && summary.failedModes == 0 && summary.invalidModes == 0 ->
                             "No DTCs reported by the ${summary.supportedModes} responding engine ECU mode(s). Other modules were not scanned."
                         else ->
-                            "No DTCs decoded. ${summary.noDataModes} mode(s) returned NO DATA and ${summary.invalidModes} response(s) were unsupported or malformed. Other modules were not scanned."
+                            "Scan summary: ${summary.supportedModes} valid, ${summary.noDataModes} NO DATA, ${summary.invalidModes} unsupported/malformed, ${summary.failedModes} communication failure(s). Engine ECU only; other modules were not scanned."
                     }
                 } catch (e: Exception) {
                     dtcStatus = "Scan failed: " + (e.message ?: "communication error")
@@ -299,7 +299,7 @@ class MainActivity : ComponentActivity() {
                         }
                         Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
                             Text(if (connected) "● ECU LINK ACTIVE" else "○ ECU OFFLINE", color = if (connected) cyan else muted)
-                            Text("v0.3.9 • UI PREVIEW • BUILD 20", color = muted, style = MaterialTheme.typography.labelSmall)
+                            Text("v0.4.0 • PRE-RELEASE • BUILD 21", color = muted, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -502,7 +502,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
-                            item { Text("Build v0.3.9 • UI PREVIEW • BUILD 20", color = muted) }
+                            item { Text("Build v0.4.0 • PRE-RELEASE • BUILD 21", color = muted) }
                         }
                             }
                         }
@@ -710,7 +710,9 @@ class MainActivity : ComponentActivity() {
             }
             if (!promptReceived) throw IOException("Timed out waiting for OBD response to $command")
             val response = out.toString().replace("\r", "").replace("\n", "").replace(" ", "").uppercase()
-            if (response.contains("STOPPED") || response == "?") throw IOException("OBD adapter rejected command: $command")
+            // A prompt-terminated "?" or STOPPED is a complete adapter response,
+            // not a broken byte stream. Return it so one unsupported DTC mode does
+            // not abort the remaining read-only mode checks.
             return response
         } catch (e: Exception) {
             closeSocket()
@@ -770,9 +772,16 @@ class MainActivity : ComponentActivity() {
         var supported = 0
         var noData = 0
         var invalid = 0
+        var failed = 0
         val codes = mutableListOf<TroubleCodeResult>()
         for ((mode, category) in modes) {
-            val response = sendCommand(mode).uppercase().filterNot { it.isWhitespace() }
+            val response = try {
+                sendCommand(mode).uppercase().filterNot { it.isWhitespace() }
+            } catch (e: IOException) {
+                failed++
+                if (socket?.isConnected != true) break
+                continue
+            }
             val expectedPrefix = when (mode) {
                 "03" -> "43"
                 "07" -> "47"
@@ -787,7 +796,7 @@ class MainActivity : ComponentActivity() {
                 else -> invalid++
             }
         }
-        return DtcScanSummary(codes.distinct(), supported, noData, invalid)
+        return DtcScanSummary(codes.distinct(), supported, noData, invalid, failed)
     }
 
     private fun decodeTroubleCodes(response: String, mode: String): List<String> =
