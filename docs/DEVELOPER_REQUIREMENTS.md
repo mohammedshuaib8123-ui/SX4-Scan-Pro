@@ -689,3 +689,10 @@ When continuing this repository:
 - The selection animation is visual only. Tap targets remain the same full-height dock surfaces, and navigation remains one tap with no hidden menus or gestures required.
 - Existing page crossfade and live-value gauge interpolation are unchanged.
 - This is a source change pending CI. Tablet touch/layout review is still required; do not treat the UI as driver-safe for interaction while moving.
+
+
+### Directional section transitions — 2026-11-01
+- Replaced the page-only crossfade with a short directional slide-and-fade transition between Cockpit, Diagnostics, Head Unit and Settings.
+- Moving to a later dock destination slides the incoming page from the right; moving backward slides it from the left. The outgoing page moves in the opposite direction.
+- Timing is intentionally brief to keep one-tap navigation responsive. This is presentation-only and does not alter the ECU polling or diagnostic transactions.
+- Pending GitHub Actions verification and Realme Pad 2 visual review.
