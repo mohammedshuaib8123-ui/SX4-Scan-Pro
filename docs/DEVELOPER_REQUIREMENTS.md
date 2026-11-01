@@ -713,3 +713,10 @@ When continuing this repository:
 - APK unit tests, APK assembly and APK artifact upload occur before the screenshot stage. A screenshot-stage failure must not be described as an APK build failure when those earlier steps passed.
 - Screenshots must be generated from the installed APK; concept artwork must never be presented as a real build screenshot.
 - Pending verification on GitHub Actions.
+
+### Screenshot review findings and capture correction — 2026-11-01
+- Build #95 completed unit tests, APK assembly, APK upload, emulator screenshot capture and screenshot artifact upload.
+- Visual inspection of the generated PNGs found Android's "Process system isn't responding" dialog over the app. These are genuine APK captures but are not acceptable UI approval screenshots.
+- The first navigation taps were outside the actual bottom-dock hit areas because the resized emulator has system navigation bars. Updated taps to the visual centers of the four dock targets at y=680 and x=160/480/800/1120.
+- Increased emulator allocation to four cores and 4 GB RAM and allowed a longer app-start settling period to reduce software-emulation stalls.
+- Next run must be visually inspected; successful artifact upload alone does not prove clean screenshots.
