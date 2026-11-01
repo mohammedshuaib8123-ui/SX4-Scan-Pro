@@ -371,32 +371,62 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
-                        2 -> LazyColumn(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        2 -> LazyColumn(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                             item {
-                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
-                                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        Text("ANDROID AUTO • HEAD UNIT", color = cyan, style = MaterialTheme.typography.titleMedium)
-                                        Text("Android Auto receiver: Open Headunit (separate app)", color = Color(0xFFFFB84D))
-                                        Text("Open Headunit is a separate Android Auto receiver. SX4 Scan Pro remains the OBD cockpit; projection runs independently so OBD polling, video and audio can be validated honestly.", color = muted)
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF0C1B2A)), border = androidx.compose.foundation.BorderStroke(1.dp, cyan.copy(alpha = .55f))) {
+                                    Column(Modifier.fillMaxWidth().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                            Column {
+                                                Text("SX4 HEAD UNIT", color = cyan, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Black, letterSpacing = 1.4.sp)
+                                                Text("ANDROID AUTO RECEIVER", color = muted, style = MaterialTheme.typography.labelSmall, letterSpacing = 1.2.sp)
+                                            }
+                                            Text("▣", color = cyan, fontSize = 34.sp)
+                                        }
+                                        Text("A dedicated launch pad for your tablet's Android Auto receiver. Keep projection separate from the OBD cockpit so both can be tested without pretending the receiver is embedded.", color = muted)
                                         Button(onClick = {
                                             val launch = packageManager.getLaunchIntentForPackage("com.andrerinas.headunitrevived")
                                             if (launch != null) {
                                                 startActivity(launch)
-                                                headUnitStatus = "Launching Open Headunit…"
+                                                headUnitStatus = "Open Headunit launch requested. Complete its USB/Android Auto prompts."
                                             } else {
-                                                headUnitStatus = "Open Headunit is not installed. Opening its official project page."
+                                                headUnitStatus = "Receiver not installed. Opening the official Open Headunit project."
                                                 startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/andreknieriem/open-headunit")))
                                             }
-                                        }, modifier = Modifier.fillMaxWidth()) { Text("LAUNCH / INSTALL OPEN HEADUNIT") }
-                                        Text(headUnitStatus, color = muted)
-                                        Divider(color = Color(0xFF26394C))
-                                        Text("WIRED USB SETUP — FIRST VALIDATION ROUTE", color = cyan, style = MaterialTheme.typography.titleSmall)
-                                        Text("1. Install Open Headunit from its official project source and review its AGPL-3.0 licence.\n2. Connect your Android Auto phone to the Realme Pad 2 with a known-good USB data cable and compatible OTG adapter/hub.\n3. Enable OTG in tablet settings if required; accept USB and Android Auto prompts.\n4. Confirm projection appears and touch input works.\n5. Route sound separately to the SX4 stereo using an input it supports (Bluetooth or AUX), then test media, navigation and calls.\n6. Test reconnect, screen-off, app switching and tablet charging.", color = muted)
-                                        Text("Not yet verified: USB host compatibility, phone pairing, touch, video, audio routing and charging on this exact setup. Wireless mode comes later; wired USB is the first target.", color = Color(0xFFFFB84D))
+                                        }, modifier = Modifier.fillMaxWidth()) { Text("START ANDROID AUTO RECEIVER") }
+                                        Text(headUnitStatus, color = Color(0xFFFFB84D), style = MaterialTheme.typography.bodyMedium)
                                     }
                                 }
                             }
-                            item { Text("Projection, touch and audio still require on-device testing. Android Auto 17.4+ has changed legacy wireless launch behaviour; start with wired USB.", color = muted) }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        Text("WIRED CONNECTION • FIRST BUILD TARGET", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        listOf(
+                                            "01  PHONE" to "Enable Android Auto and unlock your phone before connecting.",
+                                            "02  USB DATA" to "Use a known-good data cable and compatible USB OTG adapter or powered hub.",
+                                            "03  TABLET" to "Enable OTG on the Realme Pad 2 if required and accept the USB permission prompt.",
+                                            "04  PROJECTION" to "Confirm the receiver opens, projection appears and touch input responds.",
+                                            "05  AUDIO" to "Route sound to the SX4 stereo separately over a supported Bluetooth or AUX input.",
+                                            "06  RECONNECT" to "Test unplug/replug, screen-off, app switching and tablet charging."
+                                        ).forEach { step ->
+                                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                                Text(step.first, color = Color(0xFFFFB84D), fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                                                Text(step.second, color = muted, style = MaterialTheme.typography.bodyMedium)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("COMPATIBILITY CHECKLIST", color = Color(0xFFFFB84D), style = MaterialTheme.typography.titleMedium)
+                                        Text("Not yet verified on this exact Realme Pad 2 + phone + SX4 setup: USB host mode, projection, touch, audio routing, reconnect and charging. This screen does not claim a live USB connection.", color = muted)
+                                        Text("Receiver: Open Headunit • separate app • AGPL-3.0", color = muted, style = MaterialTheme.typography.labelSmall)
+                                        OutlinedButton(onClick = { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/andreknieriem/open-headunit"))) }, modifier = Modifier.fillMaxWidth()) { Text("VIEW OFFICIAL RECEIVER SOURCE") }
+                                    }
+                                }
+                            }
                         }
                         else -> LazyColumn(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             item {
