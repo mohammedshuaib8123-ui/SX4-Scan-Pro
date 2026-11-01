@@ -175,9 +175,13 @@ class MainActivity : ComponentActivity() {
 
         fun refreshUsbHostStatus() {
             val usbManager = getSystemService(USB_SERVICE) as UsbManager
+            val hostSupported = packageManager.hasSystemFeature(PackageManager.FEATURE_USB_HOST)
+            val receiverInstalled = packageManager.getLaunchIntentForPackage("com.andrerinas.headunitrevived") != null
             val devices = usbManager.deviceList.values.toList()
-            usbHostSummary = if (devices.isEmpty()) {
-                "No USB device currently detected. Connect the phone with a data-capable OTG setup, then refresh."
+            val hostLine = "USB host feature: " + if (hostSupported) "available" else "not reported by Android"
+            val receiverLine = "Open Headunit: " + if (receiverInstalled) "installed" else "not installed"
+            val deviceLine = if (devices.isEmpty()) {
+                "No USB device currently enumerated. Connect the phone using a data-capable OTG setup, then refresh."
             } else {
                 devices.joinToString(separator = "\n") { device ->
                     val vendor = "VID %04X".format(device.vendorId)
@@ -186,6 +190,7 @@ class MainActivity : ComponentActivity() {
                     "$name • $vendor / $product"
                 }
             }
+            usbHostSummary = "$hostLine\n$receiverLine\n$deviceLine"
         }
         fun disconnect() {
             closeSocket()
