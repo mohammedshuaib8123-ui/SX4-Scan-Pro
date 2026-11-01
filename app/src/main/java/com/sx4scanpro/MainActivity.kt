@@ -707,10 +707,11 @@ class MainActivity : ComponentActivity() {
     @Synchronized
     private fun discoverSupportedPids(): Set<Int> {
         val first = sendCommand("0100", timeoutMs = 12000)
-        val second = if (ObdPidSupport.decode(first).contains(32)) {
-            sendCommand("0120", timeoutMs = 12000)
-        } else ""
-        return ObdPidSupport.decode(first + second)
+        val firstSet = ObdPidSupport.decode(first)
+        val second = if (32 in firstSet) sendCommand("0120", timeoutMs = 12000) else ""
+        val through64 = ObdPidSupport.decode(first + second)
+        val third = if (64 in through64) sendCommand("0140", timeoutMs = 12000) else ""
+        return ObdPidSupport.decode(first + second + third)
     }
 
     // Hold the same Activity monitor for the complete PID batch so a DTC scan cannot
