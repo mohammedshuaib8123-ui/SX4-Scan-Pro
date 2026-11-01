@@ -13,6 +13,13 @@ import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.media.AudioManager
 import android.media.ToneGenerator
+import android.media.AudioTrack
+import android.media.AudioFormat
+import android.media.AudioAttributes
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.RepeatMode
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -108,6 +115,8 @@ class MainActivity : ComponentActivity() {
     private var speechReady = false
     private var textToSpeech: TextToSpeech? = null
     private var chime: ToneGenerator? = null
+    private var cabinChimeTrack: AudioTrack? = null
+    private var welcomeOverlayVisible by mutableStateOf(false)
     private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -259,7 +268,7 @@ class MainActivity : ComponentActivity() {
                         }
                         Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
                             Text(if (connected) "● ECU LINK ACTIVE" else "○ ECU OFFLINE", color = if (connected) cyan else muted)
-                            Text("v0.3.8 • UI PREVIEW • BUILD 19", color = muted, style = MaterialTheme.typography.labelSmall)
+                            Text("v0.3.9 • UI PREVIEW • BUILD 20", color = muted, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -422,8 +431,30 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
-                            item { Text("Build v0.3.8 • UI PREVIEW • BUILD 19", color = muted) }
+                            item { Text("Build v0.3.9 • UI PREVIEW • BUILD 20", color = muted) }
                         }
+                            }
+                        }
+                        AnimatedVisibility(visible = welcomeOverlayVisible, enter = fadeIn(tween(420)), exit = fadeOut(tween(650)), modifier = Modifier.fillMaxSize()) {
+                            val welcomePulse by rememberInfiniteTransition(label = "welcome-flight-pulse").animateFloat(
+                                initialValue = 0.48f, targetValue = 1f,
+                                animationSpec = infiniteRepeatable(tween(1050), repeatMode = RepeatMode.Reverse),
+                                label = "welcome-flight-glow"
+                            )
+                            Box(Modifier.fillMaxSize().background(Color(0xF4050A12)), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                                Card(Modifier.fillMaxWidth(.82f), colors = CardDefaults.cardColors(containerColor = Color(0xFF0C1D2B)),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, cyan.copy(alpha = welcomePulse))) {
+                                    Column(Modifier.fillMaxWidth().padding(vertical = 28.dp, horizontal = 24.dp),
+                                        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                        Text("✈", color = cyan.copy(alpha = welcomePulse), fontSize = 58.sp)
+                                        Text("FLIGHT SYSTEMS ONLINE", color = cyan, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, letterSpacing = 2.2.sp)
+                                        Text("WELCOME ABOARD", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
+                                        Text("SX4 AIRLINES 2874", color = Color(0xFFFFB84D), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black, letterSpacing = 1.6.sp)
+                                        Text("ENGINE START CONFIRMED • ECU RPM", color = muted, style = MaterialTheme.typography.labelSmall)
+                                        Box(Modifier.fillMaxWidth(.58f).height(3.dp).background(cyan.copy(alpha = welcomePulse), RoundedCornerShape(3.dp)))
+                                    }
+                                }
                             }
                         }
                     }
@@ -687,17 +718,57 @@ class MainActivity : ComponentActivity() {
     @Volatile private var welcomeChimeFinished = false
 
     private fun playEngineWelcome() {
-        // Production call site is the fresh-RPM engine-start transition; preview is manual.
         welcomePending = true
         welcomeChimeFinished = false
-        chime?.startTone(ToneGenerator.TONE_PROP_BEEP, 150)
+        welcomeOverlayVisible = true
+        mainHandler.postDelayed({ welcomeOverlayVisible = false }, 6500L)
+        playAircraftCabinChime()
         mainHandler.postDelayed({
-            chime?.startTone(ToneGenerator.TONE_PROP_ACK, 180)
+            welcomeChimeFinished = true
+            if (speechReady) speakEngineWelcome()
+        }, 980L)
+    }
+
+    private fun playAircraftCabinChime() {
+        // Original synthesized ascending three-note cabin chime; no sampled airline audio.
+        try {
+            val sampleRate = 44100
+            val notes = doubleArrayOf(880.0, 1174.66, 1396.91)
+            val noteFrames = (sampleRate * 0.24).toInt()
+            val gapFrames = (sampleRate * 0.06).toInt()
+            val samples = ShortArray(notes.size * (noteFrames + gapFrames))
+            var cursor = 0
+            notes.forEach { frequency ->
+                repeat(noteFrames) { frame ->
+                    val attack = (frame / (sampleRate * 0.025)).coerceIn(0.0, 1.0)
+                    val release = ((noteFrames - frame) / (sampleRate * 0.055)).coerceIn(0.0, 1.0)
+                    val envelope = minOf(attack, release)
+                    val phase = 2.0 * Math.PI * frequency * frame / sampleRate
+                    val tone = (kotlin.math.sin(phase) * 0.78 + kotlin.math.sin(phase * 2.0) * 0.12) * envelope * 0.22
+                    samples[cursor++] = (tone * Short.MAX_VALUE).toInt().toShort()
+                }
+                repeat(gapFrames) { samples[cursor++] = 0 }
+            }
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+                .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(sampleRate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .setBufferSizeInBytes(samples.size * 2)
+                .build()
+            cabinChimeTrack?.release()
+            cabinChimeTrack = track
+            track.setVolume(0.72f)
+            track.write(samples, 0, samples.size)
+            track.play()
             mainHandler.postDelayed({
-                welcomeChimeFinished = true
-                if (speechReady) speakEngineWelcome()
-            }, 280)
-        }, 190)
+                runCatching { track.stop() }
+                track.release()
+                if (cabinChimeTrack === track) cabinChimeTrack = null
+            }, samples.size * 1000L / sampleRate + 150L)
+        } catch (_: Exception) {
+            chime?.startTone(ToneGenerator.TONE_PROP_BEEP, 180)
+            mainHandler.postDelayed({ chime?.startTone(ToneGenerator.TONE_PROP_ACK, 180) }, 220L)
+        }
     }
 
     private fun speakEngineWelcome() {
@@ -718,6 +789,8 @@ class MainActivity : ComponentActivity() {
         textToSpeech?.stop()
         textToSpeech?.shutdown()
         chime?.release()
+        cabinChimeTrack?.release()
+        cabinChimeTrack = null
         super.onDestroy()
     }
 }
