@@ -20,7 +20,7 @@ class ObdPidSupportTest {
         assertEquals(setOf(1), result)
     }
 
-    @Test fun doesNotReadThirdBlockUnlessPid64IsAdvertised() {
+    @Test fun ignoresThirdBitmapWhenPid64IsNotAdvertised() {
         val result = ObdPidSupport.decode("4100FFFFFFFF4120000000004140FFFFFFFF")
         assertEquals((1..32).toSet(), result)
     }
