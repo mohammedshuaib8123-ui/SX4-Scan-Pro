@@ -759,3 +759,41 @@ When continuing this repository:
 - The results UI labels each code by its originating standard mode instead of flattening all returned codes into an unclassified list.
 - This remains standard engine ECU OBD-II only; it does not decode manufacturer-specific Suzuki modules or assign fault causes beyond the returned DTC identifier.
 - Pending CI verification. Real SX4 adapter/ECU responses are still required before claiming vehicle-level validation.
+
+
+---
+
+## Build 20 — aircraft welcome animation, motion polish and head-unit work (2026-11-01)
+
+### Welcome / engine-start sequence
+- Replaced the basic two ToneGenerator beeps with an original synthesized ascending three-note cabin chime using generated PCM tones; no airline recording or copyrighted sample is bundled.
+- The sequence remains gated by the existing engine-start detector: two fresh positive RPM samples are required. Bluetooth connection alone does not trigger it.
+- Added a full-screen welcome overlay with animated fade, pulsing flight-system glow and the exact identity "SX4 AIRLINES 2874".
+- The chime plays first, followed by the existing TTS welcome line when the TTS engine is ready. Female voice selection remains best-effort because installed voice metadata differs by device.
+- Added audio track cleanup on Activity destruction and a fallback to the existing system tones if custom audio playback cannot be initialized.
+- The Settings preview invokes the same welcome sequence without requiring engine start.
+
+### Additional motion
+- Live RPM/speed numeric readouts now cross-fade when fresh ECU values update.
+- Warning preview/live warning banners now animate into view with a short directional slide and fade.
+- Existing animated gauge arcs/needles, four-page directional navigation, selected dock glow/indicator and the welcome overlay remain part of the motion system.
+- Motion should remain restrained and must not obstruct glanceable driving information.
+
+### Head Unit page — parallel implementation track
+- Expanded the Head Unit page into a dedicated receiver launch surface with a clear start action, six-step wired setup checklist, compatibility caveats and official source link.
+- Open Headunit remains a separate Android Auto receiver app. SX4 Scan Pro does not embed or fork its projection implementation.
+- First validation target remains wired USB/OTG on the Realme Pad 2. Projection, touch, audio routing, reconnect and charging remain unverified until tested on the actual hardware.
+- Open Headunit is AGPL-3.0; no source code from that project has been copied into this app.
+
+### Imported project-local agent skills
+- Imported `.agent/skills/android-ui-engineering/SKILL.md`, `incremental-implementation/SKILL.md` and `test-driven-development/SKILL.md` from [GuillemRoca/agent-skills-android](https://github.com/GuillemRoca/agent-skills-android), MIT licensed; see `.agent/skills/LICENSE-MIT.txt`.
+- Imported Google's official Android skills: Jetpack Compose adaptive layouts, Compose performance and Android testing setup from [android/skills](https://github.com/android/skills), Apache-2.0; see `.agent/skills/LICENSE-APACHE-2.0.txt`.
+- Skills are guidance for future changes, not runtime libraries. API-specific advice must be checked against this project's actual Gradle/Compose versions; do not mechanically adopt Navigation 3 or unrelated architecture migrations.
+- The GitHub connector is already available. Context7 was suggested as an optional documentation integration; it is not assumed connected.
+
+### Verification / pending
+- Build 20 source changes require unit-test and APK-build verification.
+- Verify synthesized chime playback and welcome overlay timing on a physical Android device; emulator audio may differ.
+- Capture and visually inspect the four runtime UI screenshots from the same Build 20 APK. Do not approve the screenshots merely because the CI artifact uploads.
+- Inspect the expanded Head Unit page on the Realme Pad 2 and perform wired USB/OTG receiver tests when hardware is available.
+- Maintain the existing restriction: no fabricated ECU data and no automatic vehicle warnings until SX4-specific thresholds are verified.
