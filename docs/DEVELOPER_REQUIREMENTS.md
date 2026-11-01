@@ -752,3 +752,10 @@ When continuing this repository:
 - Add vehicle-specific warnings only when reliable SX4 diesel thresholds and sensor semantics are verified.
 - Validate the Vgate iCar Pro against the Indian SX4 ZDi/1.3 DDiS; standard OBD support does not guarantee manufacturer modules.
 - Test Open Headunit wired projection, touch, audio, charging and reconnect on the Realme Pad 2.
+
+
+### Build 19 follow-up — DTC result classification
+- Diagnostics now preserves the OBD service category for each returned engine trouble code: stored (Mode 03), pending (Mode 07) and permanent (Mode 0A).
+- The results UI labels each code by its originating standard mode instead of flattening all returned codes into an unclassified list.
+- This remains standard engine ECU OBD-II only; it does not decode manufacturer-specific Suzuki modules or assign fault causes beyond the returned DTC identifier.
+- Pending CI verification. Real SX4 adapter/ECU responses are still required before claiming vehicle-level validation.
