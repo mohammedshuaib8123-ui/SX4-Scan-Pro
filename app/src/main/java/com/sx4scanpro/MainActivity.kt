@@ -39,6 +39,11 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.Crossfade
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -256,7 +261,21 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     Box(Modifier.weight(1f).fillMaxWidth()) {
-                        Crossfade(targetState = selectedTab, animationSpec = tween(220), label = "cockpit-page-transition") { page ->
+                        AnimatedContent(
+                            targetState = selectedTab,
+                            transitionSpec = {
+                                val forward = targetState > initialState
+                                (fadeIn(tween(180)) + slideInHorizontally(
+                                    animationSpec = tween(220),
+                                    initialOffsetX = { width -> if (forward) width / 5 else -width / 5 }
+                                )) togetherWith
+                                    (fadeOut(tween(140)) + slideOutHorizontally(
+                                        animationSpec = tween(180),
+                                        targetOffsetX = { width -> if (forward) -width / 5 else width / 5 }
+                                    ))
+                            },
+                            label = "cockpit-page-slide-transition"
+                        ) { page ->
                             when (page) {
                         0 -> Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
                             if (warningPreview || warningMessage.isNotBlank()) {
