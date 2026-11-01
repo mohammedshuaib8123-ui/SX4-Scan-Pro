@@ -5,9 +5,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ObdPidSupportTest {
-    @Test fun decodesBothSupportedPidBitmapBlocks() {
-        val result = ObdPidSupport.decode("4100FFFFFFFF4120FFFFFFFF")
-        assertEquals((1..64).toSet(), result)
+    @Test fun decodesThreeSupportedPidBitmapBlocks() {
+        val result = ObdPidSupport.decode("4100FFFFFFFF4120FFFFFFFF4140FFFFFFFF")
+        assertEquals((1..96).toSet(), result)
     }
 
     @Test fun ignoresMalformedOrMissingBitmap() {
@@ -18,5 +18,10 @@ class ObdPidSupportTest {
     @Test fun doesNotReadSecondBlockUnlessPid32IsAdvertised() {
         val result = ObdPidSupport.decode("4100800000004120FFFFFFFF")
         assertEquals(setOf(1), result)
+    }
+
+    @Test fun doesNotReadThirdBlockUnlessPid64IsAdvertised() {
+        val result = ObdPidSupport.decode("4100FFFFFFFF4120000000014140FFFFFFFF")
+        assertEquals((1..32).toSet() + 64, result)
     }
 }
