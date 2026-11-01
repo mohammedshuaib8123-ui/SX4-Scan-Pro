@@ -7,6 +7,7 @@ internal object ObdPidSupport {
         val supported = linkedSetOf<Int>()
         decodeBlock(response, "4100", 1, supported)
         if (32 in supported) decodeBlock(response, "4120", 33, supported)
+        if (64 in supported) decodeBlock(response, "4140", 65, supported)
         return supported
     }
 
