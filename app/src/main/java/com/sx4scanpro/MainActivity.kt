@@ -28,6 +28,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.rotate
@@ -317,40 +318,54 @@ class MainActivity : ComponentActivity() {
                             label = "cockpit-page-slide-transition"
                         ) { page ->
                             when (page) {
-                        0 -> Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                            AnimatedVisibility(visible = warningPreview || warningMessage.isNotBlank(), enter = fadeIn(tween(220)) + slideInHorizontally(tween(260)) { -it / 8 }, exit = fadeOut(tween(180))) {
-                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF5B171D)), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF5252))) {
-                                    Text(if (warningMessage.isNotBlank()) warningMessage else "⚠ WARNING SYSTEM PREVIEW — NOT A LIVE VEHICLE FAULT", Modifier.padding(12.dp), color = Color.White, fontWeight = FontWeight.Black)
+                        0 -> Column(
+                            Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 10.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                Column {
+                                    Text("SX4 / DDiS 1.3", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Black, letterSpacing = 1.8.sp)
+                                    Text("DRIVER INFORMATION SYSTEM  •  LIVE ECU TELEMETRY", color = muted, fontSize = 10.sp, letterSpacing = 1.4.sp)
+                                }
+                                Surface(color = if (connected) Color(0xFF0B332F) else Color(0xFF252B35), shape = RoundedCornerShape(50), border = androidx.compose.foundation.BorderStroke(1.dp, if (connected) Color(0xFF26D7B1) else Color(0xFF566274))) {
+                                    Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Box(Modifier.size(7.dp).background(if (connected) Color(0xFF26D7B1) else Color(0xFF8795A5), RoundedCornerShape(50)))
+                                        Text(if (connected) "ECU LINK ACTIVE" else "ECU DISCONNECTED", color = if (connected) Color(0xFF70F0D2) else muted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                    }
                                 }
                             }
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("ENGINE TELEMETRY   /   REAL-TIME INSTRUMENTATION", color = cyan, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold, letterSpacing = 1.4.sp)
-                                Text(if (connected) "● LIVE DATA" else "◌ ECU STANDBY", color = if (connected) cyan else muted, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                            AnimatedVisibility(visible = warningPreview || warningMessage.isNotBlank(), enter = fadeIn(tween(220)) + slideInHorizontally(tween(260)) { -it / 8 }, exit = fadeOut(tween(180))) {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF4B171D)), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF5252))) {
+                                    Text(if (warningMessage.isNotBlank()) warningMessage else "WARNING SYSTEM PREVIEW — NOT A LIVE VEHICLE FAULT", Modifier.padding(12.dp), color = Color.White, fontWeight = FontWeight.Black)
+                                }
                             }
-                            Row(Modifier.fillMaxWidth().weight(1.1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                                CockpitGauge("ENGINE RPM", gauges[0], "0 — 5,000 rpm", 5000f, cyan, Modifier.weight(1.15f))
-                                CockpitGauge("ROAD SPEED", gauges[1], "0 — 180 km/h", 180f, Color(0xFFFFB84D), Modifier.weight(1f))
-                            }
-                            Row(Modifier.fillMaxWidth().weight(.7f), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                listOf(gauges[5], gauges[2], gauges[6], gauges[7]).forEach { g ->
-                                    Card(Modifier.weight(1f), colors = CardDefaults.cardColors(containerColor = Color(0xE6121F2D)), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF26394C))) {
-                                        Column(Modifier.padding(10.dp)) {
-                                            Text(g.label.uppercase(), color = muted, style = MaterialTheme.typography.labelSmall, maxLines = 1, fontWeight = FontWeight.Bold, letterSpacing = .7.sp)
-                                            Text(if (g.available) g.value + " " + g.unit else "—", color = if (g.available) Color.White else muted, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black)
-                                            Text(if (g.available) "● LIVE SIGNAL" else "○ NO SIGNAL", color = if (g.available) cyan else muted, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold)
+                            Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                                CockpitGauge("ENGINE SPEED", gauges[0], "0 — 5,000 RPM", 5000f, Color(0xFF42DDF5), Modifier.weight(1.12f))
+                                CockpitGauge("ROAD SPEED", gauges[1], "0 — 180 KM/H", 180f, Color(0xFFFFB84D), Modifier.weight(1f))
+                                Card(Modifier.weight(.72f).fillMaxHeight(), colors = CardDefaults.cardColors(containerColor = Color(0xFF101B29)), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF263B50)), shape = RoundedCornerShape(22.dp)) {
+                                    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.SpaceEvenly) {
+                                        Text("POWERTRAIN", color = Color(0xFF42DDF5), fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 1.8.sp)
+                                        listOf(gauges[5], gauges[2], gauges[6], gauges[7]).forEach { g ->
+                                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                                Text(g.label.uppercase(), color = muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = .8.sp, maxLines = 1)
+                                                Text(if (g.available) "${g.value} ${g.unit}" else "—", color = if (g.available) Color.White else Color(0xFF657487), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                                                Box(Modifier.fillMaxWidth().height(2.dp).background(Color(0xFF26394C), RoundedCornerShape(3.dp))) {
+                                                    if (g.available) Box(Modifier.fillMaxWidth((g.value.toFloatOrNull()?.div(when(g.label) { "Turbo boost" -> 200f; "Coolant temperature" -> 120f; "MAF airflow" -> 100f; else -> 100f }) ?: 0f).coerceIn(0f,1f)).fillMaxHeight().background(Color(0xFF42DDF5), RoundedCornerShape(3.dp)))
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
-                                    Text(status.uppercase(), color = if (connected) cyan else muted)
-                                    Text(adapterName, color = muted, style = MaterialTheme.typography.labelSmall)
+                                    Text(if (connected) "V-GATE / OBD-II • CONNECTED" else "V-GATE / OBD-II • STANDBY", color = if (connected) Color(0xFF70F0D2) else muted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                    Text(adapterName, color = muted, fontSize = 10.sp)
                                 }
-                                OutlinedButton(onClick = { connect() }, enabled = !connected) { Text("CONNECT") }
-                                OutlinedButton(onClick = { disconnect() }, enabled = connected) { Text("DISCONNECT") }
+                                OutlinedButton(onClick = { connect() }, enabled = !connected, shape = RoundedCornerShape(12.dp)) { Text("CONNECT ADAPTER", fontWeight = FontWeight.Bold) }
+                                OutlinedButton(onClick = { disconnect() }, enabled = connected, shape = RoundedCornerShape(12.dp)) { Text("DISCONNECT", fontWeight = FontWeight.Bold) }
                             }
-                            Text("Informational display only. Do not operate the tablet while driving.", color = muted, style = MaterialTheme.typography.labelSmall)
+                            Text("Informational display only • Do not operate the tablet while driving", color = Color(0xFF718397), fontSize = 10.sp)
                         }
                         1 -> LazyColumn(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             item {
@@ -504,26 +519,32 @@ class MainActivity : ComponentActivity() {
                         }
                             }
                         }
-                        Crossfade(targetState = welcomeOverlayVisible, animationSpec = tween(420), label = "welcome-overlay-fade") { visible ->
+                        Crossfade(targetState = welcomeOverlayVisible, animationSpec = tween(550), label = "welcome-overlay-fade") { visible ->
                             if (visible) {
-                                val welcomePulse by rememberInfiniteTransition(label = "welcome-flight-pulse").animateFloat(
-                                    initialValue = 0.48f, targetValue = 1f,
-                                    animationSpec = infiniteRepeatable(tween(1050), repeatMode = RepeatMode.Reverse),
-                                    label = "welcome-flight-glow"
-                                )
-                                Box(Modifier.fillMaxSize().background(Color(0xF4050A12)), contentAlignment = androidx.compose.ui.Alignment.Center) {
-                                    Card(Modifier.fillMaxWidth(.82f), colors = CardDefaults.cardColors(containerColor = Color(0xFF0C1D2B)),
-                                        border = androidx.compose.foundation.BorderStroke(1.dp, cyan.copy(alpha = welcomePulse))) {
-                                        Column(Modifier.fillMaxWidth().padding(vertical = 28.dp, horizontal = 24.dp),
-                                            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
-                                            verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                            Text("✈", color = cyan.copy(alpha = welcomePulse), fontSize = 58.sp)
-                                            Text("FLIGHT SYSTEMS ONLINE", color = cyan, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, letterSpacing = 2.2.sp)
-                                            Text("WELCOME ABOARD", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
-                                            Text("SX4 AIRLINES 2874", color = Color(0xFFFFB84D), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black, letterSpacing = 1.6.sp)
-                                            Text("ENGINE START CONFIRMED • ECU RPM", color = muted, style = MaterialTheme.typography.labelSmall)
-                                            Box(Modifier.fillMaxWidth(.58f).height(3.dp).background(cyan.copy(alpha = welcomePulse), RoundedCornerShape(3.dp)))
+                                val transition = rememberInfiniteTransition(label = "sx4-flight-3d")
+                                val yaw by transition.animateFloat(-24f, 24f, infiniteRepeatable(tween(1800, easing = androidx.compose.animation.core.FastOutSlowInEasing), RepeatMode.Reverse), label = "aircraft-yaw")
+                                val pitch by transition.animateFloat(-8f, 8f, infiniteRepeatable(tween(1250, easing = androidx.compose.animation.core.FastOutSlowInEasing), RepeatMode.Reverse), label = "aircraft-pitch")
+                                val glow by transition.animateFloat(.28f, .9f, infiniteRepeatable(tween(950), RepeatMode.Reverse), label = "aircraft-glow")
+                                Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color(0xFF153C55), Color(0xF9050A12), Color(0xFF03060B)))), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                                    Column(Modifier.fillMaxWidth(.86f).padding(22.dp), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Text("SX4 FLIGHT SYSTEMS", color = Color(0xFF8BAFC5), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
+                                        Box(Modifier.fillMaxWidth().height(210.dp), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                                            Canvas(Modifier.fillMaxSize()) {
+                                                val cx = size.width / 2f
+                                                val cy = size.height / 2f
+                                                for (ring in 0..3) {
+                                                    val radius = size.minDimension * (.18f + ring * .075f)
+                                                    drawCircle(Color(0xFF42DDF5).copy(alpha = glow * (.30f - ring * .045f)), radius, androidx.compose.ui.geometry.Offset(cx, cy), style = Stroke(1.2.dp.toPx()))
+                                                }
+                                                drawLine(Color(0xFF42DDF5).copy(alpha = .35f), androidx.compose.ui.geometry.Offset(0f,cy), androidx.compose.ui.geometry.Offset(size.width,cy), 1.dp.toPx())
+                                                drawLine(Color(0xFF42DDF5).copy(alpha = .25f), androidx.compose.ui.geometry.Offset(cx,0f), androidx.compose.ui.geometry.Offset(cx,size.height), 1.dp.toPx())
+                                            }
+                                            Text("✈", Modifier.graphicsLayer { rotationY = yaw; rotationX = pitch; rotationZ = -7f; cameraDistance = 18f * density; shadowElevation = 32.dp.toPx() }, color = Color(0xFFEAFBFF), fontSize = 112.sp)
                                         }
+                                        Text("WELCOME ABOARD", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
+                                        Text("SX4 AIRLINES 2874", color = Color(0xFFFFC46B), fontSize = 25.sp, fontWeight = FontWeight.Black, letterSpacing = 2.4.sp)
+                                        Text("ENGINE START CONFIRMED  •  SYSTEMS ONLINE", color = Color(0xFF8BAFC5), fontSize = 10.sp, letterSpacing = 1.5.sp)
+                                        Box(Modifier.fillMaxWidth(.52f).height(2.dp).background(Color(0xFF42DDF5).copy(alpha = glow), RoundedCornerShape(3.dp)))
                                     }
                                 }
                             }
