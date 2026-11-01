@@ -4,6 +4,7 @@ import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
+import android.hardware.usb.UsbManager
 import android.content.pm.PackageManager
 import android.content.Intent
 import android.net.Uri
@@ -165,11 +166,26 @@ class MainActivity : ComponentActivity() {
         var dtcCodes by remember { mutableStateOf<List<TroubleCodeResult>>(emptyList()) }
         var scanningCodes by remember { mutableStateOf(false) }
         var headUnitStatus by remember { mutableStateOf("Open Headunit runs as a separate receiver app.") }
+        var usbHostSummary by remember { mutableStateOf("USB status not checked yet.") }
         var warningPreview by remember { mutableStateOf(false) }
         var warningMessage by remember { mutableStateOf("") }
         val scope = rememberCoroutineScope()
         val connected = status == "Connected"
 
+        fun refreshUsbHostStatus() {
+            val usbManager = getSystemService(USB_SERVICE) as UsbManager
+            val devices = usbManager.deviceList.values.toList()
+            usbHostSummary = if (devices.isEmpty()) {
+                "No USB device currently detected. Connect the phone with a data-capable OTG setup, then refresh."
+            } else {
+                devices.joinToString(separator = "\n") { device ->
+                    val vendor = "VID %04X".format(device.vendorId)
+                    val product = "PID %04X".format(device.productId)
+                    val name = device.productName?.takeIf { it.isNotBlank() } ?: device.deviceName
+                    "$name • $vendor / $product"
+                }
+            }
+        }
         fun disconnect() {
             closeSocket()
             status = "Disconnected"
@@ -415,6 +431,16 @@ class MainActivity : ComponentActivity() {
                                                 Text(step.second, color = muted, style = MaterialTheme.typography.bodyMedium)
                                             }
                                         }
+                                    }
+                                }
+                            }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("USB HOST STATUS", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text("Checks Android's currently enumerated USB devices. Detection alone does not confirm Android Auto compatibility or receiver permission.", color = muted, style = MaterialTheme.typography.bodySmall)
+                                        OutlinedButton(onClick = { refreshUsbHostStatus() }, modifier = Modifier.fillMaxWidth()) { Text("REFRESH USB DEVICES") }
+                                        Text(usbHostSummary, color = Color.White, style = MaterialTheme.typography.bodyMedium)
                                     }
                                 }
                             }
