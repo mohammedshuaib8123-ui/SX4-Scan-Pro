@@ -37,29 +37,32 @@ jobs:
       - name: Capture screenshots from the built app
         uses: ReactiveCircus/android-emulator-runner@v2
         with:
-          api-level: 35
-          target: google_apis
+          api-level: 30
+          target: default
           arch: x86_64
-          profile: pixel_6
+          profile: pixel_2
+          cores: 2
+          emulator-boot-timeout: 600
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -memory 2048
           disable-animations: true
           script: |
             adb install app/build/outputs/apk/debug/app-debug.apk
-            adb shell wm size 2000x1200
-            adb shell wm density 220
+            adb shell wm size 1280x768
+            adb shell wm density 160
             adb shell am start -n com.sx4scanpro/.MainActivity
             sleep 6
             mkdir -p ui-screenshots
             adb shell screencap -p /sdcard/cockpit.png
             adb pull /sdcard/cockpit.png ui-screenshots/01-cockpit.png
-            adb shell input tap 750 1145
+            adb shell input tap 320 730
             sleep 2
             adb shell screencap -p /sdcard/diagnostics.png
             adb pull /sdcard/diagnostics.png ui-screenshots/02-diagnostics.png
-            adb shell input tap 1250 1145
+            adb shell input tap 640 730
             sleep 2
             adb shell screencap -p /sdcard/head-unit.png
             adb pull /sdcard/head-unit.png ui-screenshots/03-head-unit.png
-            adb shell input tap 1750 1145
+            adb shell input tap 960 730
             sleep 2
             adb shell screencap -p /sdcard/settings.png
             adb pull /sdcard/settings.png ui-screenshots/04-settings.png
