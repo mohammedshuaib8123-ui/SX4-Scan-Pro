@@ -706,3 +706,10 @@ When continuing this repository:
 - Captures the live Cockpit, Diagnostics, Head Unit and Settings screens from that running APK and uploads them as the `SX4-Scan-Pro-UI-Screenshots` artifact.
 - These are runtime screenshots, not generated concept art. Emulator screenshots are a layout preview only and do not constitute verification on the Realme Pad 2 or live vehicle hardware.
 - Screenshot capture runs after APK assembly; final artifact availability depends on the workflow completing successfully.
+
+### Emulator screenshot workflow reliability — 2026-11-01
+- Screenshot capture uses a lighter Android 11 (API 30) Pixel 2 emulator profile on hosted Linux runners to reduce software-emulation load and ADB instability.
+- Captures remain landscape at 1280x768 (16:9-ish tablet preview) and dock taps are aligned to the resized display.
+- APK unit tests, APK assembly and APK artifact upload occur before the screenshot stage. A screenshot-stage failure must not be described as an APK build failure when those earlier steps passed.
+- Screenshots must be generated from the installed APK; concept artwork must never be presented as a real build screenshot.
+- Pending verification on GitHub Actions.
