@@ -797,3 +797,30 @@ When continuing this repository:
 - Capture and visually inspect the four runtime UI screenshots from the same Build 20 APK. Do not approve the screenshots merely because the CI artifact uploads.
 - Inspect the expanded Head Unit page on the Realme Pad 2 and perform wired USB/OTG receiver tests when hardware is available.
 - Maintain the existing restriction: no fabricated ECU data and no automatic vehicle warnings until SX4-specific thresholds are verified.
+
+
+## 11. Final pre-release hardening — 2026-11-01
+
+### Build 21 changes
+- Strict Mode 01 PID response decoder is integrated into the live dashboard and BARO/boost calculation.
+- Decoder unit tests cover supported single- and double-byte PIDs, wrong service/PID, malformed, short and overlong payloads, and unsupported commands.
+- DTC mode handling now treats a prompt-terminated adapter rejection (for example, `?`) as a completed response rather than automatically destroying a healthy Bluetooth stream. This allows the remaining read-only modes to be attempted.
+- DTC communication failures are counted separately from valid positive responses, `NO DATA`, and unsupported/malformed replies. If the socket is actually lost, the scan stops and the UI reports the failure rather than implying a clean scan.
+- UI label updated to `v0.4.0 • PRE-RELEASE • BUILD 21`.
+
+### Verification
+- Build 20 / workflow run #128 passed.
+- Strict PID decoder / workflow run #131 passed unit tests, debug APK build and artifact upload.
+- Build 21 is the next candidate build and must pass the same CI gates before it is offered for installation.
+
+### Hardware validation still required before calling this a fully verified final release
+- Pair/connect to the user's Vgate iCar Pro on the Realme Pad 2 and confirm live PID support and stable polling.
+- Confirm RPM/speed/coolant/MAF/MAP values against the vehicle; confirm BARO and boost estimate behavior.
+- Read actual stored/pending/permanent DTC responses and verify no false decoding.
+- Confirm disconnect, adapter power loss, reconnect and app background/foreground behavior.
+- Check the welcome chime, TTS voice, volume and engine-start debounce in the vehicle.
+- Verify tablet USB host/OTG, Open Headunit launch, Android Auto projection, touch and audio routing separately. The SX4 app does not itself implement Android Auto projection.
+- Automatic warning thresholds remain disabled until SX4-specific limits are verified.
+- BCM, ABS, airbag, immobilizer and other non-engine modules remain unsupported/unverified.
+
+**Release decision:** deliver the green-CI pre-release APK for the owner's parked, stationary hardware validation. Do not remove the pre-release marker or claim full vehicle/Android Auto validation until the above checks are completed.
