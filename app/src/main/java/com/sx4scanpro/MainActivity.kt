@@ -289,7 +289,7 @@ class MainActivity : ComponentActivity() {
                         ) { page ->
                             when (page) {
                         0 -> Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)) {
-                            if (warningPreview || warningMessage.isNotBlank()) {
+                            AnimatedVisibility(visible = warningPreview || warningMessage.isNotBlank(), enter = fadeIn(tween(220)) + slideInHorizontally(tween(260)) { -it / 8 }, exit = fadeOut(tween(180))) {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF5B171D)), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF5252))) {
                                     Text(if (warningMessage.isNotBlank()) warningMessage else "⚠ WARNING SYSTEM PREVIEW — NOT A LIVE VEHICLE FAULT", Modifier.padding(12.dp), color = Color.White, fontWeight = FontWeight.Black)
                                 }
@@ -587,7 +587,13 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     Column(horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally) {
-                        Text(if (gauge.available) gauge.value else "—", color = Color.White, style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Black)
+                        AnimatedContent(
+                            targetState = if (gauge.available) gauge.value else "—",
+                            transitionSpec = { fadeIn(tween(180)) togetherWith fadeOut(tween(130)) },
+                            label = "instrument-value"
+                        ) { reading ->
+                            Text(reading, color = Color.White, style = MaterialTheme.typography.displayLarge, fontWeight = FontWeight.Black)
+                        }
                         Text(gauge.unit, color = accent)
                     }
                 }
