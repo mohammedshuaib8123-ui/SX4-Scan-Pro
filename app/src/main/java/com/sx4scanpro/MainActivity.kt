@@ -43,6 +43,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.Crossfade
@@ -465,24 +466,26 @@ class MainActivity : ComponentActivity() {
                         }
                             }
                         }
-                        AnimatedVisibility(visible = welcomeOverlayVisible, enter = fadeIn(tween(420)), exit = fadeOut(tween(650)), modifier = Modifier.fillMaxSize()) {
-                            val welcomePulse by rememberInfiniteTransition(label = "welcome-flight-pulse").animateFloat(
-                                initialValue = 0.48f, targetValue = 1f,
-                                animationSpec = infiniteRepeatable(tween(1050), repeatMode = RepeatMode.Reverse),
-                                label = "welcome-flight-glow"
-                            )
-                            Box(Modifier.fillMaxSize().background(Color(0xF4050A12)), contentAlignment = androidx.compose.ui.Alignment.Center) {
-                                Card(Modifier.fillMaxWidth(.82f), colors = CardDefaults.cardColors(containerColor = Color(0xFF0C1D2B)),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, cyan.copy(alpha = welcomePulse))) {
-                                    Column(Modifier.fillMaxWidth().padding(vertical = 28.dp, horizontal = 24.dp),
-                                        horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
-                                        verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                                        Text("✈", color = cyan.copy(alpha = welcomePulse), fontSize = 58.sp)
-                                        Text("FLIGHT SYSTEMS ONLINE", color = cyan, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, letterSpacing = 2.2.sp)
-                                        Text("WELCOME ABOARD", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
-                                        Text("SX4 AIRLINES 2874", color = Color(0xFFFFB84D), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black, letterSpacing = 1.6.sp)
-                                        Text("ENGINE START CONFIRMED • ECU RPM", color = muted, style = MaterialTheme.typography.labelSmall)
-                                        Box(Modifier.fillMaxWidth(.58f).height(3.dp).background(cyan.copy(alpha = welcomePulse), RoundedCornerShape(3.dp)))
+                        Crossfade(targetState = welcomeOverlayVisible, animationSpec = tween(420), label = "welcome-overlay-fade") { visible ->
+                            if (visible) {
+                                val welcomePulse by rememberInfiniteTransition(label = "welcome-flight-pulse").animateFloat(
+                                    initialValue = 0.48f, targetValue = 1f,
+                                    animationSpec = infiniteRepeatable(tween(1050), repeatMode = RepeatMode.Reverse),
+                                    label = "welcome-flight-glow"
+                                )
+                                Box(Modifier.fillMaxSize().background(Color(0xF4050A12)), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                                    Card(Modifier.fillMaxWidth(.82f), colors = CardDefaults.cardColors(containerColor = Color(0xFF0C1D2B)),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, cyan.copy(alpha = welcomePulse))) {
+                                        Column(Modifier.fillMaxWidth().padding(vertical = 28.dp, horizontal = 24.dp),
+                                            horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
+                                            verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                                            Text("✈", color = cyan.copy(alpha = welcomePulse), fontSize = 58.sp)
+                                            Text("FLIGHT SYSTEMS ONLINE", color = cyan, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, letterSpacing = 2.2.sp)
+                                            Text("WELCOME ABOARD", color = Color.White, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Black)
+                                            Text("SX4 AIRLINES 2874", color = Color(0xFFFFB84D), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black, letterSpacing = 1.6.sp)
+                                            Text("ENGINE START CONFIRMED • ECU RPM", color = muted, style = MaterialTheme.typography.labelSmall)
+                                            Box(Modifier.fillMaxWidth(.58f).height(3.dp).background(cyan.copy(alpha = welcomePulse), RoundedCornerShape(3.dp)))
+                                        }
                                     }
                                 }
                             }
