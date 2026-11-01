@@ -94,6 +94,7 @@ private fun GaugeCard(gauge: GaugeValue) {
 private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
 data class GaugeValue(val label: String, val value: String, val unit: String = "", val available: Boolean = true, val capturedAtMs: Long = System.currentTimeMillis())
+data class TroubleCodeResult(val category: String, val code: String)
 
 class MainActivity : ComponentActivity() {
     private val permissionRequest = registerForActivityResult(
@@ -151,7 +152,7 @@ class MainActivity : ComponentActivity() {
         )) }
         var selectedTab by remember { mutableIntStateOf(0) }
         var dtcStatus by remember { mutableStateOf("Connect the Vgate adapter to read engine ECU fault codes.") }
-        var dtcCodes by remember { mutableStateOf<List<String>>(emptyList()) }
+        var dtcCodes by remember { mutableStateOf<List<TroubleCodeResult>>(emptyList()) }
         var scanningCodes by remember { mutableStateOf(false) }
         var headUnitStatus by remember { mutableStateOf("Open Headunit runs as a separate receiver app.") }
         var warningPreview by remember { mutableStateOf(false) }
@@ -341,11 +342,14 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                             if (dtcCodes.isEmpty()) item { Text("No returned DTCs to display yet.", color = muted) }
-                            else items(dtcCodes) { code ->
+                            else items(dtcCodes) { result ->
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
                                     Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                                        Text(code, color = Color(0xFFFFB84D), style = MaterialTheme.typography.titleLarge)
-                                        Text("ENGINE ECU", color = muted)
+                                        Text(result.code, color = Color(0xFFFFB84D), style = MaterialTheme.typography.titleLarge)
+                                        Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
+                                            Text(result.category, color = cyan, fontWeight = FontWeight.Bold)
+                                            Text("ENGINE ECU", color = muted, style = MaterialTheme.typography.labelSmall)
+                                        }
                                     }
                                 }
                             }
@@ -652,10 +656,11 @@ class MainActivity : ComponentActivity() {
 
     // DTC modes are one transaction: do not interleave them with live PID polling.
     @Synchronized
-    private fun readTroubleCodes(): List<String> {
-        return listOf("03", "07", "0A")
-            .flatMap { mode -> decodeTroubleCodes(sendCommand(mode), mode) }
-            .distinct()
+    private fun readTroubleCodes(): List<TroubleCodeResult> {
+        val modes = listOf("03" to "STORED", "07" to "PENDING", "0A" to "PERMANENT")
+        return modes.flatMap { (mode, category) ->
+            decodeTroubleCodes(sendCommand(mode), mode).map { TroubleCodeResult(category, it) }
+        }.distinct()
     }
 
     private fun decodeTroubleCodes(response: String, mode: String): List<String> =
