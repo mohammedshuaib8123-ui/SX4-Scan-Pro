@@ -21,7 +21,12 @@ class ObdPidSupportTest {
     }
 
     @Test fun doesNotReadThirdBlockUnlessPid64IsAdvertised() {
+        val result = ObdPidSupport.decode("4100FFFFFFFF4120000000004140FFFFFFFF")
+        assertEquals((1..32).toSet(), result)
+    }
+
+    @Test fun decodesThirdBlockWhenPid64IsAdvertised() {
         val result = ObdPidSupport.decode("4100FFFFFFFF4120000000014140FFFFFFFF")
-        assertEquals((1..32).toSet() + 64, result)
+        assertEquals((1..32).toSet() + 64 + (65..96).toSet(), result)
     }
 }
