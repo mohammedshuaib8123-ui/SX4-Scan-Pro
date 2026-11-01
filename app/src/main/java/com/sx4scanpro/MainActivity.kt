@@ -748,8 +748,7 @@ class MainActivity : ComponentActivity() {
                 GaugeValue(label, "--", unit, false)
             } else {
                 val response = sendCommand(command)
-                val bytes = response.substringAfter("41" + command.substring(2), "")
-                val parsed = parsePid(command, bytes)
+                val parsed = parsePid(command, response)
                 GaugeValue(label, parsed ?: "--", unit, parsed != null)
             }
         }
@@ -757,8 +756,7 @@ class MainActivity : ComponentActivity() {
         val mapPressure = map["Manifold pressure"]?.value?.toDoubleOrNull()
         val boost = if (mapPressure != null) {
             val baroResponse = if (51 in supportedPids) sendCommand("0133") else ""
-            val baroBytes = baroResponse.substringAfter("4133", "")
-            val baro = if (baroBytes.take(2).length == 2 && baroBytes.take(2).all { it in "0123456789ABCDEF" }) baroBytes.take(2).toIntOrNull(16)?.toDouble() else null
+            val baro = ObdPidResponseDecoder.decode("0133", baroResponse)?.toDoubleOrNull()
             if (baro != null) GaugeValue("Turbo boost", String.format(java.util.Locale.US, "%.1f", (mapPressure - baro).coerceAtLeast(0.0)), "kPa", true)
             else GaugeValue("Turbo boost", "--", "kPa", false)
         } else GaugeValue("Turbo boost", "--", "kPa", false)
@@ -795,22 +793,8 @@ class MainActivity : ComponentActivity() {
     private fun decodeTroubleCodes(response: String, mode: String): List<String> =
         ObdTroubleCodeDecoder.decode(response, mode)
 
-    private fun parsePid(command: String, data: String): String? {
-        val expectedLength = if (command in setOf("010C", "0110")) 4 else 2
-        if (data.length < expectedLength || data.take(expectedLength).any { it !in "0123456789ABCDEF" }) return null
-        val bytes = data.take(expectedLength)
-        val a = bytes.substring(0, 2).toIntOrNull(16) ?: return null
-        val b = if (bytes.length == 4) bytes.substring(2, 4).toIntOrNull(16) ?: return null else 0
-        return when (command) {
-            "010C" -> String.format(java.util.Locale.US, "%.0f", (a * 256 + b) / 4.0)
-            "0105", "010F" -> (a - 40).toString()
-            "010D" -> a.toString()
-            "010B" -> a.toString()
-            "0110" -> String.format(java.util.Locale.US, "%.2f", (a * 256 + b) / 100.0)
-            "0104", "0111" -> String.format(java.util.Locale.US, "%.1f", a * 100.0 / 255.0)
-            else -> null
-        }
-    }
+    private fun parsePid(command: String, response: String): String? =
+        ObdPidResponseDecoder.decode(command, response)
 
     @Volatile private var welcomePending = false
     @Volatile private var welcomeChimeFinished = false
