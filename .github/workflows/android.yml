@@ -41,28 +41,28 @@ jobs:
           target: default
           arch: x86_64
           profile: pixel_2
-          cores: 2
+          cores: 4
           emulator-boot-timeout: 600
-          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -memory 2048
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -memory 4096
           disable-animations: true
           script: |
             adb install app/build/outputs/apk/debug/app-debug.apk
             adb shell wm size 1280x768
             adb shell wm density 160
             adb shell am start -n com.sx4scanpro/.MainActivity
-            sleep 6
+            sleep 20
             mkdir -p ui-screenshots
             adb shell screencap -p /sdcard/cockpit.png
             adb pull /sdcard/cockpit.png ui-screenshots/01-cockpit.png
-            adb shell input tap 320 730
+            adb shell input tap 480 680
             sleep 2
             adb shell screencap -p /sdcard/diagnostics.png
             adb pull /sdcard/diagnostics.png ui-screenshots/02-diagnostics.png
-            adb shell input tap 640 730
+            adb shell input tap 800 680
             sleep 2
             adb shell screencap -p /sdcard/head-unit.png
             adb pull /sdcard/head-unit.png ui-screenshots/03-head-unit.png
-            adb shell input tap 960 730
+            adb shell input tap 1120 680
             sleep 2
             adb shell screencap -p /sdcard/settings.png
             adb pull /sdcard/settings.png ui-screenshots/04-settings.png
