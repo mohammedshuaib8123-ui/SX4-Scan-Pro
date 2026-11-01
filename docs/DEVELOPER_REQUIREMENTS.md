@@ -700,3 +700,9 @@ When continuing this repository:
 ### Directional section transition compile fix — 2026-11-01
 - GitHub Actions runs #88 and #89 exposed a missing Compose animation extension import for `togetherWith`.
 - Added the explicit `androidx.compose.animation.togetherWith` import. Awaiting CI verification; APK is not yet considered releasable.
+
+### Build-output UI screenshots — 2026-11-01
+- CI now installs the exact debug APK produced by the build onto an Android API 35 emulator configured to a 2000×1200 landscape display.
+- Captures the live Cockpit, Diagnostics, Head Unit and Settings screens from that running APK and uploads them as the `SX4-Scan-Pro-UI-Screenshots` artifact.
+- These are runtime screenshots, not generated concept art. Emulator screenshots are a layout preview only and do not constitute verification on the Realme Pad 2 or live vehicle hardware.
+- Screenshot capture runs after APK assembly; final artifact availability depends on the workflow completing successfully.
