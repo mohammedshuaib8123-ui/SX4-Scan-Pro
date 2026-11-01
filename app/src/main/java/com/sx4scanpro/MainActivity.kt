@@ -258,7 +258,7 @@ class MainActivity : ComponentActivity() {
                         }
                         Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
                             Text(if (connected) "● ECU LINK ACTIVE" else "○ ECU OFFLINE", color = if (connected) cyan else muted)
-                            Text("v0.3.7 • UI PREVIEW • BUILD 18", color = muted, style = MaterialTheme.typography.labelSmall)
+                            Text("v0.3.8 • UI PREVIEW • BUILD 19", color = muted, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -323,6 +323,20 @@ class MainActivity : ComponentActivity() {
                                             Text(if (scanningCodes) "SCANNING…" else "SCAN ENGINE ECU")
                                         }
                                         Text(dtcStatus, color = muted)
+                                    }
+                                }
+                            }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("LIVE DATA CAPABILITY", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text("${supportedPids.size} standard Mode 01 PIDs advertised by the ECU", color = Color.White, fontWeight = FontWeight.Bold)
+                                        Text(
+                                            if (supportedPids.isEmpty()) "Connect the adapter to discover which standard parameters the ECU advertises."
+                                            else supportedPids.sorted().joinToString("  •  ") { "01%02X".format(it) },
+                                            color = muted
+                                        )
+                                        Text("Advertised support does not guarantee every reading will return valid data. Suzuki-specific modules are not included.", color = muted, style = MaterialTheme.typography.bodySmall)
                                     }
                                 }
                             }
@@ -404,7 +418,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
-                            item { Text("Build v0.3.7 • UI PREVIEW • BUILD 18", color = muted) }
+                            item { Text("Build v0.3.8 • UI PREVIEW • BUILD 19", color = muted) }
                         }
                             }
                         }
