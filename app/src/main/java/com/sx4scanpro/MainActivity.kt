@@ -6,7 +6,11 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
 import android.hardware.usb.UsbManager
 import android.content.pm.PackageManager
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.net.Uri
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.clickable
@@ -116,6 +120,7 @@ private fun GaugeCard(gauge: GaugeValue) {
     }
 }
 
+private const val RECEIVER_PACKAGE = "com.andrerinas.headunitrevived"
 private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
 data class GaugeValue(val label: String, val value: String, val unit: String = "", val available: Boolean = true, val capturedAtMs: Long = System.currentTimeMillis())
@@ -193,7 +198,7 @@ class MainActivity : ComponentActivity() {
         var dtcCodes by remember { mutableStateOf<List<TroubleCodeResult>>(emptyList()) }
         var scanningCodes by remember { mutableStateOf(false) }
         var headUnitStatus by remember { mutableStateOf("Open Headunit runs as a separate receiver app.") }
-        var usbHostSummary by remember { mutableStateOf("USB status not checked yet.") }
+        var readiness by remember { mutableStateOf(computeHeadUnitReadiness()) }
         var logPreview by remember { mutableStateOf<List<String>>(emptyList()) }
         var warningPreview by remember { mutableStateOf(false) }
         var warningMessage by remember { mutableStateOf("") }
@@ -211,26 +216,23 @@ class MainActivity : ComponentActivity() {
                 nowMs = System.currentTimeMillis()
             }
         }
-
-        fun refreshUsbHostStatus() {
-            val usbManager = getSystemService(USB_SERVICE) as UsbManager
-            val hostSupported = packageManager.hasSystemFeature(PackageManager.FEATURE_USB_HOST)
-            val receiverInstalled = packageManager.getLaunchIntentForPackage("com.andrerinas.headunitrevived") != null
-            val devices = usbManager.deviceList.values.toList()
-            val hostLine = "USB host feature: " + if (hostSupported) "available" else "not reported by Android"
-            val receiverLine = "Open Headunit: " + if (receiverInstalled) "installed" else "not installed"
-            val deviceLine = if (devices.isEmpty()) {
-                "No USB device currently enumerated. Connect the phone using a data-capable OTG setup, then refresh."
-            } else {
-                devices.joinToString(separator = "\n") { device ->
-                    val vendor = "VID %04X".format(device.vendorId)
-                    val product = "PID %04X".format(device.productId)
-                    val name = device.productName?.takeIf { it.isNotBlank() } ?: device.deviceName
-                    "$name • $vendor / $product"
+        // Plugging or unplugging the phone updates the Head Unit checks immediately.
+        DisposableEffect(Unit) {
+            val usbReceiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    readiness = computeHeadUnitReadiness()
                 }
             }
-            usbHostSummary = "$hostLine\n$receiverLine\n$deviceLine"
+            val filter = IntentFilter().apply {
+                addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+                addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+            }
+            ContextCompat.registerReceiver(this@MainActivity, usbReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+            onDispose { unregisterReceiver(usbReceiver) }
         }
+        // Coming back from installing the receiver, or opening the tab, re-checks everything.
+        LaunchedEffect(selectedTab) { if (selectedTab == 2) readiness = computeHeadUnitReadiness() }
+
         fun disconnect() {
             userInitiatedDisconnect = true
             closeSocket()
@@ -467,17 +469,38 @@ class MainActivity : ComponentActivity() {
                                             }
                                             Text("▣", color = cyan, fontSize = 34.sp)
                                         }
-                                        Text("A dedicated launch pad for your tablet's Android Auto receiver. Keep projection separate from the OBD cockpit so both can be tested without pretending the receiver is embedded.", color = muted)
-                                        Button(onClick = {
-                                            val launch = packageManager.getLaunchIntentForPackage("com.andrerinas.headunitrevived")
-                                            if (launch != null) {
-                                                startActivity(launch)
-                                                headUnitStatus = "Open Headunit launch requested. Complete its USB/Android Auto prompts."
-                                            } else {
-                                                headUnitStatus = "Open Headunit is not installed. SX4 Scan Pro does not include an Android Auto receiver yet. Install a compatible receiver separately to use projection."
+                                        Text("Android Auto runs through the Open Headunit receiver, which SX4 Scan Pro opens beside the OBD cockpit. The receiver is a separate app and is not embedded.", color = muted)
+                                        Text(readiness.nextStep, color = if (readiness.readyToStart) cyan else Color(0xFFFFB84D), fontWeight = FontWeight.Bold)
+                                        readiness.checks.forEach { check ->
+                                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                                Text(if (check.state == CheckState.OK) "READY" else "ACTION", color = if (check.state == CheckState.OK) cyan else Color(0xFFFFB84D), fontWeight = FontWeight.Black, fontSize = 13.sp, modifier = Modifier.width(72.dp))
+                                                Column(Modifier.weight(1f)) {
+                                                    Text(check.title, color = Color.White, fontWeight = FontWeight.Bold)
+                                                    Text(check.detail, color = muted, style = MaterialTheme.typography.bodyMedium)
+                                                }
                                             }
-                                        }, modifier = Modifier.fillMaxWidth()) {
-                                            Text(if (packageManager.getLaunchIntentForPackage("com.andrerinas.headunitrevived") != null) "OPEN INSTALLED RECEIVER" else "RECEIVER NOT INSTALLED")
+                                        }
+                                        Button(
+                                            onClick = { headUnitStatus = launchReceiver(adjacent = true) },
+                                            enabled = readiness.receiverInstalled,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) { Text("OPEN BESIDE COCKPIT (SPLIT SCREEN)") }
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            OutlinedButton(
+                                                onClick = { headUnitStatus = launchReceiver(adjacent = false) },
+                                                enabled = readiness.receiverInstalled,
+                                                modifier = Modifier.weight(1f)
+                                            ) { Text("OPEN FULL SCREEN") }
+                                            OutlinedButton(
+                                                onClick = { readiness = computeHeadUnitReadiness(); headUnitStatus = "Checks refreshed." },
+                                                modifier = Modifier.weight(1f)
+                                            ) { Text("RECHECK") }
+                                        }
+                                        if (!readiness.receiverInstalled) {
+                                            OutlinedButton(
+                                                onClick = { headUnitStatus = openReceiverStorePage() },
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) { Text("GET THE RECEIVER (PLAY STORE)") }
                                         }
                                         Text(headUnitStatus, color = Color(0xFFFFB84D), style = MaterialTheme.typography.bodyMedium)
                                     }
@@ -508,8 +531,8 @@ class MainActivity : ComponentActivity() {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text("USB HOST STATUS", color = cyan, style = MaterialTheme.typography.titleMedium)
                                         Text("Checks Android's currently enumerated USB devices. Detection alone does not confirm Android Auto compatibility or receiver permission.", color = muted, style = MaterialTheme.typography.bodySmall)
-                                        OutlinedButton(onClick = { refreshUsbHostStatus() }, modifier = Modifier.fillMaxWidth()) { Text("REFRESH USB DEVICES") }
-                                        Text(usbHostSummary, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                                        OutlinedButton(onClick = { readiness = computeHeadUnitReadiness() }, modifier = Modifier.fillMaxWidth()) { Text("REFRESH USB DEVICES") }
+                                        Text(if (readiness.usbDevices.isEmpty()) "No USB device currently enumerated." else readiness.usbDevices.joinToString("\n") { it.label }, color = Color.White, style = MaterialTheme.typography.bodyMedium)
                                     }
                                 }
                             }
@@ -1005,6 +1028,43 @@ class MainActivity : ComponentActivity() {
         welcomePending = false
         welcomeChimeFinished = false
         textToSpeech?.speak("Welcome to SX4 Airlines 2874", TextToSpeech.QUEUE_FLUSH, null, "sx4_engine_start")
+    }
+
+    private fun computeHeadUnitReadiness(): HeadUnitReadiness {
+        val usb = getSystemService(USB_SERVICE) as UsbManager
+        val devices = usb.deviceList.values.map { d ->
+            val name = runCatching { d.productName }.getOrNull()?.takeIf { it.isNotBlank() } ?: d.deviceName
+            UsbSeen(name, d.vendorId, d.productId)
+        }
+        return HeadUnitReadiness(
+            receiverInstalled = packageManager.getLaunchIntentForPackage(RECEIVER_PACKAGE) != null,
+            usbHostFeature = packageManager.hasSystemFeature(PackageManager.FEATURE_USB_HOST),
+            usbDevices = devices
+        )
+    }
+
+    /** Opens the Android Auto receiver, optionally in the other half of split screen. Returns the status line. */
+    private fun launchReceiver(adjacent: Boolean): String {
+        val launch = packageManager.getLaunchIntentForPackage(RECEIVER_PACKAGE)
+            ?: return "Open Headunit is not installed. Use GET THE RECEIVER, then tap RECHECK."
+        if (adjacent && !isInMultiWindowMode) {
+            return "Split screen is not active. Put SX4 Scan Pro into split screen first, then tap this again, or use OPEN FULL SCREEN."
+        }
+        if (adjacent) launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT)
+        return try {
+            startActivity(launch)
+            if (adjacent) "Receiver opened beside the cockpit. Complete its USB and Android Auto prompts."
+            else "Receiver launch requested. Complete its USB and Android Auto prompts."
+        } catch (e: Exception) {
+            "Could not open the receiver: " + (e.message ?: "unknown error")
+        }
+    }
+
+    private fun openReceiverStorePage(): String = try {
+        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$RECEIVER_PACKAGE")))
+        "Opening the Play Store page for Open Headunit. Come back and tap RECHECK after installing."
+    } catch (e: Exception) {
+        "No app store is available on this tablet. Install Open Headunit another way, then tap RECHECK."
     }
 
     private fun closeSocket() {
