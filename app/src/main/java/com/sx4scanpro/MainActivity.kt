@@ -6,8 +6,6 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
 import android.hardware.usb.UsbManager
 import android.content.pm.PackageManager
-import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -465,7 +463,6 @@ class MainActivity : ComponentActivity() {
                                         Text("COMPATIBILITY CHECKLIST", color = Color(0xFFFFB84D), style = MaterialTheme.typography.titleMedium)
                                         Text("Not yet verified on this exact Realme Pad 2 + phone + SX4 setup: USB host mode, projection, touch, audio routing, reconnect and charging. This screen does not claim a live USB connection.", color = muted)
                                         Text("Receiver: Open Headunit • separate app • AGPL-3.0", color = muted, style = MaterialTheme.typography.labelSmall)
-                                        OutlinedButton(onClick = { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/andreknieriem/open-headunit"))) }, modifier = Modifier.fillMaxWidth()) { Text("VIEW OFFICIAL RECEIVER SOURCE") }
                                     }
                                 }
                             }
