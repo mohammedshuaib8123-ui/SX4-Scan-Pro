@@ -6,7 +6,11 @@ import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
 import android.hardware.usb.UsbManager
 import android.content.pm.PackageManager
+import android.content.Intent
 import android.os.Bundle
+import android.view.WindowManager
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
@@ -20,6 +24,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.RepeatMode
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -42,6 +47,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.animateColorAsState
@@ -103,7 +109,7 @@ private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34
 
 data class GaugeValue(val label: String, val value: String, val unit: String = "", val available: Boolean = true, val capturedAtMs: Long = System.currentTimeMillis())
 data class TroubleCodeResult(val category: String, val code: String)
-private data class DtcScanSummary(val codes: List<TroubleCodeResult>, val supportedModes: Int, val noDataModes: Int, val invalidModes: Int, val failedModes: Int)
+private data class DtcScanSummary(val codes: List<TroubleCodeResult>, val supportedModes: Int, val noDataModes: Int, val invalidModes: Int, val failedModes: Int, val partialModes: Int = 0)
 
 class MainActivity : ComponentActivity() {
     private val permissionRequest = registerForActivityResult(
@@ -119,10 +125,18 @@ class MainActivity : ComponentActivity() {
     private var chime: ToneGenerator? = null
     private var cabinChimeTrack: AudioTrack? = null
     private var welcomeOverlayVisible by mutableStateOf(false)
+    @Volatile private var userInitiatedDisconnect = false
+    private val traffic = TrafficLog()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Dark system bars with light icons, content drawn edge to edge; the dash stays awake.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        )
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         if (android.os.Build.VERSION.SDK_INT >= 31 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
         ) permissionRequest.launch(Manifest.permission.BLUETOOTH_CONNECT)
@@ -143,6 +157,8 @@ class MainActivity : ComponentActivity() {
         }
         chime = ToneGenerator(AudioManager.STREAM_MUSIC, 72)
         setContent { MaterialTheme { Dashboard() } }
+        // Welcome sequence when the app opens (it also plays on a confirmed engine start).
+        if (savedInstanceState == null) mainHandler.postDelayed({ playEngineWelcome() }, 900L)
     }
 
     @OptIn(ExperimentalMaterial3Api::class)
@@ -161,12 +177,13 @@ class MainActivity : ComponentActivity() {
             GaugeValue("MAF airflow", "--", "g/s", false), GaugeValue("Calculated engine load", "--", "%", false),
             GaugeValue("Throttle position", "--", "%", false)
         )) }
-        var selectedTab by remember { mutableIntStateOf(0) }
+        var selectedTab by rememberSaveable { mutableStateOf(0) }
         var dtcStatus by remember { mutableStateOf("Connect the Vgate adapter to read engine ECU fault codes.") }
         var dtcCodes by remember { mutableStateOf<List<TroubleCodeResult>>(emptyList()) }
         var scanningCodes by remember { mutableStateOf(false) }
         var headUnitStatus by remember { mutableStateOf("Open Headunit runs as a separate receiver app.") }
         var usbHostSummary by remember { mutableStateOf("USB status not checked yet.") }
+        var logPreview by remember { mutableStateOf<List<String>>(emptyList()) }
         var warningPreview by remember { mutableStateOf(false) }
         var warningMessage by remember { mutableStateOf("") }
         val scope = rememberCoroutineScope()
@@ -192,6 +209,7 @@ class MainActivity : ComponentActivity() {
             usbHostSummary = "$hostLine\n$receiverLine\n$deviceLine"
         }
         fun disconnect() {
+            userInitiatedDisconnect = true
             closeSocket()
             status = "Disconnected"
             gauges = gauges.map { it.copy(value = "--", available = false) }
@@ -206,6 +224,7 @@ class MainActivity : ComponentActivity() {
             }
             scope.launch {
                 disconnect()
+                userInitiatedDisconnect = false
                 status = "Connecting…"
                 try {
                     val result = withContext(Dispatchers.IO) { connectAndRead() }
@@ -251,7 +270,9 @@ class MainActivity : ComponentActivity() {
                     status = "Permission required"
                 } catch (e: Exception) {
                     closeSocket()
-                    status = e.message ?: "Connection failed"
+                    // Tapping DISCONNECT closes the socket mid-read; that is not a failure.
+                    status = if (userInitiatedDisconnect) "Disconnected" else (e.message ?: "Connection failed")
+                    if (!userInitiatedDisconnect) gauges = gauges.map { it.copy(value = "--", available = false) }
                 }
             }
         }
@@ -269,6 +290,8 @@ class MainActivity : ComponentActivity() {
                     dtcStatus = when {
                         summary.supportedModes == 0 ->
                             "The engine ECU did not return a valid response for modes 03 / 07 / 0A. Check protocol support and adapter communication."
+                        summary.partialModes > 0 ->
+                            "Some reply lines from the engine ECU could not be read, so this list may be incomplete. Scan again before relying on it. Other modules were not scanned."
                         summary.codes.isNotEmpty() ->
                             "Valid responses from ${summary.supportedModes}/3 engine ECU modes. BCM, ABS, airbag and other modules were not scanned."
                         summary.noDataModes == summary.supportedModes && summary.failedModes == 0 && summary.invalidModes == 0 ->
@@ -288,6 +311,9 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Back returns to the cockpit from any other section instead of closing the app.
+        BackHandler(enabled = selectedTab != 0) { selectedTab = 0 }
+
         MaterialTheme(colorScheme = darkColorScheme(primary = cyan, secondary = Color(0xFFFFB84D), background = bg, surface = panel, onBackground = Color.White, onSurface = Color.White, onSurfaceVariant = muted)) {
             Scaffold(containerColor = bg) { padding ->
                 Column(Modifier.fillMaxSize().padding(padding).background(Brush.verticalGradient(listOf(Color(0xFF05080E), Color(0xFF0B1421), Color(0xFF05080E))))) {
@@ -298,7 +324,7 @@ class MainActivity : ComponentActivity() {
                         }
                         Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
                             Text(if (connected) "● ECU LINK ACTIVE" else "○ ECU OFFLINE", color = if (connected) cyan else muted)
-                            Text("v0.4.0 • PRE-RELEASE • BUILD 21", color = muted, style = MaterialTheme.typography.labelSmall)
+                            Text("v0.4.0 • PRE-RELEASE • BUILD 22", color = muted, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -325,12 +351,12 @@ class MainActivity : ComponentActivity() {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                                 Column {
                                     Text("SX4 / DDiS 1.3", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Black, letterSpacing = 1.8.sp)
-                                    Text("DRIVER INFORMATION SYSTEM  •  LIVE ECU TELEMETRY", color = muted, fontSize = 10.sp, letterSpacing = 1.4.sp)
+                                    Text("DRIVER INFORMATION SYSTEM  •  LIVE ECU TELEMETRY", color = muted, fontSize = 13.sp, letterSpacing = 1.4.sp)
                                 }
                                 Surface(color = if (connected) Color(0xFF0B332F) else Color(0xFF252B35), shape = RoundedCornerShape(50), border = androidx.compose.foundation.BorderStroke(1.dp, if (connected) Color(0xFF26D7B1) else Color(0xFF566274))) {
                                     Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Box(Modifier.size(7.dp).background(if (connected) Color(0xFF26D7B1) else Color(0xFF8795A5), RoundedCornerShape(50)))
-                                        Text(if (connected) "ECU LINK ACTIVE" else "ECU DISCONNECTED", color = if (connected) Color(0xFF70F0D2) else muted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                        Text(if (connected) "ECU LINK ACTIVE" else "ECU DISCONNECTED", color = if (connected) Color(0xFF70F0D2) else muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                                     }
                                 }
                             }
@@ -344,10 +370,10 @@ class MainActivity : ComponentActivity() {
                                 CockpitGauge("ROAD SPEED", gauges[1], "0 — 180 KM/H", 180f, Color(0xFFFFB84D), Modifier.weight(1f))
                                 Card(Modifier.weight(.72f).fillMaxHeight(), colors = CardDefaults.cardColors(containerColor = Color(0xFF101B29)), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF263B50)), shape = RoundedCornerShape(22.dp)) {
                                     Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.SpaceEvenly) {
-                                        Text("POWERTRAIN", color = Color(0xFF42DDF5), fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 1.8.sp)
+                                        Text("POWERTRAIN", color = Color(0xFF42DDF5), fontSize = 13.sp, fontWeight = FontWeight.Black, letterSpacing = 1.8.sp)
                                         listOf(gauges[5], gauges[2], gauges[6], gauges[7]).forEach { g ->
                                             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                                Text(g.label.uppercase(), color = muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = .8.sp, maxLines = 1)
+                                                Text(when (g.label) { "Turbo boost" -> "BOOST"; "Coolant temperature" -> "COOLANT"; "MAF airflow" -> "MAF"; "Calculated engine load" -> "ENGINE LOAD"; else -> g.label.uppercase() }, color = muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = .8.sp, maxLines = 1)
                                                 Text(if (g.available) "${g.value} ${g.unit}" else "—", color = if (g.available) Color.White else Color(0xFF657487), fontSize = 20.sp, fontWeight = FontWeight.Bold)
                                                 Box(Modifier.fillMaxWidth().height(2.dp).background(Color(0xFF26394C), RoundedCornerShape(3.dp))) {
                                                     if (g.available) Box(Modifier.fillMaxWidth((g.value.toFloatOrNull()?.div(when(g.label) { "Turbo boost" -> 200f; "Coolant temperature" -> 120f; "MAF airflow" -> 100f; else -> 100f }) ?: 0f).coerceIn(0f,1f)).fillMaxHeight().background(Color(0xFF42DDF5), RoundedCornerShape(3.dp)))
@@ -359,13 +385,14 @@ class MainActivity : ComponentActivity() {
                             }
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
-                                    Text(if (connected) "V-GATE / OBD-II • CONNECTED" else "V-GATE / OBD-II • STANDBY", color = if (connected) Color(0xFF70F0D2) else muted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                                    Text(adapterName, color = muted, fontSize = 10.sp)
+                                    Text(if (connected) "V-GATE / OBD-II • CONNECTED" else "V-GATE / OBD-II • STANDBY", color = if (connected) Color(0xFF70F0D2) else muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                    val statusIsQuiet = connected || status == "Not connected" || status == "Disconnected"
+                                    Text(if (connected) adapterName else status, color = if (statusIsQuiet) muted else Color(0xFFFFB84D), fontSize = 13.sp, maxLines = 3)
                                 }
                                 OutlinedButton(onClick = { connect() }, enabled = !connected, shape = RoundedCornerShape(12.dp)) { Text("CONNECT ADAPTER", fontWeight = FontWeight.Bold) }
                                 OutlinedButton(onClick = { disconnect() }, enabled = connected, shape = RoundedCornerShape(12.dp)) { Text("DISCONNECT", fontWeight = FontWeight.Bold) }
                             }
-                            Text("Informational display only • Do not operate the tablet while driving", color = Color(0xFF718397), fontSize = 10.sp)
+                            Text("Informational display only • Do not operate the tablet while driving", color = Color(0xFF718397), fontSize = 13.sp)
                         }
                         1 -> LazyColumn(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             item {
@@ -515,7 +542,27 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
-                            item { Text("Build v0.4.0 • PRE-RELEASE • BUILD 21", color = muted) }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("ADAPTER LOG", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text("Exactly what was sent to and received from the adapter. If a drive test goes wrong, share this log so the real ECU replies can be checked.", color = muted, style = MaterialTheme.typography.bodyMedium)
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            OutlinedButton(onClick = { logPreview = traffic.tail(14) }, modifier = Modifier.weight(1f)) { Text("REFRESH") }
+                                            Button(onClick = {
+                                                val header = "SX4 Scan Pro adapter log\n" + "v0.4.0 • PRE-RELEASE • BUILD 22" + "\nStatus: " + status + "\nStandard PIDs advertised: " + supportedPids.size
+                                                val send = Intent(Intent.ACTION_SEND).apply {
+                                                    type = "text/plain"
+                                                    putExtra(Intent.EXTRA_TEXT, traffic.asText(header))
+                                                }
+                                                startActivity(Intent.createChooser(send, "Share adapter log"))
+                                            }, modifier = Modifier.weight(1f)) { Text("SHARE LOG") }
+                                        }
+                                        Text(if (logPreview.isEmpty()) "Tap REFRESH to show the latest adapter traffic." else logPreview.joinToString("\n"), color = Color.White, fontSize = 13.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                                    }
+                                }
+                            }
+                            item { Text("Build v0.4.0 • PRE-RELEASE • BUILD 22", color = muted) }
                         }
                             }
                         }
@@ -527,7 +574,7 @@ class MainActivity : ComponentActivity() {
                                 val glow by transition.animateFloat(.28f, .9f, infiniteRepeatable(tween(950), RepeatMode.Reverse), label = "aircraft-glow")
                                 Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color(0xFF153C55), Color(0xF9050A12), Color(0xFF03060B)))), contentAlignment = androidx.compose.ui.Alignment.Center) {
                                     Column(Modifier.fillMaxWidth(.86f).padding(22.dp), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        Text("SX4 FLIGHT SYSTEMS", color = Color(0xFF8BAFC5), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
+                                        Text("SX4 FLIGHT SYSTEMS", color = Color(0xFF8BAFC5), fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
                                         Box(Modifier.fillMaxWidth().height(210.dp), contentAlignment = androidx.compose.ui.Alignment.Center) {
                                             Canvas(Modifier.fillMaxSize()) {
                                                 val cx = size.width / 2f
@@ -539,11 +586,35 @@ class MainActivity : ComponentActivity() {
                                                 drawLine(Color(0xFF42DDF5).copy(alpha = .35f), androidx.compose.ui.geometry.Offset(0f,cy), androidx.compose.ui.geometry.Offset(size.width,cy), 1.dp.toPx())
                                                 drawLine(Color(0xFF42DDF5).copy(alpha = .25f), androidx.compose.ui.geometry.Offset(cx,0f), androidx.compose.ui.geometry.Offset(cx,size.height), 1.dp.toPx())
                                             }
-                                            Text("✈", Modifier.graphicsLayer { rotationY = yaw; rotationX = pitch; rotationZ = -7f; cameraDistance = 18f * density; shadowElevation = 32.dp.toPx() }, color = Color(0xFFEAFBFF), fontSize = 112.sp)
+                                            Canvas(Modifier.size(150.dp).graphicsLayer { rotationY = yaw; rotationX = pitch; rotationZ = -7f; cameraDistance = 18f * density }) {
+                                                val w = size.width
+                                                val h = size.height
+                                                val plane = Path().apply {
+                                                    moveTo(w * .50f, h * .04f)
+                                                    lineTo(w * .56f, h * .30f)
+                                                    lineTo(w * .96f, h * .58f)
+                                                    lineTo(w * .96f, h * .68f)
+                                                    lineTo(w * .56f, h * .54f)
+                                                    lineTo(w * .54f, h * .80f)
+                                                    lineTo(w * .70f, h * .92f)
+                                                    lineTo(w * .70f, h * .98f)
+                                                    lineTo(w * .50f, h * .92f)
+                                                    lineTo(w * .30f, h * .98f)
+                                                    lineTo(w * .30f, h * .92f)
+                                                    lineTo(w * .46f, h * .80f)
+                                                    lineTo(w * .44f, h * .54f)
+                                                    lineTo(w * .04f, h * .68f)
+                                                    lineTo(w * .04f, h * .58f)
+                                                    lineTo(w * .44f, h * .30f)
+                                                    close()
+                                                }
+                                                drawPath(plane, Brush.verticalGradient(listOf(Color(0xFFFFFFFF), Color(0xFF8FD8EE))))
+                                                drawPath(plane, Color(0xFF42DDF5).copy(alpha = glow), style = Stroke(2.dp.toPx()))
+                                            }
                                         }
                                         Text("WELCOME ABOARD", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
                                         Text("SX4 AIRLINES 2874", color = Color(0xFFFFC46B), fontSize = 25.sp, fontWeight = FontWeight.Black, letterSpacing = 2.4.sp)
-                                        Text("ENGINE START CONFIRMED  •  SYSTEMS ONLINE", color = Color(0xFF8BAFC5), fontSize = 10.sp, letterSpacing = 1.5.sp)
+                                        Text("ENGINE START CONFIRMED  •  SYSTEMS ONLINE", color = Color(0xFF8BAFC5), fontSize = 13.sp, letterSpacing = 1.5.sp)
                                         Box(Modifier.fillMaxWidth(.52f).height(2.dp).background(Color(0xFF42DDF5).copy(alpha = glow), RoundedCornerShape(3.dp)))
                                     }
                                 }
@@ -671,28 +742,51 @@ class MainActivity : ComponentActivity() {
         ) throw SecurityException("Bluetooth permission not granted")
         val adapter = BluetoothAdapter.getDefaultAdapter() ?: throw IOException("Bluetooth is not supported on this device")
         if (!adapter.isEnabled) throw IOException("Turn on Bluetooth")
-        val candidates = adapter.bondedDevices.filter {
-            val n = it.name.orEmpty()
-            n.contains("Vgate", true) || n.contains("iCar", true) || n.contains("OBD", true)
-        }
+        val bonded = adapter.bondedDevices.toList()
+        val candidates = bonded.filter { EcuNegotiation.looksLikeObdAdapter(it.name) }
         if (candidates.isEmpty()) {
-            throw IOException("No recognised OBD adapter found. Pair your Vgate iCar Pro, then try again.")
+            val names = bonded.mapNotNull { it.name }.joinToString(", ").ifBlank { "none" }
+            throw IOException("No recognised OBD adapter among your paired devices ($names). Pair the Vgate adapter in Bluetooth settings, then try again.")
         }
         if (candidates.size > 1) {
-            throw IOException("Multiple OBD adapters are paired. Keep only the intended Vgate adapter connected.")
+            throw IOException("Multiple OBD adapters are paired. Keep only the intended Vgate adapter paired.")
         }
         val device: BluetoothDevice = candidates.single()
-        val s = device.createRfcommSocketToServiceRecord(SPP_UUID)
         adapter.cancelDiscovery()
-        s.connect()
-        socket = s
+        socket = openSocket(device)
         listOf("ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0").forEach { sendCommand(it) }
-        supportedPids = discoverSupportedPids()
+        // "Connected" must mean the ECU answered, not just that the adapter did.
+        val negotiation = EcuNegotiation { command, timeoutMs -> sendCommand(command, timeoutMs) }.run()
+        if (negotiation.supportedPids.isEmpty()) {
+            closeSocket()
+            throw IOException(negotiation.failure)
+        }
+        supportedPids = negotiation.supportedPids
         return (device.name ?: "Bluetooth OBD adapter") to Unit
     }
 
+    /** Secure SPP first, then insecure SPP: many ELM327 clones only accept the second. */
+    private fun openSocket(device: BluetoothDevice): BluetoothSocket {
+        val makers = listOf<() -> BluetoothSocket>(
+            { device.createRfcommSocketToServiceRecord(SPP_UUID) },
+            { device.createInsecureRfcommSocketToServiceRecord(SPP_UUID) }
+        )
+        var last: IOException? = null
+        for (make in makers) {
+            val candidate = make()
+            try {
+                candidate.connect()
+                return candidate
+            } catch (e: IOException) {
+                last = e
+                try { candidate.close() } catch (_: Exception) { }
+            }
+        }
+        throw IOException("Could not open the Bluetooth link to the adapter (${last?.message ?: "refused"}). Check it is plugged in, the ignition is on and no other app is using it.")
+    }
+
     @Synchronized
-    private fun sendCommand(command: String, timeoutMs: Long = 5000): String {
+    private fun sendCommand(command: String, timeoutMs: Long = 5000, keepLines: Boolean = false): String {
         val s = socket ?: throw IOException("Not connected")
         if (!s.isConnected) throw IOException("OBD adapter connection is closed")
 
@@ -710,6 +804,7 @@ class MainActivity : ComponentActivity() {
 
             s.outputStream.write((command + "\r").toByteArray(Charsets.US_ASCII))
             s.outputStream.flush()
+            traffic.add("TX", command)
             val out = StringBuilder()
             val deadline = System.currentTimeMillis() + timeoutMs
             var promptReceived = false
@@ -728,25 +823,26 @@ class MainActivity : ComponentActivity() {
                 }
             }
             if (!promptReceived) throw IOException("Timed out waiting for OBD response to $command")
-            val response = out.toString().replace("\r", "").replace("\n", "").replace(" ", "").uppercase()
+            traffic.add("RX", out.toString().trim().replace("\r", " ⏎ "))
+            // DTC replies keep one line per ECU frame so multi-frame answers can be decoded;
+            // everything else is compacted as before.
+            val response = if (keepLines) {
+                out.toString().uppercase().split('\r', '\n')
+                    .map { line -> line.filterNot { it.isWhitespace() } }
+                    .filter { it.isNotEmpty() }
+                    .joinToString("\n")
+            } else {
+                out.toString().replace("\r", "").replace("\n", "").replace(" ", "").uppercase()
+            }
             // A prompt-terminated "?" or STOPPED is a complete adapter response,
             // not a broken byte stream. Return it so one unsupported DTC mode does
             // not abort the remaining read-only mode checks.
             return response
         } catch (e: Exception) {
+            traffic.add("ERR", "$command: ${e.message ?: e.javaClass.simpleName}")
             closeSocket()
             throw if (e is IOException) e else IOException("OBD transaction failed for $command", e)
         }
-    }
-
-    @Synchronized
-    private fun discoverSupportedPids(): Set<Int> {
-        val first = sendCommand("0100", timeoutMs = 12000)
-        val firstSet = ObdPidSupport.decode(first)
-        val second = if (32 in firstSet) sendCommand("0120", timeoutMs = 12000) else ""
-        val through64 = ObdPidSupport.decode(first + second)
-        val third = if (64 in through64) sendCommand("0140", timeoutMs = 12000) else ""
-        return ObdPidSupport.decode(first + second + third)
     }
 
     // Hold the same Activity monitor for the complete PID batch so a DTC scan cannot
@@ -792,30 +888,30 @@ class MainActivity : ComponentActivity() {
         var noData = 0
         var invalid = 0
         var failed = 0
+        var partial = 0
         val codes = mutableListOf<TroubleCodeResult>()
         for ((mode, category) in modes) {
-            val response = try {
-                sendCommand(mode).uppercase().filterNot { it.isWhitespace() }
+            val raw = try {
+                sendCommand(mode, 10000, keepLines = true)
             } catch (e: IOException) {
                 failed++
                 if (socket?.isConnected != true) break
                 continue
             }
-            val expectedPrefix = when (mode) {
-                "03" -> "43"
-                "07" -> "47"
-                else -> "4A"
-            }
+            // Line-aware: more than three codes arrive as several frames, and each is checked
+            // with the same strict rules as before. Unreadable lines are counted, never dropped.
+            val read = ObdTroubleCodeDecoder.decodeResponse(raw, mode)
             when {
-                response.startsWith(expectedPrefix) -> {
+                read.validFrames > 0 -> {
                     supported++
-                    codes += decodeTroubleCodes(response, mode).map { TroubleCodeResult(category, it) }
+                    codes += read.codes.map { TroubleCodeResult(category, it) }
+                    if (read.unreadable.isNotEmpty()) partial++
                 }
-                response.contains("NODATA") -> noData++
+                read.noData && read.unreadable.isEmpty() -> noData++
                 else -> invalid++
             }
         }
-        return DtcScanSummary(codes.distinct(), supported, noData, invalid, failed)
+        return DtcScanSummary(codes.distinct(), supported, noData, invalid, failed, partial)
     }
 
     private fun decodeTroubleCodes(response: String, mode: String): List<String> =
