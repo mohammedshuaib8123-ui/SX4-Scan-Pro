@@ -7,6 +7,17 @@ import android.bluetooth.BluetoothSocket
 import android.hardware.usb.UsbManager
 import android.content.pm.PackageManager
 import android.content.Intent
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Build
+import androidx.compose.material.icons.outlined.DirectionsCar
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Speed
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.activity.SystemBarStyle
@@ -188,6 +199,18 @@ class MainActivity : ComponentActivity() {
         var warningMessage by remember { mutableStateOf("") }
         val scope = rememberCoroutineScope()
         val connected = status == "Connected"
+        val connecting = status == "Connecting…"
+        val haptic = LocalHapticFeedback.current
+        val history = remember { GaugeHistory() }
+        var historyVersion by remember { mutableStateOf(0) }
+        var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+        // One-second clock so readings that stop updating are marked STALE instead of looking live.
+        LaunchedEffect(Unit) {
+            while (true) {
+                delay(1000)
+                nowMs = System.currentTimeMillis()
+            }
+        }
 
         fun refreshUsbHostStatus() {
             val usbManager = getSystemService(USB_SERVICE) as UsbManager
@@ -225,6 +248,7 @@ class MainActivity : ComponentActivity() {
             scope.launch {
                 disconnect()
                 userInitiatedDisconnect = false
+                history.clear()
                 status = "Connecting…"
                 try {
                     val result = withContext(Dispatchers.IO) { connectAndRead() }
@@ -232,6 +256,8 @@ class MainActivity : ComponentActivity() {
                     status = "Connected"
                     while (isActive && socket?.isConnected == true) {
                         gauges = withContext(Dispatchers.IO) { readDashboard() }
+                        gauges.forEach { g -> history.record(g.label, if (g.available) g.value.toDoubleOrNull() else null) }
+                        historyVersion++
                         val rpmGauge = gauges.firstOrNull { it.label == "Engine RPM" }
                         if (engineStartDetector.update(rpmGauge?.value?.toIntOrNull(), rpmGauge?.available == true)) {
                             playEngineWelcome()
@@ -355,8 +381,8 @@ class MainActivity : ComponentActivity() {
                                 }
                                 Surface(color = if (connected) Color(0xFF0B332F) else Color(0xFF252B35), shape = RoundedCornerShape(50), border = androidx.compose.foundation.BorderStroke(1.dp, if (connected) Color(0xFF26D7B1) else Color(0xFF566274))) {
                                     Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Box(Modifier.size(7.dp).background(if (connected) Color(0xFF26D7B1) else Color(0xFF8795A5), RoundedCornerShape(50)))
-                                        Text(if (connected) "ECU LINK ACTIVE" else "ECU DISCONNECTED", color = if (connected) Color(0xFF70F0D2) else muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                        LinkDot(connected = connected, connecting = connecting)
+                                        Text(if (connected) "ECU LINK ACTIVE" else if (connecting) "CONNECTING…" else "ECU DISCONNECTED", color = if (connected) Color(0xFF70F0D2) else muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                                     }
                                 }
                             }
@@ -366,22 +392,9 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                             Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                                CockpitGauge("ENGINE SPEED", gauges[0], "0 — 5,000 RPM", 5000f, Color(0xFF42DDF5), Modifier.weight(1.12f))
-                                CockpitGauge("ROAD SPEED", gauges[1], "0 — 180 KM/H", 180f, Color(0xFFFFB84D), Modifier.weight(1f))
-                                Card(Modifier.weight(.72f).fillMaxHeight(), colors = CardDefaults.cardColors(containerColor = Color(0xFF101B29)), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF263B50)), shape = RoundedCornerShape(22.dp)) {
-                                    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.SpaceEvenly) {
-                                        Text("POWERTRAIN", color = Color(0xFF42DDF5), fontSize = 13.sp, fontWeight = FontWeight.Black, letterSpacing = 1.8.sp)
-                                        listOf(gauges[5], gauges[2], gauges[6], gauges[7]).forEach { g ->
-                                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                                Text(when (g.label) { "Turbo boost" -> "BOOST"; "Coolant temperature" -> "COOLANT"; "MAF airflow" -> "MAF"; "Calculated engine load" -> "ENGINE LOAD"; else -> g.label.uppercase() }, color = muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = .8.sp, maxLines = 1)
-                                                Text(if (g.available) "${g.value} ${g.unit}" else "—", color = if (g.available) Color.White else Color(0xFF657487), fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                                                Box(Modifier.fillMaxWidth().height(2.dp).background(Color(0xFF26394C), RoundedCornerShape(3.dp))) {
-                                                    if (g.available) Box(Modifier.fillMaxWidth((g.value.toFloatOrNull()?.div(when(g.label) { "Turbo boost" -> 200f; "Coolant temperature" -> 120f; "MAF airflow" -> 100f; else -> 100f }) ?: 0f).coerceIn(0f,1f)).fillMaxHeight().background(Color(0xFF42DDF5), RoundedCornerShape(3.dp)))
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                                InstrumentDial("ENGINE SPEED", gauges[0], DialScale.forLabel("Engine RPM"), Color(0xFF42DDF5), nowMs, Modifier.weight(1.12f).fillMaxHeight())
+                                InstrumentDial("ROAD SPEED", gauges[1], DialScale.forLabel("Vehicle speed"), Color(0xFFFFB84D), nowMs, Modifier.weight(1f).fillMaxHeight())
+                                PowertrainPanel(gauges, history, historyVersion, nowMs, Color(0xFF42DDF5), Modifier.weight(.72f).fillMaxHeight())
                             }
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
@@ -403,6 +416,7 @@ class MainActivity : ComponentActivity() {
                                         Button(onClick = { scanFaultCodes() }, enabled = connected && !scanningCodes) {
                                             Text(if (scanningCodes) "SCANNING…" else "SCAN ENGINE ECU")
                                         }
+                                        if (scanningCodes) LinearProgressIndicator(Modifier.fillMaxWidth(), color = cyan)
                                         Text(dtcStatus, color = muted)
                                     }
                                 }
@@ -572,7 +586,7 @@ class MainActivity : ComponentActivity() {
                                 val yaw by transition.animateFloat(-24f, 24f, infiniteRepeatable(tween(1800, easing = androidx.compose.animation.core.FastOutSlowInEasing), RepeatMode.Reverse), label = "aircraft-yaw")
                                 val pitch by transition.animateFloat(-8f, 8f, infiniteRepeatable(tween(1250, easing = androidx.compose.animation.core.FastOutSlowInEasing), RepeatMode.Reverse), label = "aircraft-pitch")
                                 val glow by transition.animateFloat(.28f, .9f, infiniteRepeatable(tween(950), RepeatMode.Reverse), label = "aircraft-glow")
-                                Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color(0xFF153C55), Color(0xF9050A12), Color(0xFF03060B)))), contentAlignment = androidx.compose.ui.Alignment.Center) {
+                                Box(Modifier.fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { welcomeOverlayVisible = false }.background(Brush.radialGradient(listOf(Color(0xFF153C55), Color(0xF9050A12), Color(0xFF03060B)))), contentAlignment = androidx.compose.ui.Alignment.Center) {
                                     Column(Modifier.fillMaxWidth(.86f).padding(22.dp), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                         Text("SX4 FLIGHT SYSTEMS", color = Color(0xFF8BAFC5), fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
                                         Box(Modifier.fillMaxWidth().height(210.dp), contentAlignment = androidx.compose.ui.Alignment.Center) {
@@ -616,6 +630,7 @@ class MainActivity : ComponentActivity() {
                                         Text("SX4 AIRLINES 2874", color = Color(0xFFFFC46B), fontSize = 25.sp, fontWeight = FontWeight.Black, letterSpacing = 2.4.sp)
                                         Text("ENGINE START CONFIRMED  •  SYSTEMS ONLINE", color = Color(0xFF8BAFC5), fontSize = 13.sp, letterSpacing = 1.5.sp)
                                         Box(Modifier.fillMaxWidth(.52f).height(2.dp).background(Color(0xFF42DDF5).copy(alpha = glow), RoundedCornerShape(3.dp)))
+                                        Text("TAP ANYWHERE TO SKIP", color = Color(0xFF8BAFC5), fontSize = 13.sp, letterSpacing = 1.5.sp)
                                     }
                                 }
                             }
@@ -639,13 +654,21 @@ class MainActivity : ComponentActivity() {
                                 animationSpec = tween(240),
                                 label = "dock-icon-color-$i"
                             )
+                            val iconScale by animateFloatAsState(
+                                targetValue = if (selected) 1.2f else 1f,
+                                animationSpec = spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessMedium),
+                                label = "dock-icon-scale-$i"
+                            )
                             val indicatorProgress by animateFloatAsState(
                                 targetValue = if (selected) 1f else 0f,
                                 animationSpec = tween(280),
                                 label = "dock-indicator-$i"
                             )
                             Surface(
-                                onClick = { selectedTab = i },
+                                onClick = {
+                                    if (selectedTab != i) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    selectedTab = i
+                                },
                                 modifier = Modifier.weight(1f).fillMaxHeight(),
                                 shape = RoundedCornerShape(14.dp),
                                 color = dockColor,
@@ -659,11 +682,11 @@ class MainActivity : ComponentActivity() {
                                     horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.Center
                                 ) {
-                                    Text(
-                                        listOf("◉", "⌁", "▣", "⚙")[i],
-                                        color = iconColor,
-                                        fontSize = 23.sp,
-                                        fontWeight = FontWeight.Bold
+                                    Icon(
+                                        imageVector = listOf(Icons.Outlined.Speed, Icons.Outlined.Build, Icons.Outlined.DirectionsCar, Icons.Outlined.Settings)[i],
+                                        contentDescription = null,
+                                        tint = iconColor,
+                                        modifier = Modifier.size(26.dp).graphicsLayer { scaleX = iconScale; scaleY = iconScale }
                                     )
                                     Text(
                                         label.uppercase(),
