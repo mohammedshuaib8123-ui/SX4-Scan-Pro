@@ -104,6 +104,7 @@ private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34
 
 data class GaugeValue(val label: String, val value: String, val unit: String = "", val available: Boolean = true, val capturedAtMs: Long = System.currentTimeMillis())
 data class TroubleCodeResult(val category: String, val code: String)
+private data class DtcScanSummary(val codes: List<TroubleCodeResult>, val supportedModes: Int, val noDataModes: Int, val invalidModes: Int)
 
 class MainActivity : ComponentActivity() {
     private val permissionRequest = registerForActivityResult(
@@ -259,10 +260,18 @@ class MainActivity : ComponentActivity() {
                 scanningCodes = true
                 dtcStatus = "Reading engine ECU modes 03 / 07 / 0A…"
                 try {
-                    dtcCodes = withContext(Dispatchers.IO) { readTroubleCodes() }
-                    dtcStatus = if (dtcCodes.isEmpty())
-                        "No codes returned, or modes unsupported. This does not prove every module is fault-free."
-                    else "Engine ECU results only. BCM, ABS, airbag and other modules were not scanned."
+                    val summary = withContext(Dispatchers.IO) { readTroubleCodes() }
+                    dtcCodes = summary.codes
+                    dtcStatus = when {
+                        summary.supportedModes == 0 ->
+                            "The engine ECU did not return a valid response for modes 03 / 07 / 0A. Check protocol support and adapter communication."
+                        summary.codes.isNotEmpty() ->
+                            "Valid responses from ${summary.supportedModes}/3 engine ECU modes. BCM, ABS, airbag and other modules were not scanned."
+                        summary.noDataModes == summary.supportedModes ->
+                            "No DTCs reported by the ${summary.supportedModes} responding engine ECU mode(s). Other modules were not scanned."
+                        else ->
+                            "No DTCs decoded. ${summary.noDataModes} mode(s) returned NO DATA and ${summary.invalidModes} response(s) were unsupported or malformed. Other modules were not scanned."
+                    }
                 } catch (e: Exception) {
                     dtcStatus = "Scan failed: " + (e.message ?: "communication error")
                     if (socket?.isConnected != true) {
@@ -753,11 +762,29 @@ class MainActivity : ComponentActivity() {
 
     // DTC modes are one transaction: do not interleave them with live PID polling.
     @Synchronized
-    private fun readTroubleCodes(): List<TroubleCodeResult> {
+    private fun readTroubleCodes(): DtcScanSummary {
         val modes = listOf("03" to "STORED", "07" to "PENDING", "0A" to "PERMANENT")
-        return modes.flatMap { (mode, category) ->
-            decodeTroubleCodes(sendCommand(mode), mode).map { TroubleCodeResult(category, it) }
-        }.distinct()
+        var supported = 0
+        var noData = 0
+        var invalid = 0
+        val codes = mutableListOf<TroubleCodeResult>()
+        for ((mode, category) in modes) {
+            val response = sendCommand(mode).uppercase().filterNot { it.isWhitespace() }
+            val expectedPrefix = when (mode) {
+                "03" -> "43"
+                "07" -> "47"
+                else -> "4A"
+            }
+            when {
+                response.startsWith(expectedPrefix) -> {
+                    supported++
+                    codes += decodeTroubleCodes(response, mode).map { TroubleCodeResult(category, it) }
+                }
+                response.contains("NODATA") -> noData++
+                else -> invalid++
+            }
+        }
+        return DtcScanSummary(codes.distinct(), supported, noData, invalid)
     }
 
     private fun decodeTroubleCodes(response: String, mode: String): List<String> =
