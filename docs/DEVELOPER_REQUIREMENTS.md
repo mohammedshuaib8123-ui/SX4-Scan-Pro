@@ -720,3 +720,35 @@ When continuing this repository:
 - The first navigation taps were outside the actual bottom-dock hit areas because the resized emulator has system navigation bars. Updated taps to the visual centers of the four dock targets at y=680 and x=160/480/800/1120.
 - Increased emulator allocation to four cores and 4 GB RAM and allowed a longer app-start settling period to reduce software-emulation stalls.
 - Next run must be visually inspected; successful artifact upload alone does not prove clean screenshots.
+
+
+---
+
+## Build 19 development — ECU capability visibility and screenshot quality gate (2026-11-01)
+
+### Diagnostics capability visibility
+- Added a Live Data Capability panel to the Diagnostics page.
+- The panel displays the count and exact standard Mode 01 PID identifiers advertised by the connected ECU's supported-PID bitmap.
+- When disconnected or no supported bitmap is available, it explicitly asks the user to connect rather than showing guessed support.
+- The UI explains that advertised PID support does not guarantee a valid reading and does not imply Suzuki-specific BCM, ABS, airbag or other module support.
+- This is a transparency/diagnostic usability improvement; it does not expand protocol coverage or claim new SX4 ECU compatibility.
+
+### UI preview marker
+- Advanced the in-app marker to v0.3.8 • UI PREVIEW • BUILD 19.
+- The preview marker remains until the source passes CI and the screenshot set is visually inspected.
+
+### Screenshot output and quality gate
+- The screenshot workflow now waits for Android's boot-complete property before installing/launching the app and disables system animation scales.
+- Screenshots are captured from the exact debug APK built earlier in the same workflow.
+- The capture script checks the accessibility hierarchy for the expected page text and rejects Android's "Process system isn't responding" dialog rather than uploading a misleading screenshot set.
+- The screenshot artifact includes four PNG captures plus a README and HTML index so the images are browsable as a single output bundle.
+- APK test/build/upload and screenshot validation remain separately reported. A screenshot failure does not invalidate a previously successful APK build.
+- Emulator captures are build-output evidence only. Realme Pad 2 rendering/touch/audio and real SX4 ECU protocol behaviour remain unverified until tested on the user's hardware.
+
+### Still outstanding
+- Review all four Build 19 PNGs visually; no screenshot is approved merely because artifact upload succeeds.
+- Refine the main cockpit into the original dual-instrument aircraft-inspired visual target: illuminated RPM/speed dials, balanced telemetry strip and persistent one-tap navigation.
+- Add trip/session recording and graph history only after defining storage, lifecycle and export behaviour.
+- Add vehicle-specific warnings only when reliable SX4 diesel thresholds and sensor semantics are verified.
+- Validate the Vgate iCar Pro against the Indian SX4 ZDi/1.3 DDiS; standard OBD support does not guarantee manufacturer modules.
+- Test Open Headunit wired projection, touch, audio, charging and reconnect on the Realme Pad 2.
