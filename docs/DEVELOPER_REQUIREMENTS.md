@@ -824,3 +824,41 @@ When continuing this repository:
 - BCM, ABS, airbag, immobilizer and other non-engine modules remain unsupported/unverified.
 
 **Release decision:** deliver the green-CI pre-release APK for the owner's parked, stationary hardware validation. Do not remove the pre-release marker or claim full vehicle/Android Auto validation until the above checks are completed.
+## 19. Reference cockpit gauge wall and Bluetooth access — 2026-11-02
+
+### Reference image supplied by the owner
+The owner supplied a photo of a Torque-style round-gauge wall and asked for the same data in the app. Readable gauges in the photo:
+
+| Gauge | Photo unit | Source in this app |
+|---|---|---|
+| Revs ×1000 | rpm | OBD PID 010C |
+| Speed | mph | OBD PID 010D (km/h on the wire) |
+| Coolant | °C | OBD PID 0105 |
+| Accel G | g | Tablet accelerometer (not OBD) |
+| Intake | °C | OBD PID 010F |
+| EGR | % | OBD PID 012C (commanded EGR); 012D (EGR error) as a second reading |
+| Boost | psi | Derived: MAP (010B) − barometric (0133) |
+
+Three further small gauges in the photo are too small to read. They must NOT be guessed. The owner is asked for a clearer screenshot before they are added.
+
+### Rules for the gauge wall
+- Real data only. A gauge with no ECU value shows NO SIGNAL; a value older than 5 s shows STALE. No placeholder numbers, no invented red zones or limits.
+- An ECU that does not support a PID (for example 012C) shows "not supported by this ECU", not zero.
+- The G gauge is the tablet's sensor, so it is labelled "Device G". It is only meaningful once the tablet is mounted and calibrated; until then it shows magnitude only.
+- Units: the photo uses mph and psi; the app currently uses km/h and kPa. A speed (km/h | mph) and boost (kPa | bar | psi) preference is required, stored on the tablet, with tested converters. Default stays km/h and kPa, as used on Indian roads.
+- Dial scales are drawing ranges only, never engine limits.
+
+### Bluetooth access (owner report: adapter would not connect, no permission prompt)
+- Android 12+ needs the "Nearby devices" permission at run time. The app now requests BLUETOOTH_CONNECT and BLUETOOTH_SCAN together at launch and again on Connect.
+- If the owner denies it twice, Android stops showing the dialog. The Cockpit and Settings then show a banner with OPEN SETTINGS instead of failing silently.
+- Settings → OBD ADAPTER lists paired devices (tap to choose), scans for new ones and pairs them (PIN usually 1234 or 0000). The chosen adapter is remembered and wins over name matching.
+- Status: implemented on branch claude/obd-connection-fixes; compiled and tested only for the pure logic (82 JVM tests). The on-device behaviour is NOT yet verified. It needs a real tablet and the real Vgate iCar Pro.
+
+## 20. Cluster home page, welcome rule, Torque-style sensors and connection settings — 2026-11-02
+
+- **Home page:** modelled on the owner's reference digital cluster: one large central tachometer with a glowing ring, shift-light bar above it, boost dial left, coolant and intake dials right, road speed top right, load and MAF strip below. Every number is a real reading or "—" with NO SIGNAL / STALE. No redline or warning zone is drawn because none is verified for the SX4 ZDi. The ring glow is crimson for ambience only; it carries no fault meaning (fault red stays reserved for warnings).
+- **Welcome rule (owner request):** "Welcome to SX4 Airlines 2874" plays ONLY after the ECU has answered on a successful OBD connection. It never plays at app launch, and a Bluetooth link without an ECU answer does not trigger it. The Settings preview button still plays it on demand.
+- **Welcome animation:** replaces the earlier flat aircraft with a start-up sweep: ring ignites, needle sweeps full scale and settles, then the greeting reveals in stages. Tap to skip.
+- **Torque-style sensors:** Settings lists the standard Mode 01 sensors (SAE J1979 formulas, 40 entries in PidCatalog). Ticked sensors are polled and shown on the Gauge Wall, which scrolls past eight dials. A sensor the ECU does not advertise shows NO SIGNAL. Each extra sensor adds one ECU request, so refresh slows down. Manufacturer-specific (Mode 22) sensors are NOT covered.
+- **Connection configuration (owner: the same adapter connected in Torque Pro):** protocol choice (Automatic, ISO 9141-2, KWP slow/fast, CAN variants), insecure-socket-first switch, and adaptive timing (ATAT1). The chosen protocol is tried first, then automatic, then the K-line fallbacks.
+- **Status:** logic is unit-tested (100 JVM tests). The Compose screens have not been compiled or seen on a device. If the app still will not connect, the Settings → ADAPTER LOG (SHARE LOG) is the next diagnostic step.

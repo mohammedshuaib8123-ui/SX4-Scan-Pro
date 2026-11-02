@@ -4,9 +4,34 @@ import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.hardware.usb.UsbManager
 import android.content.pm.PackageManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.net.Uri
+import androidx.core.app.ActivityCompat
+import androidx.core.content.IntentCompat
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Build
+import androidx.compose.material.icons.outlined.DirectionsCar
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Speed
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import android.os.Bundle
+import android.view.WindowManager
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
@@ -20,6 +45,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.RepeatMode
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -42,6 +68,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.animateColorAsState
@@ -99,16 +126,66 @@ private fun GaugeCard(gauge: GaugeValue) {
     }
 }
 
+/** Sensors that already have their own dial or tile; the picker skips them to avoid duplicates. */
+private val CORE_PIDS = setOf(0x04, 0x05, 0x0B, 0x0C, 0x0D, 0x0F, 0x10, 0x11, 0x2C)
+
+private const val RECEIVER_PACKAGE = "com.andrerinas.headunitrevived"
 private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
 data class GaugeValue(val label: String, val value: String, val unit: String = "", val available: Boolean = true, val capturedAtMs: Long = System.currentTimeMillis())
 data class TroubleCodeResult(val category: String, val code: String)
-private data class DtcScanSummary(val codes: List<TroubleCodeResult>, val supportedModes: Int, val noDataModes: Int, val invalidModes: Int, val failedModes: Int)
+private data class DtcScanSummary(val codes: List<TroubleCodeResult>, val supportedModes: Int, val noDataModes: Int, val invalidModes: Int, val failedModes: Int, val partialModes: Int = 0)
 
 class MainActivity : ComponentActivity() {
     private val permissionRequest = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { }
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        refreshBluetoothAccess()
+        refreshPairedDevices()
+    }
+    private val prefs by lazy { getSharedPreferences("sx4_scan_pro", MODE_PRIVATE) }
+    private var btAccess by mutableStateOf(AccessStatus.NEEDS_REQUEST)
+    private var scanAccess by mutableStateOf(AccessStatus.NEEDS_REQUEST)
+    private var selectedAddress by mutableStateOf<String?>(null)
+    private val pairedDevices = mutableStateListOf<BtDevice>()
+    private val foundDevices = mutableStateListOf<BtDevice>()
+    private var scanning by mutableStateOf(false)
+    private var adapterNote by mutableStateOf("")
+    private var speedUnit by mutableStateOf(SpeedUnit.KMH)
+    private var boostUnit by mutableStateOf(BoostUnit.KPA)
+    private var deviceG by mutableStateOf<Double?>(null)
+    private var connConfig by mutableStateOf(ConnectionConfig())
+    private var extraPids by mutableStateOf<Set<Int>>(emptySet())
+    private var deviceGAtMs by mutableStateOf(0L)
+    private val gListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            deviceG = DeviceG.magnitudeG(event.values[0], event.values[1], event.values[2])
+            deviceGAtMs = System.currentTimeMillis()
+        }
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) { }
+    }
+    private val btReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                BluetoothDevice.ACTION_FOUND -> {
+                    val device = IntentCompat.getParcelableExtra(intent, BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java) ?: return
+                    val name = try { device.name } catch (_: SecurityException) { null }
+                    if (foundDevices.none { it.address == device.address }) {
+                        foundDevices.add(BtDevice(name ?: "Unnamed device", device.address, false))
+                    }
+                }
+                BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
+                    scanning = false
+                    adapterNote = if (foundDevices.isEmpty()) "Scan finished: no devices found. Check the adapter is plugged in and the ignition is on."
+                    else "Scan finished. Tap PAIR next to your adapter."
+                }
+                BluetoothDevice.ACTION_BOND_STATE_CHANGED -> {
+                    refreshPairedDevices()
+                    foundDevices.removeAll { f -> pairedDevices.any { it.address == f.address } }
+                }
+            }
+        }
+    }
     private var socket: BluetoothSocket? = null
     private var supportedPids: Set<Int> = emptySet()
     private val engineStartDetector = EngineStartDetector()
@@ -119,13 +196,39 @@ class MainActivity : ComponentActivity() {
     private var chime: ToneGenerator? = null
     private var cabinChimeTrack: AudioTrack? = null
     private var welcomeOverlayVisible by mutableStateOf(false)
+    @Volatile private var userInitiatedDisconnect = false
+    private val traffic = TrafficLog()
     private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        if (android.os.Build.VERSION.SDK_INT >= 31 &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
-        ) permissionRequest.launch(Manifest.permission.BLUETOOTH_CONNECT)
+        // Dark system bars with light icons, content drawn edge to edge; the dash stays awake.
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        )
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        selectedAddress = prefs.getString("adapter_address", null)
+        connConfig = ConnectionConfig(
+            protocol = ConnectionConfig.protocolOf(prefs.getString("obd_protocol", null)),
+            insecureFirst = prefs.getBoolean("insecure_first", false),
+            adaptiveTiming = prefs.getBoolean("adaptive_timing", true)
+        )
+        extraPids = PidCatalog.parseSelection(prefs.getString("extra_pids", null))
+        speedUnit = GaugeUnits.speedUnitOf(prefs.getString("speed_unit", null))
+        boostUnit = GaugeUnits.boostUnitOf(prefs.getString("boost_unit", null))
+        val btFilter = IntentFilter().apply {
+            addAction(BluetoothDevice.ACTION_FOUND)
+            addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
+            addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
+        }
+        ContextCompat.registerReceiver(this, btReceiver, btFilter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        refreshBluetoothAccess()
+        // Ask straight away on first launch: Android 12+ shows one "Nearby devices" dialog.
+        if (btAccess == AccessStatus.NEEDS_REQUEST || scanAccess == AccessStatus.NEEDS_REQUEST && android.os.Build.VERSION.SDK_INT >= 31) {
+            requestBluetoothPermissions(forScanning = false)
+        }
+        refreshPairedDevices()
 
         textToSpeech = TextToSpeech(this) { result ->
             speechReady = result == TextToSpeech.SUCCESS
@@ -159,64 +262,78 @@ class MainActivity : ComponentActivity() {
             GaugeValue("Coolant temperature", "--", "°C", false), GaugeValue("Intake air temperature", "--", "°C", false),
             GaugeValue("Manifold pressure", "--", "kPa", false), GaugeValue("Turbo boost", "--", "kPa", false),
             GaugeValue("MAF airflow", "--", "g/s", false), GaugeValue("Calculated engine load", "--", "%", false),
-            GaugeValue("Throttle position", "--", "%", false)
+            GaugeValue("Throttle position", "--", "%", false), GaugeValue("EGR commanded", "--", "%", false)
         )) }
-        var selectedTab by remember { mutableIntStateOf(0) }
+        var selectedTab by rememberSaveable { mutableStateOf(0) }
+        var showWall by rememberSaveable { mutableStateOf(false) }
         var dtcStatus by remember { mutableStateOf("Connect the Vgate adapter to read engine ECU fault codes.") }
         var dtcCodes by remember { mutableStateOf<List<TroubleCodeResult>>(emptyList()) }
         var scanningCodes by remember { mutableStateOf(false) }
         var headUnitStatus by remember { mutableStateOf("Open Headunit runs as a separate receiver app.") }
-        var usbHostSummary by remember { mutableStateOf("USB status not checked yet.") }
+        var readiness by remember { mutableStateOf(computeHeadUnitReadiness()) }
+        var logPreview by remember { mutableStateOf<List<String>>(emptyList()) }
         var warningPreview by remember { mutableStateOf(false) }
         var warningMessage by remember { mutableStateOf("") }
         val scope = rememberCoroutineScope()
         val connected = status == "Connected"
-
-        fun refreshUsbHostStatus() {
-            val usbManager = getSystemService(USB_SERVICE) as UsbManager
-            val hostSupported = packageManager.hasSystemFeature(PackageManager.FEATURE_USB_HOST)
-            val receiverInstalled = packageManager.getLaunchIntentForPackage("com.andrerinas.headunitrevived") != null
-            val devices = usbManager.deviceList.values.toList()
-            val hostLine = "USB host feature: " + if (hostSupported) "available" else "not reported by Android"
-            val receiverLine = "Open Headunit: " + if (receiverInstalled) "installed" else "not installed"
-            val deviceLine = if (devices.isEmpty()) {
-                "No USB device currently enumerated. Connect the phone using a data-capable OTG setup, then refresh."
-            } else {
-                devices.joinToString(separator = "\n") { device ->
-                    val vendor = "VID %04X".format(device.vendorId)
-                    val product = "PID %04X".format(device.productId)
-                    val name = device.productName?.takeIf { it.isNotBlank() } ?: device.deviceName
-                    "$name • $vendor / $product"
+        val connecting = status == "Connecting…"
+        val haptic = LocalHapticFeedback.current
+        val history = remember { GaugeHistory() }
+        var historyVersion by remember { mutableStateOf(0) }
+        var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
+        // One-second clock so readings that stop updating are marked STALE instead of looking live.
+        LaunchedEffect(Unit) {
+            while (true) {
+                delay(1000)
+                nowMs = System.currentTimeMillis()
+            }
+        }
+        // Plugging or unplugging the phone updates the Head Unit checks immediately.
+        DisposableEffect(Unit) {
+            val usbReceiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    readiness = computeHeadUnitReadiness()
                 }
             }
-            usbHostSummary = "$hostLine\n$receiverLine\n$deviceLine"
+            val filter = IntentFilter().apply {
+                addAction(UsbManager.ACTION_USB_DEVICE_ATTACHED)
+                addAction(UsbManager.ACTION_USB_DEVICE_DETACHED)
+            }
+            ContextCompat.registerReceiver(this@MainActivity, usbReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
+            onDispose { unregisterReceiver(usbReceiver) }
         }
+        // Coming back from installing the receiver, or opening the tab, re-checks everything.
+        LaunchedEffect(selectedTab) { if (selectedTab == 2) readiness = computeHeadUnitReadiness() }
+
         fun disconnect() {
+            userInitiatedDisconnect = true
             closeSocket()
             status = "Disconnected"
             gauges = gauges.map { it.copy(value = "--", available = false) }
         }
         fun connect() {
-            if (android.os.Build.VERSION.SDK_INT >= 31 &&
-                ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
-            ) {
-                status = "Bluetooth permission required — allow it, then tap Connect again"
-                permissionRequest.launch(Manifest.permission.BLUETOOTH_CONNECT)
+            if (btAccess != AccessStatus.GRANTED) {
+                status = if (btAccess == AccessStatus.BLOCKED) BluetoothAccess.message(btAccess)
+                else "Bluetooth permission required — allow it, then tap Connect again"
+                if (btAccess == AccessStatus.NEEDS_REQUEST) requestBluetoothPermissions(forScanning = false)
                 return
             }
             scope.launch {
                 disconnect()
+                userInitiatedDisconnect = false
+                history.clear()
                 status = "Connecting…"
                 try {
                     val result = withContext(Dispatchers.IO) { connectAndRead() }
                     adapterName = result.first
                     status = "Connected"
+                    // The greeting plays only once the ECU has really answered (connectAndRead throws otherwise).
+                    playEngineWelcome()
                     while (isActive && socket?.isConnected == true) {
                         gauges = withContext(Dispatchers.IO) { readDashboard() }
+                        gauges.forEach { g -> history.record(g.label, if (g.available) g.value.toDoubleOrNull() else null) }
+                        historyVersion++
                         val rpmGauge = gauges.firstOrNull { it.label == "Engine RPM" }
-                        if (engineStartDetector.update(rpmGauge?.value?.toIntOrNull(), rpmGauge?.available == true)) {
-                            playEngineWelcome()
-                        }
                         val sensorReadings = gauges.mapNotNull { gauge ->
                             val sensor = when (gauge.label) {
                                 "Coolant temperature" -> "coolant"
@@ -251,7 +368,9 @@ class MainActivity : ComponentActivity() {
                     status = "Permission required"
                 } catch (e: Exception) {
                     closeSocket()
-                    status = e.message ?: "Connection failed"
+                    // Tapping DISCONNECT closes the socket mid-read; that is not a failure.
+                    status = if (userInitiatedDisconnect) "Disconnected" else (e.message ?: "Connection failed")
+                    if (!userInitiatedDisconnect) gauges = gauges.map { it.copy(value = "--", available = false) }
                 }
             }
         }
@@ -269,6 +388,8 @@ class MainActivity : ComponentActivity() {
                     dtcStatus = when {
                         summary.supportedModes == 0 ->
                             "The engine ECU did not return a valid response for modes 03 / 07 / 0A. Check protocol support and adapter communication."
+                        summary.partialModes > 0 ->
+                            "Some reply lines from the engine ECU could not be read, so this list may be incomplete. Scan again before relying on it. Other modules were not scanned."
                         summary.codes.isNotEmpty() ->
                             "Valid responses from ${summary.supportedModes}/3 engine ECU modes. BCM, ABS, airbag and other modules were not scanned."
                         summary.noDataModes == summary.supportedModes && summary.failedModes == 0 && summary.invalidModes == 0 ->
@@ -288,6 +409,9 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // Back returns to the cockpit from any other section instead of closing the app.
+        BackHandler(enabled = selectedTab != 0) { selectedTab = 0 }
+
         MaterialTheme(colorScheme = darkColorScheme(primary = cyan, secondary = Color(0xFFFFB84D), background = bg, surface = panel, onBackground = Color.White, onSurface = Color.White, onSurfaceVariant = muted)) {
             Scaffold(containerColor = bg) { padding ->
                 Column(Modifier.fillMaxSize().padding(padding).background(Brush.verticalGradient(listOf(Color(0xFF05080E), Color(0xFF0B1421), Color(0xFF05080E))))) {
@@ -298,7 +422,7 @@ class MainActivity : ComponentActivity() {
                         }
                         Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
                             Text(if (connected) "● ECU LINK ACTIVE" else "○ ECU OFFLINE", color = if (connected) cyan else muted)
-                            Text("v0.4.0 • PRE-RELEASE • BUILD 21", color = muted, style = MaterialTheme.typography.labelSmall)
+                            Text("v0.6.0 • PRE-RELEASE • BUILD 24", color = muted, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -325,12 +449,22 @@ class MainActivity : ComponentActivity() {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                                 Column {
                                     Text("SX4 / DDiS 1.3", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Black, letterSpacing = 1.8.sp)
-                                    Text("DRIVER INFORMATION SYSTEM  •  LIVE ECU TELEMETRY", color = muted, fontSize = 10.sp, letterSpacing = 1.4.sp)
+                                    Text("DRIVER INFORMATION SYSTEM  •  LIVE ECU TELEMETRY", color = muted, fontSize = 13.sp, letterSpacing = 1.4.sp)
                                 }
                                 Surface(color = if (connected) Color(0xFF0B332F) else Color(0xFF252B35), shape = RoundedCornerShape(50), border = androidx.compose.foundation.BorderStroke(1.dp, if (connected) Color(0xFF26D7B1) else Color(0xFF566274))) {
                                     Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        Box(Modifier.size(7.dp).background(if (connected) Color(0xFF26D7B1) else Color(0xFF8795A5), RoundedCornerShape(50)))
-                                        Text(if (connected) "ECU LINK ACTIVE" else "ECU DISCONNECTED", color = if (connected) Color(0xFF70F0D2) else muted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                        LinkDot(connected = connected, connecting = connecting)
+                                        Text(if (connected) "ECU LINK ACTIVE" else if (connecting) "CONNECTING…" else "ECU DISCONNECTED", color = if (connected) Color(0xFF70F0D2) else muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                    }
+                                }
+                            }
+                            if (btAccess != AccessStatus.GRANTED) {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2412)), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFB84D))) {
+                                    Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                        Text(BluetoothAccess.message(btAccess), color = Color.White, modifier = Modifier.weight(1f))
+                                        Button(onClick = {
+                                            if (btAccess == AccessStatus.BLOCKED) openAppSettings() else requestBluetoothPermissions(forScanning = false)
+                                        }) { Text(if (btAccess == AccessStatus.BLOCKED) "OPEN SETTINGS" else "ALLOW") }
                                     }
                                 }
                             }
@@ -339,33 +473,53 @@ class MainActivity : ComponentActivity() {
                                     Text(if (warningMessage.isNotBlank()) warningMessage else "WARNING SYSTEM PREVIEW — NOT A LIVE VEHICLE FAULT", Modifier.padding(12.dp), color = Color.White, fontWeight = FontWeight.Black)
                                 }
                             }
-                            Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                                CockpitGauge("ENGINE SPEED", gauges[0], "0 — 5,000 RPM", 5000f, Color(0xFF42DDF5), Modifier.weight(1.12f))
-                                CockpitGauge("ROAD SPEED", gauges[1], "0 — 180 KM/H", 180f, Color(0xFFFFB84D), Modifier.weight(1f))
-                                Card(Modifier.weight(.72f).fillMaxHeight(), colors = CardDefaults.cardColors(containerColor = Color(0xFF101B29)), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF263B50)), shape = RoundedCornerShape(22.dp)) {
-                                    Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.SpaceEvenly) {
-                                        Text("POWERTRAIN", color = Color(0xFF42DDF5), fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 1.8.sp)
-                                        listOf(gauges[5], gauges[2], gauges[6], gauges[7]).forEach { g ->
-                                            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                                                Text(g.label.uppercase(), color = muted, fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = .8.sp, maxLines = 1)
-                                                Text(if (g.available) "${g.value} ${g.unit}" else "—", color = if (g.available) Color.White else Color(0xFF657487), fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                                                Box(Modifier.fillMaxWidth().height(2.dp).background(Color(0xFF26394C), RoundedCornerShape(3.dp))) {
-                                                    if (g.available) Box(Modifier.fillMaxWidth((g.value.toFloatOrNull()?.div(when(g.label) { "Turbo boost" -> 200f; "Coolant temperature" -> 120f; "MAF airflow" -> 100f; else -> 100f }) ?: 0f).coerceIn(0f,1f)).fillMaxHeight().background(Color(0xFF42DDF5), RoundedCornerShape(3.dp)))
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                            if (showWall) {
+                                val g = { l: String -> gauges.firstOrNull { it.label == l } ?: GaugeValue(l, "--", "", false) }
+                                val speed = g("Vehicle speed")
+                                val speedShown = speed.value.toDoubleOrNull()?.takeIf { speed.available }?.let { speed.copy(value = GaugeUnits.speedText(it, speedUnit), unit = speedUnit.label) } ?: speed.copy(unit = speedUnit.label)
+                                val boost = g("Turbo boost")
+                                val boostShown = boost.value.toDoubleOrNull()?.takeIf { boost.available }?.let { boost.copy(value = GaugeUnits.boostText(it, boostUnit), unit = boostUnit.label) } ?: boost.copy(unit = boostUnit.label)
+                                val gShown = deviceG?.let { GaugeValue("Device G", String.format(java.util.Locale.US, "%.2f", it), "g", true, deviceGAtMs) } ?: GaugeValue("Device G", "--", "g", false)
+                                GaugeWall(
+                                    listOf(
+                                        WallDial("REVS x1000", g("Engine RPM"), DialScale.forLabel("Engine RPM"), Color(0xFF42DDF5)),
+                                        WallDial("SPEED " + speedUnit.label.uppercase(), speedShown, GaugeUnits.speedScale(speedUnit), Color(0xFFFFB84D)),
+                                        WallDial("COOLANT °C", g("Coolant temperature"), DialScale.forLabel("Coolant temperature"), Color(0xFF42DDF5)),
+                                        WallDial("DEVICE G", gShown, DialScale.forLabel("Device G"), Color(0xFF70F0D2)),
+                                        WallDial("INTAKE °C", g("Intake air temperature"), DialScale.forLabel("Intake air temperature"), Color(0xFF42DDF5)),
+                                        WallDial("EGR %", g("EGR commanded"), DialScale.forLabel("EGR commanded"), Color(0xFFFFB84D)),
+                                        WallDial("BOOST " + boostUnit.label.uppercase(), boostShown, GaugeUnits.boostScale(boostUnit), Color(0xFF42DDF5))
+                                    ) + extraPids.sorted().mapNotNull { PidCatalog.forPid(it) }.filter { it.pid !in CORE_PIDS }.map { spec ->
+                                        WallDial(spec.name.uppercase(), g(spec.name).copy(unit = spec.unit), spec.scale, Color(0xFF42DDF5))
+                                    },
+                                    nowMs,
+                                    Modifier.weight(1f).fillMaxWidth()
+                                )
+                            } else {
+                                val g = { l: String -> gauges.firstOrNull { it.label == l } ?: GaugeValue(l, "--", "", false) }
+                                val spd = g("Vehicle speed")
+                                val spdShown = spd.value.toDoubleOrNull()?.takeIf { spd.available }?.let { spd.copy(value = GaugeUnits.speedText(it, speedUnit), unit = speedUnit.label) } ?: spd.copy(unit = speedUnit.label)
+                                val bst = g("Turbo boost")
+                                val bstShown = bst.value.toDoubleOrNull()?.takeIf { bst.available }?.let { bst.copy(value = GaugeUnits.boostText(it, boostUnit), unit = boostUnit.label) } ?: bst.copy(unit = boostUnit.label)
+                                ClusterHome(
+                                    rpm = g("Engine RPM"), speed = spdShown, speedUnitLabel = speedUnit.label,
+                                    boost = bstShown, boostScale = GaugeUnits.boostScale(boostUnit),
+                                    coolant = g("Coolant temperature"), intake = g("Intake air temperature"),
+                                    load = g("Calculated engine load"), maf = g("MAF airflow"),
+                                    nowMs = nowMs, modifier = Modifier.weight(1f).fillMaxWidth()
+                                )
                             }
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
-                                    Text(if (connected) "V-GATE / OBD-II • CONNECTED" else "V-GATE / OBD-II • STANDBY", color = if (connected) Color(0xFF70F0D2) else muted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-                                    Text(adapterName, color = muted, fontSize = 10.sp)
+                                    Text(if (connected) "V-GATE / OBD-II • CONNECTED" else "V-GATE / OBD-II • STANDBY", color = if (connected) Color(0xFF70F0D2) else muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                    val statusIsQuiet = connected || status == "Not connected" || status == "Disconnected"
+                                    Text(if (connected) adapterName else status, color = if (statusIsQuiet) muted else Color(0xFFFFB84D), fontSize = 13.sp, maxLines = 3)
                                 }
+                                OutlinedButton(onClick = { showWall = !showWall }, shape = RoundedCornerShape(12.dp)) { Text(if (showWall) "MAIN VIEW" else "GAUGE WALL", fontWeight = FontWeight.Bold) }
                                 OutlinedButton(onClick = { connect() }, enabled = !connected, shape = RoundedCornerShape(12.dp)) { Text("CONNECT ADAPTER", fontWeight = FontWeight.Bold) }
                                 OutlinedButton(onClick = { disconnect() }, enabled = connected, shape = RoundedCornerShape(12.dp)) { Text("DISCONNECT", fontWeight = FontWeight.Bold) }
                             }
-                            Text("Informational display only • Do not operate the tablet while driving", color = Color(0xFF718397), fontSize = 10.sp)
+                            Text("Informational display only • Do not operate the tablet while driving", color = Color(0xFF718397), fontSize = 13.sp)
                         }
                         1 -> LazyColumn(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             item {
@@ -376,6 +530,7 @@ class MainActivity : ComponentActivity() {
                                         Button(onClick = { scanFaultCodes() }, enabled = connected && !scanningCodes) {
                                             Text(if (scanningCodes) "SCANNING…" else "SCAN ENGINE ECU")
                                         }
+                                        if (scanningCodes) LinearProgressIndicator(Modifier.fillMaxWidth(), color = cyan)
                                         Text(dtcStatus, color = muted)
                                     }
                                 }
@@ -426,17 +581,38 @@ class MainActivity : ComponentActivity() {
                                             }
                                             Text("▣", color = cyan, fontSize = 34.sp)
                                         }
-                                        Text("A dedicated launch pad for your tablet's Android Auto receiver. Keep projection separate from the OBD cockpit so both can be tested without pretending the receiver is embedded.", color = muted)
-                                        Button(onClick = {
-                                            val launch = packageManager.getLaunchIntentForPackage("com.andrerinas.headunitrevived")
-                                            if (launch != null) {
-                                                startActivity(launch)
-                                                headUnitStatus = "Open Headunit launch requested. Complete its USB/Android Auto prompts."
-                                            } else {
-                                                headUnitStatus = "Open Headunit is not installed. SX4 Scan Pro does not include an Android Auto receiver yet. Install a compatible receiver separately to use projection."
+                                        Text("Android Auto runs through the Open Headunit receiver, which SX4 Scan Pro opens beside the OBD cockpit. The receiver is a separate app and is not embedded.", color = muted)
+                                        Text(readiness.nextStep, color = if (readiness.readyToStart) cyan else Color(0xFFFFB84D), fontWeight = FontWeight.Bold)
+                                        readiness.checks.forEach { check ->
+                                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                                                Text(if (check.state == CheckState.OK) "READY" else "ACTION", color = if (check.state == CheckState.OK) cyan else Color(0xFFFFB84D), fontWeight = FontWeight.Black, fontSize = 13.sp, modifier = Modifier.width(72.dp))
+                                                Column(Modifier.weight(1f)) {
+                                                    Text(check.title, color = Color.White, fontWeight = FontWeight.Bold)
+                                                    Text(check.detail, color = muted, style = MaterialTheme.typography.bodyMedium)
+                                                }
                                             }
-                                        }, modifier = Modifier.fillMaxWidth()) {
-                                            Text(if (packageManager.getLaunchIntentForPackage("com.andrerinas.headunitrevived") != null) "OPEN INSTALLED RECEIVER" else "RECEIVER NOT INSTALLED")
+                                        }
+                                        Button(
+                                            onClick = { headUnitStatus = launchReceiver(adjacent = true) },
+                                            enabled = readiness.receiverInstalled,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) { Text("OPEN BESIDE COCKPIT (SPLIT SCREEN)") }
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            OutlinedButton(
+                                                onClick = { headUnitStatus = launchReceiver(adjacent = false) },
+                                                enabled = readiness.receiverInstalled,
+                                                modifier = Modifier.weight(1f)
+                                            ) { Text("OPEN FULL SCREEN") }
+                                            OutlinedButton(
+                                                onClick = { readiness = computeHeadUnitReadiness(); headUnitStatus = "Checks refreshed." },
+                                                modifier = Modifier.weight(1f)
+                                            ) { Text("RECHECK") }
+                                        }
+                                        if (!readiness.receiverInstalled) {
+                                            OutlinedButton(
+                                                onClick = { headUnitStatus = openReceiverStorePage() },
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) { Text("GET THE RECEIVER (PLAY STORE)") }
                                         }
                                         Text(headUnitStatus, color = Color(0xFFFFB84D), style = MaterialTheme.typography.bodyMedium)
                                     }
@@ -467,8 +643,8 @@ class MainActivity : ComponentActivity() {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text("USB HOST STATUS", color = cyan, style = MaterialTheme.typography.titleMedium)
                                         Text("Checks Android's currently enumerated USB devices. Detection alone does not confirm Android Auto compatibility or receiver permission.", color = muted, style = MaterialTheme.typography.bodySmall)
-                                        OutlinedButton(onClick = { refreshUsbHostStatus() }, modifier = Modifier.fillMaxWidth()) { Text("REFRESH USB DEVICES") }
-                                        Text(usbHostSummary, color = Color.White, style = MaterialTheme.typography.bodyMedium)
+                                        OutlinedButton(onClick = { readiness = computeHeadUnitReadiness() }, modifier = Modifier.fillMaxWidth()) { Text("REFRESH USB DEVICES") }
+                                        Text(if (readiness.usbDevices.isEmpty()) "No USB device currently enumerated." else readiness.usbDevices.joinToString("\n") { it.label }, color = Color.White, style = MaterialTheme.typography.bodyMedium)
                                     }
                                 }
                             }
@@ -486,6 +662,128 @@ class MainActivity : ComponentActivity() {
                             item {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("CONNECTION CONFIGURATION", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text("Same options as Torque. Changes apply the next time you tap CONNECT ADAPTER.", color = muted, fontSize = 13.sp)
+                                        Text("OBD protocol", color = Color.White, fontWeight = FontWeight.Bold)
+                                        ObdProtocol.values().forEach { p ->
+                                            Row(Modifier.fillMaxWidth().clickable {
+                                                connConfig = connConfig.copy(protocol = p); prefs.edit().putString("obd_protocol", p.name).apply()
+                                            }, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                                RadioButton(selected = connConfig.protocol == p, onClick = {
+                                                    connConfig = connConfig.copy(protocol = p); prefs.edit().putString("obd_protocol", p.name).apply()
+                                                })
+                                                Text(p.label, color = Color.White)
+                                            }
+                                        }
+                                        Text("For the SX4 ZDi (K-line) try Automatic first, then ISO 14230-4 KWP (fast init).", color = muted, fontSize = 13.sp)
+                                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                            Column(Modifier.weight(1f)) {
+                                                Text("Try insecure Bluetooth socket first", color = Color.White, fontWeight = FontWeight.Bold)
+                                                Text("Many ELM327 clones only accept this. Turn on if the adapter pairs but will not connect.", color = muted, fontSize = 13.sp)
+                                            }
+                                            Switch(checked = connConfig.insecureFirst, onCheckedChange = {
+                                                connConfig = connConfig.copy(insecureFirst = it); prefs.edit().putBoolean("insecure_first", it).apply()
+                                            })
+                                        }
+                                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                            Column(Modifier.weight(1f)) {
+                                                Text("Adaptive timing (ATAT1)", color = Color.White, fontWeight = FontWeight.Bold)
+                                                Text("Lets the adapter adjust its reply timeout. Helps slow K-line ECUs.", color = muted, fontSize = 13.sp)
+                                            }
+                                            Switch(checked = connConfig.adaptiveTiming, onCheckedChange = {
+                                                connConfig = connConfig.copy(adaptiveTiming = it); prefs.edit().putBoolean("adaptive_timing", it).apply()
+                                            })
+                                        }
+                                    }
+                                }
+                            }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("SENSORS ON THE GAUGE WALL", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text("Tick the sensors you want, like adding gauges in Torque. Each extra sensor is one more request to the ECU, so the display refreshes more slowly. A sensor your ECU does not support shows NO SIGNAL.", color = muted, fontSize = 13.sp)
+                                        PidCatalog.all.filter { it.pid !in CORE_PIDS }.forEach { spec ->
+                                            val on = spec.pid in extraPids
+                                            val tag = if (supportedPids.isEmpty()) "connect to check" else if (spec.pid in supportedPids) "supported" else "not advertised by ECU"
+                                            val toggle = {
+                                                extraPids = if (on) extraPids - spec.pid else extraPids + spec.pid
+                                                prefs.edit().putString("extra_pids", PidCatalog.selectionText(extraPids)).apply()
+                                            }
+                                            Row(Modifier.fillMaxWidth().clickable { toggle() }, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                                Checkbox(checked = on, onCheckedChange = { toggle() })
+                                                Column(Modifier.weight(1f)) {
+                                                    Text(spec.name, color = Color.White)
+                                                    Text(spec.command + " • " + tag, color = muted, fontSize = 13.sp)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Text("GAUGE UNITS", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text("The ECU always reports km/h and kPa. Units only change how the Gauge Wall shows them.", color = muted, fontSize = 13.sp)
+                                        Text("Speed", color = Color.White, fontWeight = FontWeight.Bold)
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            SpeedUnit.values().forEach { u ->
+                                                FilterChip(selected = speedUnit == u, onClick = { speedUnit = u; prefs.edit().putString("speed_unit", u.name).apply() }, label = { Text(u.label) })
+                                            }
+                                        }
+                                        Text("Boost", color = Color.White, fontWeight = FontWeight.Bold)
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            BoostUnit.values().forEach { u ->
+                                                FilterChip(selected = boostUnit == u, onClick = { boostUnit = u; prefs.edit().putString("boost_unit", u.name).apply() }, label = { Text(u.label) })
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Text("OBD ADAPTER", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text(BluetoothAccess.message(btAccess), color = if (btAccess == AccessStatus.GRANTED) muted else Color(0xFFFFB84D))
+                                        if (btAccess != AccessStatus.GRANTED) {
+                                            Button(onClick = {
+                                                if (btAccess == AccessStatus.BLOCKED) openAppSettings() else requestBluetoothPermissions(forScanning = true)
+                                            }, modifier = Modifier.fillMaxWidth()) { Text(if (btAccess == AccessStatus.BLOCKED) "OPEN APP SETTINGS" else "ALLOW BLUETOOTH ACCESS") }
+                                        }
+                                        Text("Paired devices: tap one to use it", color = Color.White, fontWeight = FontWeight.Bold)
+                                        if (pairedDevices.isEmpty()) Text("None yet. Scan below to find and pair your adapter.", color = muted)
+                                        pairedDevices.forEach { d ->
+                                            Row(Modifier.fillMaxWidth().clickable { selectAdapter(d) }.padding(vertical = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                                RadioButton(selected = d.address.equals(selectedAddress, ignoreCase = true), onClick = { selectAdapter(d) })
+                                                Column {
+                                                    Text(d.name, color = Color.White, fontWeight = FontWeight.Bold)
+                                                    Text(d.address, color = muted, fontSize = 13.sp)
+                                                }
+                                            }
+                                        }
+                                        Text("With nothing selected, a single paired Vgate, iCar, OBDII, ELM or V-LINK device is used automatically.", color = muted, fontSize = 13.sp)
+                                        Divider(color = Color(0xFF26394C))
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            Button(onClick = { startScan() }, enabled = !scanning, modifier = Modifier.weight(1f)) { Text(if (scanning) "SCANNING…" else "SCAN FOR ADAPTERS") }
+                                            OutlinedButton(onClick = { refreshBluetoothAccess(); refreshPairedDevices() }, modifier = Modifier.weight(1f)) { Text("REFRESH") }
+                                        }
+                                        if (scanning) LinearProgressIndicator(Modifier.fillMaxWidth(), color = cyan)
+                                        foundDevices.filter { f -> pairedDevices.none { it.address == f.address } }.forEach { d ->
+                                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                                Column(Modifier.weight(1f)) {
+                                                    Text(d.name, color = Color.White, fontWeight = FontWeight.Bold)
+                                                    Text(d.address, color = muted, fontSize = 13.sp)
+                                                }
+                                                OutlinedButton(onClick = { pairAdapter(d) }) { Text("PAIR") }
+                                            }
+                                        }
+                                        if (adapterNote.isNotBlank()) Text(adapterNote, color = Color(0xFFFFB84D))
+                                    }
+                                }
+                            }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text("OBD CONNECTION", color = cyan, style = MaterialTheme.typography.titleMedium)
                                         Text("Adapter: " + adapterName + "\nTransport: Bluetooth Classic SPP\nStatus: " + status + "\nSupported standard PIDs: " + supportedPids.size, color = muted)
                                     }
@@ -495,7 +793,7 @@ class MainActivity : ComponentActivity() {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text("WELCOME & ALERTS", color = cyan, style = MaterialTheme.typography.titleMedium)
-                                        Text("Engine-start welcome: two-tone cabin chime followed by a calm-paced English announcement. Automatic playback requires two fresh positive RPM samples; Bluetooth connection alone never triggers it.", color = muted)
+                                        Text("Welcome: two-tone cabin chime followed by a calm-paced English announcement. It plays only after the ECU has answered on a successful OBD connection, never when the app opens or when only Bluetooth is connected.", color = muted)
                                         Button(onClick = { playEngineWelcome() }, modifier = Modifier.fillMaxWidth()) {
                                             Text("PREVIEW WELCOME ANNOUNCEMENT")
                                         }
@@ -515,37 +813,34 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
-                            item { Text("Build v0.4.0 • PRE-RELEASE • BUILD 21", color = muted) }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("ADAPTER LOG", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text("Exactly what was sent to and received from the adapter. If a drive test goes wrong, share this log so the real ECU replies can be checked.", color = muted, style = MaterialTheme.typography.bodyMedium)
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            OutlinedButton(onClick = { logPreview = traffic.tail(14) }, modifier = Modifier.weight(1f)) { Text("REFRESH") }
+                                            Button(onClick = {
+                                                val header = "SX4 Scan Pro adapter log\n" + "v0.6.0 • PRE-RELEASE • BUILD 24" + "\nStatus: " + status + "\nStandard PIDs advertised: " + supportedPids.size
+                                                val send = Intent(Intent.ACTION_SEND).apply {
+                                                    type = "text/plain"
+                                                    putExtra(Intent.EXTRA_TEXT, traffic.asText(header))
+                                                }
+                                                startActivity(Intent.createChooser(send, "Share adapter log"))
+                                            }, modifier = Modifier.weight(1f)) { Text("SHARE LOG") }
+                                        }
+                                        Text(if (logPreview.isEmpty()) "Tap REFRESH to show the latest adapter traffic." else logPreview.joinToString("\n"), color = Color.White, fontSize = 13.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
+                                    }
+                                }
+                            }
+                            item { Text("Build v0.6.0 • PRE-RELEASE • BUILD 24", color = muted) }
                         }
                             }
                         }
                         Crossfade(targetState = welcomeOverlayVisible, animationSpec = tween(550), label = "welcome-overlay-fade") { visible ->
                             if (visible) {
-                                val transition = rememberInfiniteTransition(label = "sx4-flight-3d")
-                                val yaw by transition.animateFloat(-24f, 24f, infiniteRepeatable(tween(1800, easing = androidx.compose.animation.core.FastOutSlowInEasing), RepeatMode.Reverse), label = "aircraft-yaw")
-                                val pitch by transition.animateFloat(-8f, 8f, infiniteRepeatable(tween(1250, easing = androidx.compose.animation.core.FastOutSlowInEasing), RepeatMode.Reverse), label = "aircraft-pitch")
-                                val glow by transition.animateFloat(.28f, .9f, infiniteRepeatable(tween(950), RepeatMode.Reverse), label = "aircraft-glow")
-                                Box(Modifier.fillMaxSize().background(Brush.radialGradient(listOf(Color(0xFF153C55), Color(0xF9050A12), Color(0xFF03060B)))), contentAlignment = androidx.compose.ui.Alignment.Center) {
-                                    Column(Modifier.fillMaxWidth(.86f).padding(22.dp), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        Text("SX4 FLIGHT SYSTEMS", color = Color(0xFF8BAFC5), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
-                                        Box(Modifier.fillMaxWidth().height(210.dp), contentAlignment = androidx.compose.ui.Alignment.Center) {
-                                            Canvas(Modifier.fillMaxSize()) {
-                                                val cx = size.width / 2f
-                                                val cy = size.height / 2f
-                                                for (ring in 0..3) {
-                                                    val radius = size.minDimension * (.18f + ring * .075f)
-                                                    drawCircle(Color(0xFF42DDF5).copy(alpha = glow * (.30f - ring * .045f)), radius, androidx.compose.ui.geometry.Offset(cx, cy), style = Stroke(1.2.dp.toPx()))
-                                                }
-                                                drawLine(Color(0xFF42DDF5).copy(alpha = .35f), androidx.compose.ui.geometry.Offset(0f,cy), androidx.compose.ui.geometry.Offset(size.width,cy), 1.dp.toPx())
-                                                drawLine(Color(0xFF42DDF5).copy(alpha = .25f), androidx.compose.ui.geometry.Offset(cx,0f), androidx.compose.ui.geometry.Offset(cx,size.height), 1.dp.toPx())
-                                            }
-                                            Text("✈", Modifier.graphicsLayer { rotationY = yaw; rotationX = pitch; rotationZ = -7f; cameraDistance = 18f * density; shadowElevation = 32.dp.toPx() }, color = Color(0xFFEAFBFF), fontSize = 112.sp)
-                                        }
-                                        Text("WELCOME ABOARD", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
-                                        Text("SX4 AIRLINES 2874", color = Color(0xFFFFC46B), fontSize = 25.sp, fontWeight = FontWeight.Black, letterSpacing = 2.4.sp)
-                                        Text("ENGINE START CONFIRMED  •  SYSTEMS ONLINE", color = Color(0xFF8BAFC5), fontSize = 10.sp, letterSpacing = 1.5.sp)
-                                        Box(Modifier.fillMaxWidth(.52f).height(2.dp).background(Color(0xFF42DDF5).copy(alpha = glow), RoundedCornerShape(3.dp)))
-                                    }
+                                Box(Modifier.fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { welcomeOverlayVisible = false }) {
+                                    WelcomeSequence()
                                 }
                             }
                         }
@@ -568,13 +863,21 @@ class MainActivity : ComponentActivity() {
                                 animationSpec = tween(240),
                                 label = "dock-icon-color-$i"
                             )
+                            val iconScale by animateFloatAsState(
+                                targetValue = if (selected) 1.2f else 1f,
+                                animationSpec = spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessMedium),
+                                label = "dock-icon-scale-$i"
+                            )
                             val indicatorProgress by animateFloatAsState(
                                 targetValue = if (selected) 1f else 0f,
                                 animationSpec = tween(280),
                                 label = "dock-indicator-$i"
                             )
                             Surface(
-                                onClick = { selectedTab = i },
+                                onClick = {
+                                    if (selectedTab != i) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                    selectedTab = i
+                                },
                                 modifier = Modifier.weight(1f).fillMaxHeight(),
                                 shape = RoundedCornerShape(14.dp),
                                 color = dockColor,
@@ -588,11 +891,11 @@ class MainActivity : ComponentActivity() {
                                     horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
                                     verticalArrangement = Arrangement.Center
                                 ) {
-                                    Text(
-                                        listOf("◉", "⌁", "▣", "⚙")[i],
-                                        color = iconColor,
-                                        fontSize = 23.sp,
-                                        fontWeight = FontWeight.Bold
+                                    Icon(
+                                        imageVector = listOf(Icons.Outlined.Speed, Icons.Outlined.Build, Icons.Outlined.DirectionsCar, Icons.Outlined.Settings)[i],
+                                        contentDescription = null,
+                                        tint = iconColor,
+                                        modifier = Modifier.size(26.dp).graphicsLayer { scaleX = iconScale; scaleY = iconScale }
                                     )
                                     Text(
                                         label.uppercase(),
@@ -671,28 +974,50 @@ class MainActivity : ComponentActivity() {
         ) throw SecurityException("Bluetooth permission not granted")
         val adapter = BluetoothAdapter.getDefaultAdapter() ?: throw IOException("Bluetooth is not supported on this device")
         if (!adapter.isEnabled) throw IOException("Turn on Bluetooth")
-        val candidates = adapter.bondedDevices.filter {
-            val n = it.name.orEmpty()
-            n.contains("Vgate", true) || n.contains("iCar", true) || n.contains("OBD", true)
+        val bonded = adapter.bondedDevices.orEmpty().map { BtDevice(it.name ?: it.address, it.address, true) }
+        // The user's explicit choice (Settings, OBD ADAPTER) wins; otherwise a single recognised adapter is used.
+        val chosen = when (val choice = AdapterSelector.choose(bonded, selectedAddress)) {
+            is AdapterChoice.Use -> choice.device
+            is AdapterChoice.Unavailable -> throw IOException(choice.message)
         }
-        if (candidates.isEmpty()) {
-            throw IOException("No recognised OBD adapter found. Pair your Vgate iCar Pro, then try again.")
-        }
-        if (candidates.size > 1) {
-            throw IOException("Multiple OBD adapters are paired. Keep only the intended Vgate adapter connected.")
-        }
-        val device: BluetoothDevice = candidates.single()
-        val s = device.createRfcommSocketToServiceRecord(SPP_UUID)
+        val device: BluetoothDevice = adapter.getRemoteDevice(chosen.address)
         adapter.cancelDiscovery()
-        s.connect()
-        socket = s
-        listOf("ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0").forEach { sendCommand(it) }
-        supportedPids = discoverSupportedPids()
+        socket = openSocket(device)
+        val config = connConfig
+        sendCommand("ATZ", 5000)
+        config.initCommands().forEach { sendCommand(it) }
+        // "Connected" must mean the ECU answered, not just that the adapter did.
+        val negotiation = EcuNegotiation { command, timeoutMs -> sendCommand(command, timeoutMs) }
+            .apply { preferredProtocol = config.protocol.elmNumber }.run()
+        if (negotiation.supportedPids.isEmpty()) {
+            closeSocket()
+            throw IOException(negotiation.failure)
+        }
+        supportedPids = negotiation.supportedPids
         return (device.name ?: "Bluetooth OBD adapter") to Unit
     }
 
+    /** Secure SPP first, then insecure SPP: many ELM327 clones only accept the second. */
+    private fun openSocket(device: BluetoothDevice): BluetoothSocket {
+        val secure: () -> BluetoothSocket = { device.createRfcommSocketToServiceRecord(SPP_UUID) }
+        val insecure: () -> BluetoothSocket = { device.createInsecureRfcommSocketToServiceRecord(SPP_UUID) }
+        val makers = if (connConfig.insecureFirst) listOf(insecure, secure) else listOf(secure, insecure)
+        var last: IOException? = null
+        for (make in makers) {
+            val candidate = make()
+            try {
+                candidate.connect()
+                return candidate
+            } catch (e: IOException) {
+                last = e
+                try { candidate.close() } catch (_: Exception) { }
+            }
+        }
+        throw IOException("Could not open the Bluetooth link to the adapter (${last?.message ?: "refused"}). Check it is plugged in, the ignition is on and no other app is using it.")
+    }
+
     @Synchronized
-    private fun sendCommand(command: String, timeoutMs: Long = 5000): String {
+    private fun sendCommand(command: String, timeoutMs: Long = 5000, keepLines: Boolean = false): String {
         val s = socket ?: throw IOException("Not connected")
         if (!s.isConnected) throw IOException("OBD adapter connection is closed")
 
@@ -710,6 +1035,7 @@ class MainActivity : ComponentActivity() {
 
             s.outputStream.write((command + "\r").toByteArray(Charsets.US_ASCII))
             s.outputStream.flush()
+            traffic.add("TX", command)
             val out = StringBuilder()
             val deadline = System.currentTimeMillis() + timeoutMs
             var promptReceived = false
@@ -728,25 +1054,26 @@ class MainActivity : ComponentActivity() {
                 }
             }
             if (!promptReceived) throw IOException("Timed out waiting for OBD response to $command")
-            val response = out.toString().replace("\r", "").replace("\n", "").replace(" ", "").uppercase()
+            traffic.add("RX", out.toString().trim().replace("\r", " ⏎ "))
+            // DTC replies keep one line per ECU frame so multi-frame answers can be decoded;
+            // everything else is compacted as before.
+            val response = if (keepLines) {
+                out.toString().uppercase().split('\r', '\n')
+                    .map { line -> line.filterNot { it.isWhitespace() } }
+                    .filter { it.isNotEmpty() }
+                    .joinToString("\n")
+            } else {
+                out.toString().replace("\r", "").replace("\n", "").replace(" ", "").uppercase()
+            }
             // A prompt-terminated "?" or STOPPED is a complete adapter response,
             // not a broken byte stream. Return it so one unsupported DTC mode does
             // not abort the remaining read-only mode checks.
             return response
         } catch (e: Exception) {
+            traffic.add("ERR", "$command: ${e.message ?: e.javaClass.simpleName}")
             closeSocket()
             throw if (e is IOException) e else IOException("OBD transaction failed for $command", e)
         }
-    }
-
-    @Synchronized
-    private fun discoverSupportedPids(): Set<Int> {
-        val first = sendCommand("0100", timeoutMs = 12000)
-        val firstSet = ObdPidSupport.decode(first)
-        val second = if (32 in firstSet) sendCommand("0120", timeoutMs = 12000) else ""
-        val through64 = ObdPidSupport.decode(first + second)
-        val third = if (64 in through64) sendCommand("0140", timeoutMs = 12000) else ""
-        return ObdPidSupport.decode(first + second + third)
     }
 
     // Hold the same Activity monitor for the complete PID batch so a DTC scan cannot
@@ -761,7 +1088,8 @@ class MainActivity : ComponentActivity() {
             Triple("Manifold pressure", "010B", "kPa"),
             Triple("MAF airflow", "0110", "g/s"),
             Triple("Calculated engine load", "0104", "%"),
-            Triple("Throttle position", "0111", "%")
+            Triple("Throttle position", "0111", "%"),
+            Triple("EGR commanded", "012C", "%")
         )
         val results = specs.map { (label, command, unit) ->
             val pid = command.substring(2).toIntOrNull(16)
@@ -781,7 +1109,16 @@ class MainActivity : ComponentActivity() {
             if (baro != null) GaugeValue("Turbo boost", String.format(java.util.Locale.US, "%.1f", (mapPressure - baro).coerceAtLeast(0.0)), "kPa", true)
             else GaugeValue("Turbo boost", "--", "kPa", false)
         } else GaugeValue("Turbo boost", "--", "kPa", false)
-        return results.take(4) + listOf(map["Manifold pressure"]!!) + boost + results.drop(5)
+        val core = results.take(4) + listOf(map["Manifold pressure"]!!) + boost + results.drop(5)
+        // Extra sensors the user chose (Torque-style). Only polled when the ECU advertises them.
+        val extras = extraPids.sorted().mapNotNull { PidCatalog.forPid(it) }.map { spec ->
+            if (spec.pid !in supportedPids) GaugeValue(spec.name, "--", spec.unit, false)
+            else {
+                val v = PidCatalog.decode(spec, sendCommand(spec.command))
+                if (v != null) GaugeValue(spec.name, PidCatalog.format(spec, v), spec.unit, true) else GaugeValue(spec.name, "--", spec.unit, false)
+            }
+        }
+        return core + extras
     }
 
     // DTC modes are one transaction: do not interleave them with live PID polling.
@@ -792,30 +1129,30 @@ class MainActivity : ComponentActivity() {
         var noData = 0
         var invalid = 0
         var failed = 0
+        var partial = 0
         val codes = mutableListOf<TroubleCodeResult>()
         for ((mode, category) in modes) {
-            val response = try {
-                sendCommand(mode).uppercase().filterNot { it.isWhitespace() }
+            val raw = try {
+                sendCommand(mode, 10000, keepLines = true)
             } catch (e: IOException) {
                 failed++
                 if (socket?.isConnected != true) break
                 continue
             }
-            val expectedPrefix = when (mode) {
-                "03" -> "43"
-                "07" -> "47"
-                else -> "4A"
-            }
+            // Line-aware: more than three codes arrive as several frames, and each is checked
+            // with the same strict rules as before. Unreadable lines are counted, never dropped.
+            val read = ObdTroubleCodeDecoder.decodeResponse(raw, mode)
             when {
-                response.startsWith(expectedPrefix) -> {
+                read.validFrames > 0 -> {
                     supported++
-                    codes += decodeTroubleCodes(response, mode).map { TroubleCodeResult(category, it) }
+                    codes += read.codes.map { TroubleCodeResult(category, it) }
+                    if (read.unreadable.isNotEmpty()) partial++
                 }
-                response.contains("NODATA") -> noData++
+                read.noData && read.unreadable.isEmpty() -> noData++
                 else -> invalid++
             }
         }
-        return DtcScanSummary(codes.distinct(), supported, noData, invalid, failed)
+        return DtcScanSummary(codes.distinct(), supported, noData, invalid, failed, partial)
     }
 
     private fun decodeTroubleCodes(response: String, mode: String): List<String> =
@@ -888,12 +1225,152 @@ class MainActivity : ComponentActivity() {
         textToSpeech?.speak("Welcome to SX4 Airlines 2874", TextToSpeech.QUEUE_FLUSH, null, "sx4_engine_start")
     }
 
+    private fun computeHeadUnitReadiness(): HeadUnitReadiness {
+        val usb = getSystemService(USB_SERVICE) as UsbManager
+        val devices = usb.deviceList.values.map { d ->
+            val name = runCatching { d.productName }.getOrNull()?.takeIf { it.isNotBlank() } ?: d.deviceName
+            UsbSeen(name, d.vendorId, d.productId)
+        }
+        return HeadUnitReadiness(
+            receiverInstalled = packageManager.getLaunchIntentForPackage(RECEIVER_PACKAGE) != null,
+            usbHostFeature = packageManager.hasSystemFeature(PackageManager.FEATURE_USB_HOST),
+            usbDevices = devices
+        )
+    }
+
+    /** Opens the Android Auto receiver, optionally in the other half of split screen. Returns the status line. */
+    private fun launchReceiver(adjacent: Boolean): String {
+        val launch = packageManager.getLaunchIntentForPackage(RECEIVER_PACKAGE)
+            ?: return "Open Headunit is not installed. Use GET THE RECEIVER, then tap RECHECK."
+        if (adjacent && !isInMultiWindowMode) {
+            return "Split screen is not active. Put SX4 Scan Pro into split screen first, then tap this again, or use OPEN FULL SCREEN."
+        }
+        if (adjacent) launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_LAUNCH_ADJACENT)
+        return try {
+            startActivity(launch)
+            if (adjacent) "Receiver opened beside the cockpit. Complete its USB and Android Auto prompts."
+            else "Receiver launch requested. Complete its USB and Android Auto prompts."
+        } catch (e: Exception) {
+            "Could not open the receiver: " + (e.message ?: "unknown error")
+        }
+    }
+
+    private fun openReceiverStorePage(): String = try {
+        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$RECEIVER_PACKAGE")))
+        "Opening the Play Store page for Open Headunit. Come back and tap RECHECK after installing."
+    } catch (e: Exception) {
+        "No app store is available on this tablet. Install Open Headunit another way, then tap RECHECK."
+    }
+
     private fun closeSocket() {
         try { socket?.close() } catch (_: Exception) { }
         socket = null
     }
 
+    private fun isGranted(permission: String): Boolean =
+        ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+
+    private fun accessFor(required: List<String>): AccessStatus = BluetoothAccess.status(
+        required = required,
+        isGranted = { isGranted(it) },
+        askedBefore = prefs.getBoolean("bt_permission_asked", false),
+        canShowRationale = { ActivityCompat.shouldShowRequestPermissionRationale(this, it) }
+    )
+
+    private fun refreshBluetoothAccess() {
+        val sdk = android.os.Build.VERSION.SDK_INT
+        btAccess = accessFor(BluetoothAccess.forConnecting(sdk))
+        scanAccess = accessFor(BluetoothAccess.forScanning(sdk))
+    }
+
+    /** Shows Android's permission dialog for whatever is still missing (one dialog on Android 12+). */
+    private fun requestBluetoothPermissions(forScanning: Boolean) {
+        val sdk = android.os.Build.VERSION.SDK_INT
+        val wanted = if (forScanning || sdk >= 31) BluetoothAccess.forScanning(sdk) else BluetoothAccess.forConnecting(sdk)
+        val missing = wanted.filterNot { isGranted(it) }
+        if (missing.isEmpty()) {
+            refreshBluetoothAccess()
+            return
+        }
+        prefs.edit().putBoolean("bt_permission_asked", true).apply()
+        permissionRequest.launch(missing.toTypedArray())
+    }
+
+    private fun openAppSettings() {
+        startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+    }
+
+    private fun refreshPairedDevices() {
+        pairedDevices.clear()
+        if (btAccess != AccessStatus.GRANTED) return
+        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return
+        try {
+            adapter.bondedDevices.orEmpty().forEach { pairedDevices.add(BtDevice(it.name ?: it.address, it.address, true)) }
+        } catch (_: SecurityException) { }
+    }
+
+    private fun selectAdapter(device: BtDevice) {
+        selectedAddress = device.address
+        prefs.edit().putString("adapter_address", device.address).apply()
+        adapterNote = "Selected " + device.name + ". Go to the Cockpit and tap CONNECT ADAPTER."
+    }
+
+    private fun pairAdapter(device: BtDevice) {
+        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return
+        try {
+            adapter.cancelDiscovery()
+            adapterNote = if (adapter.getRemoteDevice(device.address).createBond())
+                "Pairing requested. If Android asks for a PIN, try 1234 or 0000, then choose the adapter above and tap CONNECT."
+            else "Could not start pairing."
+        } catch (_: SecurityException) {
+            adapterNote = "Bluetooth permission is missing."
+        }
+    }
+
+    private fun startScan() {
+        if (scanAccess != AccessStatus.GRANTED) {
+            adapterNote = BluetoothAccess.message(scanAccess)
+            if (scanAccess == AccessStatus.NEEDS_REQUEST) requestBluetoothPermissions(forScanning = true)
+            return
+        }
+        val adapter = BluetoothAdapter.getDefaultAdapter()
+        if (adapter == null) {
+            adapterNote = "This tablet has no Bluetooth."
+            return
+        }
+        if (!adapter.isEnabled) {
+            adapterNote = "Turn Bluetooth on first, then scan again."
+            return
+        }
+        foundDevices.clear()
+        try {
+            adapter.cancelDiscovery()
+            scanning = adapter.startDiscovery()
+            adapterNote = if (scanning) "Scanning for nearby devices…" else "Could not start scanning."
+        } catch (_: SecurityException) {
+            adapterNote = "Bluetooth permission is missing."
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        (getSystemService(SENSOR_SERVICE) as? SensorManager)?.unregisterListener(gListener)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Device G: the tablet's own linear-acceleration sensor. Absent sensor = NO SIGNAL, never a made-up value.
+        val sm = getSystemService(SENSOR_SERVICE) as? SensorManager
+        val sensor = sm?.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
+        if (sensor != null) sm?.registerListener(gListener, sensor, SensorManager.SENSOR_DELAY_UI)
+        // Coming back from the system permission screen or Bluetooth settings.
+        refreshBluetoothAccess()
+        refreshPairedDevices()
+    }
+
     override fun onDestroy() {
+        runCatching { unregisterReceiver(btReceiver) }
+        runCatching { if (BluetoothAdapter.getDefaultAdapter()?.isDiscovering == true) BluetoothAdapter.getDefaultAdapter()?.cancelDiscovery() }
         closeSocket()
         mainHandler.removeCallbacksAndMessages(null)
         textToSpeech?.stop()

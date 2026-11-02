@@ -14,6 +14,14 @@ class ObdPidResponseDecoderTest {
         assertEquals("101", ObdPidResponseDecoder.decode("0133", "413365"))
     }
 
+    @Test fun decodesEgrPids() {
+        assertEquals("100.0", ObdPidResponseDecoder.decode("012C", "412CFF"))
+        assertEquals("0.0", ObdPidResponseDecoder.decode("012C", "412C00"))
+        assertEquals("0.0", ObdPidResponseDecoder.decode("012D", "412D80"))
+        assertEquals("-100.0", ObdPidResponseDecoder.decode("012D", "412D00"))
+        assertNull(ObdPidResponseDecoder.decode("012C", "412D80"))
+    }
+
     @Test fun rejectsWrongPidAndWrongService() {
         assertNull(ObdPidResponseDecoder.decode("010C", "410D1F40"))
         assertNull(ObdPidResponseDecoder.decode("010C", "430C1F40"))
