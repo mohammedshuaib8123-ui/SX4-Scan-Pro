@@ -18,6 +18,9 @@ internal object ObdPidResponseDecoder {
             "0105", "010F" -> (a - 40).toString()
             "010D", "010B", "0133" -> a.toString()
             "0110" -> String.format(java.util.Locale.US, "%.2f", (a * 256 + b) / 100.0)
+            // SAE J1979: commanded EGR = A*100/255 %; EGR error = A*100/128 - 100 %.
+            "012C" -> String.format(java.util.Locale.US, "%.1f", a * 100.0 / 255.0)
+            "012D" -> String.format(java.util.Locale.US, "%.1f", a * 100.0 / 128.0 - 100.0)
             "0104", "0111" -> String.format(java.util.Locale.US, "%.1f", a * 100.0 / 255.0)
             else -> null
         }

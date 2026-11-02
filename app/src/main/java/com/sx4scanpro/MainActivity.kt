@@ -4,6 +4,10 @@ import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.hardware.usb.UsbManager
 import android.content.pm.PackageManager
 import android.content.BroadcastReceiver
@@ -144,6 +148,17 @@ class MainActivity : ComponentActivity() {
     private val foundDevices = mutableStateListOf<BtDevice>()
     private var scanning by mutableStateOf(false)
     private var adapterNote by mutableStateOf("")
+    private var speedUnit by mutableStateOf(SpeedUnit.KMH)
+    private var boostUnit by mutableStateOf(BoostUnit.KPA)
+    private var deviceG by mutableStateOf<Double?>(null)
+    private var deviceGAtMs by mutableStateOf(0L)
+    private val gListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) {
+            deviceG = DeviceG.magnitudeG(event.values[0], event.values[1], event.values[2])
+            deviceGAtMs = System.currentTimeMillis()
+        }
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) { }
+    }
     private val btReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
             when (intent?.action) {
@@ -189,6 +204,8 @@ class MainActivity : ComponentActivity() {
         )
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         selectedAddress = prefs.getString("adapter_address", null)
+        speedUnit = GaugeUnits.speedUnitOf(prefs.getString("speed_unit", null))
+        boostUnit = GaugeUnits.boostUnitOf(prefs.getString("boost_unit", null))
         val btFilter = IntentFilter().apply {
             addAction(BluetoothDevice.ACTION_FOUND)
             addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
@@ -236,9 +253,10 @@ class MainActivity : ComponentActivity() {
             GaugeValue("Coolant temperature", "--", "°C", false), GaugeValue("Intake air temperature", "--", "°C", false),
             GaugeValue("Manifold pressure", "--", "kPa", false), GaugeValue("Turbo boost", "--", "kPa", false),
             GaugeValue("MAF airflow", "--", "g/s", false), GaugeValue("Calculated engine load", "--", "%", false),
-            GaugeValue("Throttle position", "--", "%", false)
+            GaugeValue("Throttle position", "--", "%", false), GaugeValue("EGR commanded", "--", "%", false)
         )) }
         var selectedTab by rememberSaveable { mutableStateOf(0) }
+        var showWall by rememberSaveable { mutableStateOf(false) }
         var dtcStatus by remember { mutableStateOf("Connect the Vgate adapter to read engine ECU fault codes.") }
         var dtcCodes by remember { mutableStateOf<List<TroubleCodeResult>>(emptyList()) }
         var scanningCodes by remember { mutableStateOf(false) }
@@ -396,7 +414,7 @@ class MainActivity : ComponentActivity() {
                         }
                         Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
                             Text(if (connected) "● ECU LINK ACTIVE" else "○ ECU OFFLINE", color = if (connected) cyan else muted)
-                            Text("v0.4.0 • PRE-RELEASE • BUILD 22", color = muted, style = MaterialTheme.typography.labelSmall)
+                            Text("v0.5.0 • PRE-RELEASE • BUILD 23", color = muted, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -447,7 +465,27 @@ class MainActivity : ComponentActivity() {
                                     Text(if (warningMessage.isNotBlank()) warningMessage else "WARNING SYSTEM PREVIEW — NOT A LIVE VEHICLE FAULT", Modifier.padding(12.dp), color = Color.White, fontWeight = FontWeight.Black)
                                 }
                             }
-                            Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                            if (showWall) {
+                                val g = { l: String -> gauges.firstOrNull { it.label == l } ?: GaugeValue(l, "--", "", false) }
+                                val speed = g("Vehicle speed")
+                                val speedShown = speed.value.toDoubleOrNull()?.takeIf { speed.available }?.let { speed.copy(value = GaugeUnits.speedText(it, speedUnit), unit = speedUnit.label) } ?: speed.copy(unit = speedUnit.label)
+                                val boost = g("Turbo boost")
+                                val boostShown = boost.value.toDoubleOrNull()?.takeIf { boost.available }?.let { boost.copy(value = GaugeUnits.boostText(it, boostUnit), unit = boostUnit.label) } ?: boost.copy(unit = boostUnit.label)
+                                val gShown = deviceG?.let { GaugeValue("Device G", String.format(java.util.Locale.US, "%.2f", it), "g", true, deviceGAtMs) } ?: GaugeValue("Device G", "--", "g", false)
+                                GaugeWall(
+                                    listOf(
+                                        WallDial("REVS x1000", g("Engine RPM"), DialScale.forLabel("Engine RPM"), Color(0xFF42DDF5)),
+                                        WallDial("SPEED " + speedUnit.label.uppercase(), speedShown, GaugeUnits.speedScale(speedUnit), Color(0xFFFFB84D)),
+                                        WallDial("COOLANT °C", g("Coolant temperature"), DialScale.forLabel("Coolant temperature"), Color(0xFF42DDF5)),
+                                        WallDial("DEVICE G", gShown, DialScale.forLabel("Device G"), Color(0xFF70F0D2)),
+                                        WallDial("INTAKE °C", g("Intake air temperature"), DialScale.forLabel("Intake air temperature"), Color(0xFF42DDF5)),
+                                        WallDial("EGR %", g("EGR commanded"), DialScale.forLabel("EGR commanded"), Color(0xFFFFB84D)),
+                                        WallDial("BOOST " + boostUnit.label.uppercase(), boostShown, GaugeUnits.boostScale(boostUnit), Color(0xFF42DDF5))
+                                    ),
+                                    nowMs,
+                                    Modifier.weight(1f).fillMaxWidth()
+                                )
+                            } else Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                                 InstrumentDial("ENGINE SPEED", gauges[0], DialScale.forLabel("Engine RPM"), Color(0xFF42DDF5), nowMs, Modifier.weight(1.12f).fillMaxHeight())
                                 InstrumentDial("ROAD SPEED", gauges[1], DialScale.forLabel("Vehicle speed"), Color(0xFFFFB84D), nowMs, Modifier.weight(1f).fillMaxHeight())
                                 PowertrainPanel(gauges, history, historyVersion, nowMs, Color(0xFF42DDF5), Modifier.weight(.72f).fillMaxHeight())
@@ -458,6 +496,7 @@ class MainActivity : ComponentActivity() {
                                     val statusIsQuiet = connected || status == "Not connected" || status == "Disconnected"
                                     Text(if (connected) adapterName else status, color = if (statusIsQuiet) muted else Color(0xFFFFB84D), fontSize = 13.sp, maxLines = 3)
                                 }
+                                OutlinedButton(onClick = { showWall = !showWall }, shape = RoundedCornerShape(12.dp)) { Text(if (showWall) "MAIN VIEW" else "GAUGE WALL", fontWeight = FontWeight.Bold) }
                                 OutlinedButton(onClick = { connect() }, enabled = !connected, shape = RoundedCornerShape(12.dp)) { Text("CONNECT ADAPTER", fontWeight = FontWeight.Bold) }
                                 OutlinedButton(onClick = { disconnect() }, enabled = connected, shape = RoundedCornerShape(12.dp)) { Text("DISCONNECT", fontWeight = FontWeight.Bold) }
                             }
@@ -604,6 +643,26 @@ class MainActivity : ComponentActivity() {
                             item {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Text("GAUGE UNITS", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text("The ECU always reports km/h and kPa. Units only change how the Gauge Wall shows them.", color = muted, fontSize = 13.sp)
+                                        Text("Speed", color = Color.White, fontWeight = FontWeight.Bold)
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            SpeedUnit.values().forEach { u ->
+                                                FilterChip(selected = speedUnit == u, onClick = { speedUnit = u; prefs.edit().putString("speed_unit", u.name).apply() }, label = { Text(u.label) })
+                                            }
+                                        }
+                                        Text("Boost", color = Color.White, fontWeight = FontWeight.Bold)
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            BoostUnit.values().forEach { u ->
+                                                FilterChip(selected = boostUnit == u, onClick = { boostUnit = u; prefs.edit().putString("boost_unit", u.name).apply() }, label = { Text(u.label) })
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                         Text("OBD ADAPTER", color = cyan, style = MaterialTheme.typography.titleMedium)
                                         Text(BluetoothAccess.message(btAccess), color = if (btAccess == AccessStatus.GRANTED) muted else Color(0xFFFFB84D))
                                         if (btAccess != AccessStatus.GRANTED) {
@@ -682,7 +741,7 @@ class MainActivity : ComponentActivity() {
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                             OutlinedButton(onClick = { logPreview = traffic.tail(14) }, modifier = Modifier.weight(1f)) { Text("REFRESH") }
                                             Button(onClick = {
-                                                val header = "SX4 Scan Pro adapter log\n" + "v0.4.0 • PRE-RELEASE • BUILD 22" + "\nStatus: " + status + "\nStandard PIDs advertised: " + supportedPids.size
+                                                val header = "SX4 Scan Pro adapter log\n" + "v0.5.0 • PRE-RELEASE • BUILD 23" + "\nStatus: " + status + "\nStandard PIDs advertised: " + supportedPids.size
                                                 val send = Intent(Intent.ACTION_SEND).apply {
                                                     type = "text/plain"
                                                     putExtra(Intent.EXTRA_TEXT, traffic.asText(header))
@@ -694,7 +753,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
-                            item { Text("Build v0.4.0 • PRE-RELEASE • BUILD 22", color = muted) }
+                            item { Text("Build v0.5.0 • PRE-RELEASE • BUILD 23", color = muted) }
                         }
                             }
                         }
@@ -995,7 +1054,8 @@ class MainActivity : ComponentActivity() {
             Triple("Manifold pressure", "010B", "kPa"),
             Triple("MAF airflow", "0110", "g/s"),
             Triple("Calculated engine load", "0104", "%"),
-            Triple("Throttle position", "0111", "%")
+            Triple("Throttle position", "0111", "%"),
+            Triple("EGR commanded", "012C", "%")
         )
         val results = specs.map { (label, command, unit) ->
             val pid = command.substring(2).toIntOrNull(16)
@@ -1249,8 +1309,17 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onPause() {
+        super.onPause()
+        (getSystemService(SENSOR_SERVICE) as? SensorManager)?.unregisterListener(gListener)
+    }
+
     override fun onResume() {
         super.onResume()
+        // Device G: the tablet's own linear-acceleration sensor. Absent sensor = NO SIGNAL, never a made-up value.
+        val sm = getSystemService(SENSOR_SERVICE) as? SensorManager
+        val sensor = sm?.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
+        if (sensor != null) sm?.registerListener(gListener, sensor, SensorManager.SENSOR_DELAY_UI)
         // Coming back from the system permission screen or Bluetooth settings.
         refreshBluetoothAccess()
         refreshPairedDevices()

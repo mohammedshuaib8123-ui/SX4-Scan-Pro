@@ -39,6 +39,8 @@ internal data class DialScale(
             "Manifold pressure" -> DialScale(250f, 50f)
             "Turbo boost" -> DialScale(200f, 50f)
             "MAF airflow" -> DialScale(100f, 20f)
+            "EGR commanded" -> DialScale(100f, 20f)
+            "Device G" -> DialScale(1f, 0.25f)
             else -> DialScale(100f, 20f)
         }
     }

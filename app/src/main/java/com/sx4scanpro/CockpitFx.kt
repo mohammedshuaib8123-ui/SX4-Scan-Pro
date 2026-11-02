@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -128,7 +129,7 @@ internal fun InstrumentDial(
                 }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(
-                        text = if (number != null) shown.roundToInt().toString() else "—",
+                        text = if (number == null) "—" else if (scale.max <= 10f) String.format(java.util.Locale.US, "%.2f", shown) else shown.roundToInt().toString(),
                         color = if (live) Color.White else Fx.Muted,
                         style = TABULAR,
                         fontSize = (side.value * 0.20f).sp,
@@ -362,4 +363,23 @@ internal fun LinkDot(connected: Boolean, connecting: Boolean, modifier: Modifier
             .graphicsLayer { alpha = if (connecting) pulse else 1f }
             .background(color, CircleShape)
     )
+}
+
+/** One dial of the gauge wall. [gauge] is already in the display unit. */
+internal data class WallDial(val title: String, val gauge: GaugeValue, val scale: DialScale, val accent: Color)
+
+/** Round-gauge wall: every dial is a real reading, or NO SIGNAL. Two rows, as many columns as needed. */
+@Composable
+internal fun GaugeWall(dials: List<WallDial>, nowMs: Long, modifier: Modifier = Modifier) {
+    val perRow = 4
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        dials.chunked(perRow).forEach { rowDials ->
+            Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                rowDials.forEach { d ->
+                    InstrumentDial(d.title, d.gauge, d.scale, d.accent, nowMs, Modifier.weight(1f).fillMaxHeight())
+                }
+                repeat(perRow - rowDials.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+    }
 }
