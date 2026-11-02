@@ -126,6 +126,9 @@ private fun GaugeCard(gauge: GaugeValue) {
     }
 }
 
+/** Sensors that already have their own dial or tile; the picker skips them to avoid duplicates. */
+private val CORE_PIDS = setOf(0x04, 0x05, 0x0B, 0x0C, 0x0D, 0x0F, 0x10, 0x11, 0x2C)
+
 private const val RECEIVER_PACKAGE = "com.andrerinas.headunitrevived"
 private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
@@ -151,6 +154,8 @@ class MainActivity : ComponentActivity() {
     private var speedUnit by mutableStateOf(SpeedUnit.KMH)
     private var boostUnit by mutableStateOf(BoostUnit.KPA)
     private var deviceG by mutableStateOf<Double?>(null)
+    private var connConfig by mutableStateOf(ConnectionConfig())
+    private var extraPids by mutableStateOf<Set<Int>>(emptySet())
     private var deviceGAtMs by mutableStateOf(0L)
     private val gListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
@@ -204,6 +209,12 @@ class MainActivity : ComponentActivity() {
         )
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         selectedAddress = prefs.getString("adapter_address", null)
+        connConfig = ConnectionConfig(
+            protocol = ConnectionConfig.protocolOf(prefs.getString("obd_protocol", null)),
+            insecureFirst = prefs.getBoolean("insecure_first", false),
+            adaptiveTiming = prefs.getBoolean("adaptive_timing", true)
+        )
+        extraPids = PidCatalog.parseSelection(prefs.getString("extra_pids", null))
         speedUnit = GaugeUnits.speedUnitOf(prefs.getString("speed_unit", null))
         boostUnit = GaugeUnits.boostUnitOf(prefs.getString("boost_unit", null))
         val btFilter = IntentFilter().apply {
@@ -235,8 +246,6 @@ class MainActivity : ComponentActivity() {
         }
         chime = ToneGenerator(AudioManager.STREAM_MUSIC, 72)
         setContent { MaterialTheme { Dashboard() } }
-        // Welcome sequence when the app opens (it also plays on a confirmed engine start).
-        if (savedInstanceState == null) mainHandler.postDelayed({ playEngineWelcome() }, 900L)
     }
 
     @OptIn(ExperimentalMaterial3Api::class)
@@ -318,14 +327,13 @@ class MainActivity : ComponentActivity() {
                     val result = withContext(Dispatchers.IO) { connectAndRead() }
                     adapterName = result.first
                     status = "Connected"
+                    // The greeting plays only once the ECU has really answered (connectAndRead throws otherwise).
+                    playEngineWelcome()
                     while (isActive && socket?.isConnected == true) {
                         gauges = withContext(Dispatchers.IO) { readDashboard() }
                         gauges.forEach { g -> history.record(g.label, if (g.available) g.value.toDoubleOrNull() else null) }
                         historyVersion++
                         val rpmGauge = gauges.firstOrNull { it.label == "Engine RPM" }
-                        if (engineStartDetector.update(rpmGauge?.value?.toIntOrNull(), rpmGauge?.available == true)) {
-                            playEngineWelcome()
-                        }
                         val sensorReadings = gauges.mapNotNull { gauge ->
                             val sensor = when (gauge.label) {
                                 "Coolant temperature" -> "coolant"
@@ -414,7 +422,7 @@ class MainActivity : ComponentActivity() {
                         }
                         Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
                             Text(if (connected) "● ECU LINK ACTIVE" else "○ ECU OFFLINE", color = if (connected) cyan else muted)
-                            Text("v0.5.0 • PRE-RELEASE • BUILD 23", color = muted, style = MaterialTheme.typography.labelSmall)
+                            Text("v0.6.0 • PRE-RELEASE • BUILD 24", color = muted, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -481,14 +489,25 @@ class MainActivity : ComponentActivity() {
                                         WallDial("INTAKE °C", g("Intake air temperature"), DialScale.forLabel("Intake air temperature"), Color(0xFF42DDF5)),
                                         WallDial("EGR %", g("EGR commanded"), DialScale.forLabel("EGR commanded"), Color(0xFFFFB84D)),
                                         WallDial("BOOST " + boostUnit.label.uppercase(), boostShown, GaugeUnits.boostScale(boostUnit), Color(0xFF42DDF5))
-                                    ),
+                                    ) + extraPids.sorted().mapNotNull { PidCatalog.forPid(it) }.filter { it.pid !in CORE_PIDS }.map { spec ->
+                                        WallDial(spec.name.uppercase(), g(spec.name).copy(unit = spec.unit), spec.scale, Color(0xFF42DDF5))
+                                    },
                                     nowMs,
                                     Modifier.weight(1f).fillMaxWidth()
                                 )
-                            } else Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                                InstrumentDial("ENGINE SPEED", gauges[0], DialScale.forLabel("Engine RPM"), Color(0xFF42DDF5), nowMs, Modifier.weight(1.12f).fillMaxHeight())
-                                InstrumentDial("ROAD SPEED", gauges[1], DialScale.forLabel("Vehicle speed"), Color(0xFFFFB84D), nowMs, Modifier.weight(1f).fillMaxHeight())
-                                PowertrainPanel(gauges, history, historyVersion, nowMs, Color(0xFF42DDF5), Modifier.weight(.72f).fillMaxHeight())
+                            } else {
+                                val g = { l: String -> gauges.firstOrNull { it.label == l } ?: GaugeValue(l, "--", "", false) }
+                                val spd = g("Vehicle speed")
+                                val spdShown = spd.value.toDoubleOrNull()?.takeIf { spd.available }?.let { spd.copy(value = GaugeUnits.speedText(it, speedUnit), unit = speedUnit.label) } ?: spd.copy(unit = speedUnit.label)
+                                val bst = g("Turbo boost")
+                                val bstShown = bst.value.toDoubleOrNull()?.takeIf { bst.available }?.let { bst.copy(value = GaugeUnits.boostText(it, boostUnit), unit = boostUnit.label) } ?: bst.copy(unit = boostUnit.label)
+                                ClusterHome(
+                                    rpm = g("Engine RPM"), speed = spdShown, speedUnitLabel = speedUnit.label,
+                                    boost = bstShown, boostScale = GaugeUnits.boostScale(boostUnit),
+                                    coolant = g("Coolant temperature"), intake = g("Intake air temperature"),
+                                    load = g("Calculated engine load"), maf = g("MAF airflow"),
+                                    nowMs = nowMs, modifier = Modifier.weight(1f).fillMaxWidth()
+                                )
                             }
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
@@ -642,6 +661,67 @@ class MainActivity : ComponentActivity() {
                         else -> LazyColumn(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             item {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("CONNECTION CONFIGURATION", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text("Same options as Torque. Changes apply the next time you tap CONNECT ADAPTER.", color = muted, fontSize = 13.sp)
+                                        Text("OBD protocol", color = Color.White, fontWeight = FontWeight.Bold)
+                                        ObdProtocol.values().forEach { p ->
+                                            Row(Modifier.fillMaxWidth().clickable {
+                                                connConfig = connConfig.copy(protocol = p); prefs.edit().putString("obd_protocol", p.name).apply()
+                                            }, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                                RadioButton(selected = connConfig.protocol == p, onClick = {
+                                                    connConfig = connConfig.copy(protocol = p); prefs.edit().putString("obd_protocol", p.name).apply()
+                                                })
+                                                Text(p.label, color = Color.White)
+                                            }
+                                        }
+                                        Text("For the SX4 ZDi (K-line) try Automatic first, then ISO 14230-4 KWP (fast init).", color = muted, fontSize = 13.sp)
+                                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                            Column(Modifier.weight(1f)) {
+                                                Text("Try insecure Bluetooth socket first", color = Color.White, fontWeight = FontWeight.Bold)
+                                                Text("Many ELM327 clones only accept this. Turn on if the adapter pairs but will not connect.", color = muted, fontSize = 13.sp)
+                                            }
+                                            Switch(checked = connConfig.insecureFirst, onCheckedChange = {
+                                                connConfig = connConfig.copy(insecureFirst = it); prefs.edit().putBoolean("insecure_first", it).apply()
+                                            })
+                                        }
+                                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                            Column(Modifier.weight(1f)) {
+                                                Text("Adaptive timing (ATAT1)", color = Color.White, fontWeight = FontWeight.Bold)
+                                                Text("Lets the adapter adjust its reply timeout. Helps slow K-line ECUs.", color = muted, fontSize = 13.sp)
+                                            }
+                                            Switch(checked = connConfig.adaptiveTiming, onCheckedChange = {
+                                                connConfig = connConfig.copy(adaptiveTiming = it); prefs.edit().putBoolean("adaptive_timing", it).apply()
+                                            })
+                                        }
+                                    }
+                                }
+                            }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Text("SENSORS ON THE GAUGE WALL", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text("Tick the sensors you want, like adding gauges in Torque. Each extra sensor is one more request to the ECU, so the display refreshes more slowly. A sensor your ECU does not support shows NO SIGNAL.", color = muted, fontSize = 13.sp)
+                                        PidCatalog.all.filter { it.pid !in CORE_PIDS }.forEach { spec ->
+                                            val on = spec.pid in extraPids
+                                            val tag = if (supportedPids.isEmpty()) "connect to check" else if (spec.pid in supportedPids) "supported" else "not advertised by ECU"
+                                            val toggle = {
+                                                extraPids = if (on) extraPids - spec.pid else extraPids + spec.pid
+                                                prefs.edit().putString("extra_pids", PidCatalog.selectionText(extraPids)).apply()
+                                            }
+                                            Row(Modifier.fillMaxWidth().clickable { toggle() }, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                                Checkbox(checked = on, onCheckedChange = { toggle() })
+                                                Column(Modifier.weight(1f)) {
+                                                    Text(spec.name, color = Color.White)
+                                                    Text(spec.command + " • " + tag, color = muted, fontSize = 13.sp)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                         Text("GAUGE UNITS", color = cyan, style = MaterialTheme.typography.titleMedium)
                                         Text("The ECU always reports km/h and kPa. Units only change how the Gauge Wall shows them.", color = muted, fontSize = 13.sp)
@@ -713,7 +793,7 @@ class MainActivity : ComponentActivity() {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text("WELCOME & ALERTS", color = cyan, style = MaterialTheme.typography.titleMedium)
-                                        Text("Engine-start welcome: two-tone cabin chime followed by a calm-paced English announcement. Automatic playback requires two fresh positive RPM samples; Bluetooth connection alone never triggers it.", color = muted)
+                                        Text("Welcome: two-tone cabin chime followed by a calm-paced English announcement. It plays only after the ECU has answered on a successful OBD connection, never when the app opens or when only Bluetooth is connected.", color = muted)
                                         Button(onClick = { playEngineWelcome() }, modifier = Modifier.fillMaxWidth()) {
                                             Text("PREVIEW WELCOME ANNOUNCEMENT")
                                         }
@@ -741,7 +821,7 @@ class MainActivity : ComponentActivity() {
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                             OutlinedButton(onClick = { logPreview = traffic.tail(14) }, modifier = Modifier.weight(1f)) { Text("REFRESH") }
                                             Button(onClick = {
-                                                val header = "SX4 Scan Pro adapter log\n" + "v0.5.0 • PRE-RELEASE • BUILD 23" + "\nStatus: " + status + "\nStandard PIDs advertised: " + supportedPids.size
+                                                val header = "SX4 Scan Pro adapter log\n" + "v0.6.0 • PRE-RELEASE • BUILD 24" + "\nStatus: " + status + "\nStandard PIDs advertised: " + supportedPids.size
                                                 val send = Intent(Intent.ACTION_SEND).apply {
                                                     type = "text/plain"
                                                     putExtra(Intent.EXTRA_TEXT, traffic.asText(header))
@@ -753,62 +833,14 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
-                            item { Text("Build v0.5.0 • PRE-RELEASE • BUILD 23", color = muted) }
+                            item { Text("Build v0.6.0 • PRE-RELEASE • BUILD 24", color = muted) }
                         }
                             }
                         }
                         Crossfade(targetState = welcomeOverlayVisible, animationSpec = tween(550), label = "welcome-overlay-fade") { visible ->
                             if (visible) {
-                                val transition = rememberInfiniteTransition(label = "sx4-flight-3d")
-                                val yaw by transition.animateFloat(-24f, 24f, infiniteRepeatable(tween(1800, easing = androidx.compose.animation.core.FastOutSlowInEasing), RepeatMode.Reverse), label = "aircraft-yaw")
-                                val pitch by transition.animateFloat(-8f, 8f, infiniteRepeatable(tween(1250, easing = androidx.compose.animation.core.FastOutSlowInEasing), RepeatMode.Reverse), label = "aircraft-pitch")
-                                val glow by transition.animateFloat(.28f, .9f, infiniteRepeatable(tween(950), RepeatMode.Reverse), label = "aircraft-glow")
-                                Box(Modifier.fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { welcomeOverlayVisible = false }.background(Brush.radialGradient(listOf(Color(0xFF153C55), Color(0xF9050A12), Color(0xFF03060B)))), contentAlignment = androidx.compose.ui.Alignment.Center) {
-                                    Column(Modifier.fillMaxWidth(.86f).padding(22.dp), horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                        Text("SX4 FLIGHT SYSTEMS", color = Color(0xFF8BAFC5), fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 4.sp)
-                                        Box(Modifier.fillMaxWidth().height(210.dp), contentAlignment = androidx.compose.ui.Alignment.Center) {
-                                            Canvas(Modifier.fillMaxSize()) {
-                                                val cx = size.width / 2f
-                                                val cy = size.height / 2f
-                                                for (ring in 0..3) {
-                                                    val radius = size.minDimension * (.18f + ring * .075f)
-                                                    drawCircle(Color(0xFF42DDF5).copy(alpha = glow * (.30f - ring * .045f)), radius, androidx.compose.ui.geometry.Offset(cx, cy), style = Stroke(1.2.dp.toPx()))
-                                                }
-                                                drawLine(Color(0xFF42DDF5).copy(alpha = .35f), androidx.compose.ui.geometry.Offset(0f,cy), androidx.compose.ui.geometry.Offset(size.width,cy), 1.dp.toPx())
-                                                drawLine(Color(0xFF42DDF5).copy(alpha = .25f), androidx.compose.ui.geometry.Offset(cx,0f), androidx.compose.ui.geometry.Offset(cx,size.height), 1.dp.toPx())
-                                            }
-                                            Canvas(Modifier.size(150.dp).graphicsLayer { rotationY = yaw; rotationX = pitch; rotationZ = -7f; cameraDistance = 18f * density }) {
-                                                val w = size.width
-                                                val h = size.height
-                                                val plane = Path().apply {
-                                                    moveTo(w * .50f, h * .04f)
-                                                    lineTo(w * .56f, h * .30f)
-                                                    lineTo(w * .96f, h * .58f)
-                                                    lineTo(w * .96f, h * .68f)
-                                                    lineTo(w * .56f, h * .54f)
-                                                    lineTo(w * .54f, h * .80f)
-                                                    lineTo(w * .70f, h * .92f)
-                                                    lineTo(w * .70f, h * .98f)
-                                                    lineTo(w * .50f, h * .92f)
-                                                    lineTo(w * .30f, h * .98f)
-                                                    lineTo(w * .30f, h * .92f)
-                                                    lineTo(w * .46f, h * .80f)
-                                                    lineTo(w * .44f, h * .54f)
-                                                    lineTo(w * .04f, h * .68f)
-                                                    lineTo(w * .04f, h * .58f)
-                                                    lineTo(w * .44f, h * .30f)
-                                                    close()
-                                                }
-                                                drawPath(plane, Brush.verticalGradient(listOf(Color(0xFFFFFFFF), Color(0xFF8FD8EE))))
-                                                drawPath(plane, Color(0xFF42DDF5).copy(alpha = glow), style = Stroke(2.dp.toPx()))
-                                            }
-                                        }
-                                        Text("WELCOME ABOARD", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
-                                        Text("SX4 AIRLINES 2874", color = Color(0xFFFFC46B), fontSize = 25.sp, fontWeight = FontWeight.Black, letterSpacing = 2.4.sp)
-                                        Text("ENGINE START CONFIRMED  •  SYSTEMS ONLINE", color = Color(0xFF8BAFC5), fontSize = 13.sp, letterSpacing = 1.5.sp)
-                                        Box(Modifier.fillMaxWidth(.52f).height(2.dp).background(Color(0xFF42DDF5).copy(alpha = glow), RoundedCornerShape(3.dp)))
-                                        Text("TAP ANYWHERE TO SKIP", color = Color(0xFF8BAFC5), fontSize = 13.sp, letterSpacing = 1.5.sp)
-                                    }
+                                Box(Modifier.fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { welcomeOverlayVisible = false }) {
+                                    WelcomeSequence()
                                 }
                             }
                         }
@@ -951,9 +983,12 @@ class MainActivity : ComponentActivity() {
         val device: BluetoothDevice = adapter.getRemoteDevice(chosen.address)
         adapter.cancelDiscovery()
         socket = openSocket(device)
-        listOf("ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0").forEach { sendCommand(it) }
+        val config = connConfig
+        sendCommand("ATZ", 5000)
+        config.initCommands().forEach { sendCommand(it) }
         // "Connected" must mean the ECU answered, not just that the adapter did.
-        val negotiation = EcuNegotiation { command, timeoutMs -> sendCommand(command, timeoutMs) }.run()
+        val negotiation = EcuNegotiation { command, timeoutMs -> sendCommand(command, timeoutMs) }
+            .apply { preferredProtocol = config.protocol.elmNumber }.run()
         if (negotiation.supportedPids.isEmpty()) {
             closeSocket()
             throw IOException(negotiation.failure)
@@ -964,10 +999,9 @@ class MainActivity : ComponentActivity() {
 
     /** Secure SPP first, then insecure SPP: many ELM327 clones only accept the second. */
     private fun openSocket(device: BluetoothDevice): BluetoothSocket {
-        val makers = listOf<() -> BluetoothSocket>(
-            { device.createRfcommSocketToServiceRecord(SPP_UUID) },
-            { device.createInsecureRfcommSocketToServiceRecord(SPP_UUID) }
-        )
+        val secure: () -> BluetoothSocket = { device.createRfcommSocketToServiceRecord(SPP_UUID) }
+        val insecure: () -> BluetoothSocket = { device.createInsecureRfcommSocketToServiceRecord(SPP_UUID) }
+        val makers = if (connConfig.insecureFirst) listOf(insecure, secure) else listOf(secure, insecure)
         var last: IOException? = null
         for (make in makers) {
             val candidate = make()
@@ -1075,7 +1109,16 @@ class MainActivity : ComponentActivity() {
             if (baro != null) GaugeValue("Turbo boost", String.format(java.util.Locale.US, "%.1f", (mapPressure - baro).coerceAtLeast(0.0)), "kPa", true)
             else GaugeValue("Turbo boost", "--", "kPa", false)
         } else GaugeValue("Turbo boost", "--", "kPa", false)
-        return results.take(4) + listOf(map["Manifold pressure"]!!) + boost + results.drop(5)
+        val core = results.take(4) + listOf(map["Manifold pressure"]!!) + boost + results.drop(5)
+        // Extra sensors the user chose (Torque-style). Only polled when the ECU advertises them.
+        val extras = extraPids.sorted().mapNotNull { PidCatalog.forPid(it) }.map { spec ->
+            if (spec.pid !in supportedPids) GaugeValue(spec.name, "--", spec.unit, false)
+            else {
+                val v = PidCatalog.decode(spec, sendCommand(spec.command))
+                if (v != null) GaugeValue(spec.name, PidCatalog.format(spec, v), spec.unit, true) else GaugeValue(spec.name, "--", spec.unit, false)
+            }
+        }
+        return core + extras
     }
 
     // DTC modes are one transaction: do not interleave them with live PID polling.

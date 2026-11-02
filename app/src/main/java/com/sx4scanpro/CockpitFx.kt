@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -53,6 +55,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.cos
@@ -119,7 +122,7 @@ internal fun InstrumentDial(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(title, color = accent, fontSize = 14.sp, fontWeight = FontWeight.Black, letterSpacing = 1.8.sp)
+                Text(title, color = accent, fontSize = 14.sp, fontWeight = FontWeight.Black, letterSpacing = 1.8.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 Text(statusText, color = statusColor, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             }
             BoxWithConstraints(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -368,13 +371,20 @@ internal fun LinkDot(connected: Boolean, connecting: Boolean, modifier: Modifier
 /** One dial of the gauge wall. [gauge] is already in the display unit. */
 internal data class WallDial(val title: String, val gauge: GaugeValue, val scale: DialScale, val accent: Color)
 
-/** Round-gauge wall: every dial is a real reading, or NO SIGNAL. Two rows, as many columns as needed. */
+/** Round-gauge wall: every dial is a real reading, or NO SIGNAL. Scrolls when there are more than eight. */
 @Composable
 internal fun GaugeWall(dials: List<WallDial>, nowMs: Long, modifier: Modifier = Modifier) {
     val perRow = 4
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    val scrolls = dials.size > 8
+    Column(
+        if (scrolls) modifier.verticalScroll(rememberScrollState()) else modifier,
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
         dials.chunked(perRow).forEach { rowDials ->
-            Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(
+                (if (scrolls) Modifier.height(250.dp) else Modifier.weight(1f)).fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 rowDials.forEach { d ->
                     InstrumentDial(d.title, d.gauge, d.scale, d.accent, nowMs, Modifier.weight(1f).fillMaxHeight())
                 }

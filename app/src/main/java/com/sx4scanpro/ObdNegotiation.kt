@@ -22,14 +22,26 @@ internal data class NegotiationResult(
  */
 internal class EcuNegotiation(private val send: (command: String, timeoutMs: Long) -> String) {
 
+    /** ELM protocol number to try first ("0" = automatic). Torque calls this "OBD protocol". */
+    var preferredProtocol: String = "0"
+
+
     fun run(): NegotiationResult {
+        // 0. The protocol the user fixed in Settings, if any.
+        if (preferredProtocol != "0" && preferredProtocol in ConnectionConfig.PROTOCOL_NUMBERS) {
+            if (send("ATSP$preferredProtocol", COMMAND_MS).contains("OK")) {
+                val pids = discover(FIRST_ANSWER_MS)
+                if (pids.isNotEmpty()) return NegotiationResult(pids, preferredProtocol, "")
+            }
+            send("ATSP0", COMMAND_MS)
+        }
         // 1. Automatic protocol search. K-line slow-init is slow, so allow a long first answer.
         val auto = discover(FIRST_ANSWER_MS)
         if (auto.isNotEmpty()) return NegotiationResult(auto, "0", "")
         val autoFailure = describe(lastReply)
 
         // 2. Fix each protocol an SX4 ZDi could plausibly speak, most likely first.
-        for (protocol in FALLBACK_PROTOCOLS) {
+        for (protocol in FALLBACK_PROTOCOLS.filter { it != preferredProtocol }) {
             val accepted = send("ATSP$protocol", COMMAND_MS)
             if (!accepted.contains("OK")) continue
             val pids = discover(FIRST_ANSWER_MS)
