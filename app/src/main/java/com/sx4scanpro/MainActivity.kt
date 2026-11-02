@@ -11,6 +11,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri
+import androidx.core.app.ActivityCompat
+import androidx.core.content.IntentCompat
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.clickable
@@ -129,8 +131,41 @@ private data class DtcScanSummary(val codes: List<TroubleCodeResult>, val suppor
 
 class MainActivity : ComponentActivity() {
     private val permissionRequest = registerForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { }
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {
+        refreshBluetoothAccess()
+        refreshPairedDevices()
+    }
+    private val prefs by lazy { getSharedPreferences("sx4_scan_pro", MODE_PRIVATE) }
+    private var btAccess by mutableStateOf(AccessStatus.NEEDS_REQUEST)
+    private var scanAccess by mutableStateOf(AccessStatus.NEEDS_REQUEST)
+    private var selectedAddress by mutableStateOf<String?>(null)
+    private val pairedDevices = mutableStateListOf<BtDevice>()
+    private val foundDevices = mutableStateListOf<BtDevice>()
+    private var scanning by mutableStateOf(false)
+    private var adapterNote by mutableStateOf("")
+    private val btReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                BluetoothDevice.ACTION_FOUND -> {
+                    val device = IntentCompat.getParcelableExtra(intent, BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java) ?: return
+                    val name = try { device.name } catch (_: SecurityException) { null }
+                    if (foundDevices.none { it.address == device.address }) {
+                        foundDevices.add(BtDevice(name ?: "Unnamed device", device.address, false))
+                    }
+                }
+                BluetoothAdapter.ACTION_DISCOVERY_FINISHED -> {
+                    scanning = false
+                    adapterNote = if (foundDevices.isEmpty()) "Scan finished: no devices found. Check the adapter is plugged in and the ignition is on."
+                    else "Scan finished. Tap PAIR next to your adapter."
+                }
+                BluetoothDevice.ACTION_BOND_STATE_CHANGED -> {
+                    refreshPairedDevices()
+                    foundDevices.removeAll { f -> pairedDevices.any { it.address == f.address } }
+                }
+            }
+        }
+    }
     private var socket: BluetoothSocket? = null
     private var supportedPids: Set<Int> = emptySet()
     private val engineStartDetector = EngineStartDetector()
@@ -153,9 +188,19 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
         )
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        if (android.os.Build.VERSION.SDK_INT >= 31 &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
-        ) permissionRequest.launch(Manifest.permission.BLUETOOTH_CONNECT)
+        selectedAddress = prefs.getString("adapter_address", null)
+        val btFilter = IntentFilter().apply {
+            addAction(BluetoothDevice.ACTION_FOUND)
+            addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
+            addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
+        }
+        ContextCompat.registerReceiver(this, btReceiver, btFilter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        refreshBluetoothAccess()
+        // Ask straight away on first launch: Android 12+ shows one "Nearby devices" dialog.
+        if (btAccess == AccessStatus.NEEDS_REQUEST || scanAccess == AccessStatus.NEEDS_REQUEST && android.os.Build.VERSION.SDK_INT >= 31) {
+            requestBluetoothPermissions(forScanning = false)
+        }
+        refreshPairedDevices()
 
         textToSpeech = TextToSpeech(this) { result ->
             speechReady = result == TextToSpeech.SUCCESS
@@ -240,11 +285,10 @@ class MainActivity : ComponentActivity() {
             gauges = gauges.map { it.copy(value = "--", available = false) }
         }
         fun connect() {
-            if (android.os.Build.VERSION.SDK_INT >= 31 &&
-                ContextCompat.checkSelfPermission(this@MainActivity, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
-            ) {
-                status = "Bluetooth permission required — allow it, then tap Connect again"
-                permissionRequest.launch(Manifest.permission.BLUETOOTH_CONNECT)
+            if (btAccess != AccessStatus.GRANTED) {
+                status = if (btAccess == AccessStatus.BLOCKED) BluetoothAccess.message(btAccess)
+                else "Bluetooth permission required — allow it, then tap Connect again"
+                if (btAccess == AccessStatus.NEEDS_REQUEST) requestBluetoothPermissions(forScanning = false)
                 return
             }
             scope.launch {
@@ -385,6 +429,16 @@ class MainActivity : ComponentActivity() {
                                     Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         LinkDot(connected = connected, connecting = connecting)
                                         Text(if (connected) "ECU LINK ACTIVE" else if (connecting) "CONNECTING…" else "ECU DISCONNECTED", color = if (connected) Color(0xFF70F0D2) else muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                    }
+                                }
+                            }
+                            if (btAccess != AccessStatus.GRANTED) {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF2A2412)), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFFB84D))) {
+                                    Row(Modifier.fillMaxWidth().padding(14.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                        Text(BluetoothAccess.message(btAccess), color = Color.White, modifier = Modifier.weight(1f))
+                                        Button(onClick = {
+                                            if (btAccess == AccessStatus.BLOCKED) openAppSettings() else requestBluetoothPermissions(forScanning = false)
+                                        }) { Text(if (btAccess == AccessStatus.BLOCKED) "OPEN SETTINGS" else "ALLOW") }
                                     }
                                 }
                             }
@@ -547,6 +601,47 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         else -> LazyColumn(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Text("OBD ADAPTER", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text(BluetoothAccess.message(btAccess), color = if (btAccess == AccessStatus.GRANTED) muted else Color(0xFFFFB84D))
+                                        if (btAccess != AccessStatus.GRANTED) {
+                                            Button(onClick = {
+                                                if (btAccess == AccessStatus.BLOCKED) openAppSettings() else requestBluetoothPermissions(forScanning = true)
+                                            }, modifier = Modifier.fillMaxWidth()) { Text(if (btAccess == AccessStatus.BLOCKED) "OPEN APP SETTINGS" else "ALLOW BLUETOOTH ACCESS") }
+                                        }
+                                        Text("Paired devices: tap one to use it", color = Color.White, fontWeight = FontWeight.Bold)
+                                        if (pairedDevices.isEmpty()) Text("None yet. Scan below to find and pair your adapter.", color = muted)
+                                        pairedDevices.forEach { d ->
+                                            Row(Modifier.fillMaxWidth().clickable { selectAdapter(d) }.padding(vertical = 4.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                                RadioButton(selected = d.address.equals(selectedAddress, ignoreCase = true), onClick = { selectAdapter(d) })
+                                                Column {
+                                                    Text(d.name, color = Color.White, fontWeight = FontWeight.Bold)
+                                                    Text(d.address, color = muted, fontSize = 13.sp)
+                                                }
+                                            }
+                                        }
+                                        Text("With nothing selected, a single paired Vgate, iCar, OBDII, ELM or V-LINK device is used automatically.", color = muted, fontSize = 13.sp)
+                                        Divider(color = Color(0xFF26394C))
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            Button(onClick = { startScan() }, enabled = !scanning, modifier = Modifier.weight(1f)) { Text(if (scanning) "SCANNING…" else "SCAN FOR ADAPTERS") }
+                                            OutlinedButton(onClick = { refreshBluetoothAccess(); refreshPairedDevices() }, modifier = Modifier.weight(1f)) { Text("REFRESH") }
+                                        }
+                                        if (scanning) LinearProgressIndicator(Modifier.fillMaxWidth(), color = cyan)
+                                        foundDevices.filter { f -> pairedDevices.none { it.address == f.address } }.forEach { d ->
+                                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                                Column(Modifier.weight(1f)) {
+                                                    Text(d.name, color = Color.White, fontWeight = FontWeight.Bold)
+                                                    Text(d.address, color = muted, fontSize = 13.sp)
+                                                }
+                                                OutlinedButton(onClick = { pairAdapter(d) }) { Text("PAIR") }
+                                            }
+                                        }
+                                        if (adapterNote.isNotBlank()) Text(adapterNote, color = Color(0xFFFFB84D))
+                                    }
+                                }
+                            }
                             item {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -788,16 +883,13 @@ class MainActivity : ComponentActivity() {
         ) throw SecurityException("Bluetooth permission not granted")
         val adapter = BluetoothAdapter.getDefaultAdapter() ?: throw IOException("Bluetooth is not supported on this device")
         if (!adapter.isEnabled) throw IOException("Turn on Bluetooth")
-        val bonded = adapter.bondedDevices.toList()
-        val candidates = bonded.filter { EcuNegotiation.looksLikeObdAdapter(it.name) }
-        if (candidates.isEmpty()) {
-            val names = bonded.mapNotNull { it.name }.joinToString(", ").ifBlank { "none" }
-            throw IOException("No recognised OBD adapter among your paired devices ($names). Pair the Vgate adapter in Bluetooth settings, then try again.")
+        val bonded = adapter.bondedDevices.orEmpty().map { BtDevice(it.name ?: it.address, it.address, true) }
+        // The user's explicit choice (Settings, OBD ADAPTER) wins; otherwise a single recognised adapter is used.
+        val chosen = when (val choice = AdapterSelector.choose(bonded, selectedAddress)) {
+            is AdapterChoice.Use -> choice.device
+            is AdapterChoice.Unavailable -> throw IOException(choice.message)
         }
-        if (candidates.size > 1) {
-            throw IOException("Multiple OBD adapters are paired. Keep only the intended Vgate adapter paired.")
-        }
-        val device: BluetoothDevice = candidates.single()
+        val device: BluetoothDevice = adapter.getRemoteDevice(chosen.address)
         adapter.cancelDiscovery()
         socket = openSocket(device)
         listOf("ATZ", "ATE0", "ATL0", "ATS0", "ATH0", "ATSP0").forEach { sendCommand(it) }
@@ -1072,7 +1164,101 @@ class MainActivity : ComponentActivity() {
         socket = null
     }
 
+    private fun isGranted(permission: String): Boolean =
+        ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+
+    private fun accessFor(required: List<String>): AccessStatus = BluetoothAccess.status(
+        required = required,
+        isGranted = { isGranted(it) },
+        askedBefore = prefs.getBoolean("bt_permission_asked", false),
+        canShowRationale = { ActivityCompat.shouldShowRequestPermissionRationale(this, it) }
+    )
+
+    private fun refreshBluetoothAccess() {
+        val sdk = android.os.Build.VERSION.SDK_INT
+        btAccess = accessFor(BluetoothAccess.forConnecting(sdk))
+        scanAccess = accessFor(BluetoothAccess.forScanning(sdk))
+    }
+
+    /** Shows Android's permission dialog for whatever is still missing (one dialog on Android 12+). */
+    private fun requestBluetoothPermissions(forScanning: Boolean) {
+        val sdk = android.os.Build.VERSION.SDK_INT
+        val wanted = if (forScanning || sdk >= 31) BluetoothAccess.forScanning(sdk) else BluetoothAccess.forConnecting(sdk)
+        val missing = wanted.filterNot { isGranted(it) }
+        if (missing.isEmpty()) {
+            refreshBluetoothAccess()
+            return
+        }
+        prefs.edit().putBoolean("bt_permission_asked", true).apply()
+        permissionRequest.launch(missing.toTypedArray())
+    }
+
+    private fun openAppSettings() {
+        startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
+    }
+
+    private fun refreshPairedDevices() {
+        pairedDevices.clear()
+        if (btAccess != AccessStatus.GRANTED) return
+        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return
+        try {
+            adapter.bondedDevices.orEmpty().forEach { pairedDevices.add(BtDevice(it.name ?: it.address, it.address, true)) }
+        } catch (_: SecurityException) { }
+    }
+
+    private fun selectAdapter(device: BtDevice) {
+        selectedAddress = device.address
+        prefs.edit().putString("adapter_address", device.address).apply()
+        adapterNote = "Selected " + device.name + ". Go to the Cockpit and tap CONNECT ADAPTER."
+    }
+
+    private fun pairAdapter(device: BtDevice) {
+        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return
+        try {
+            adapter.cancelDiscovery()
+            adapterNote = if (adapter.getRemoteDevice(device.address).createBond())
+                "Pairing requested. If Android asks for a PIN, try 1234 or 0000, then choose the adapter above and tap CONNECT."
+            else "Could not start pairing."
+        } catch (_: SecurityException) {
+            adapterNote = "Bluetooth permission is missing."
+        }
+    }
+
+    private fun startScan() {
+        if (scanAccess != AccessStatus.GRANTED) {
+            adapterNote = BluetoothAccess.message(scanAccess)
+            if (scanAccess == AccessStatus.NEEDS_REQUEST) requestBluetoothPermissions(forScanning = true)
+            return
+        }
+        val adapter = BluetoothAdapter.getDefaultAdapter()
+        if (adapter == null) {
+            adapterNote = "This tablet has no Bluetooth."
+            return
+        }
+        if (!adapter.isEnabled) {
+            adapterNote = "Turn Bluetooth on first, then scan again."
+            return
+        }
+        foundDevices.clear()
+        try {
+            adapter.cancelDiscovery()
+            scanning = adapter.startDiscovery()
+            adapterNote = if (scanning) "Scanning for nearby devices…" else "Could not start scanning."
+        } catch (_: SecurityException) {
+            adapterNote = "Bluetooth permission is missing."
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Coming back from the system permission screen or Bluetooth settings.
+        refreshBluetoothAccess()
+        refreshPairedDevices()
+    }
+
     override fun onDestroy() {
+        runCatching { unregisterReceiver(btReceiver) }
+        runCatching { if (BluetoothAdapter.getDefaultAdapter()?.isDiscovering == true) BluetoothAdapter.getDefaultAdapter()?.cancelDiscovery() }
         closeSocket()
         mainHandler.removeCallbacksAndMessages(null)
         textToSpeech?.stop()
