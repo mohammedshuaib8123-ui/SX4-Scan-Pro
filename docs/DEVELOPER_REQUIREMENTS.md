@@ -824,3 +824,32 @@ When continuing this repository:
 - BCM, ABS, airbag, immobilizer and other non-engine modules remain unsupported/unverified.
 
 **Release decision:** deliver the green-CI pre-release APK for the owner's parked, stationary hardware validation. Do not remove the pre-release marker or claim full vehicle/Android Auto validation until the above checks are completed.
+## 19. Reference cockpit gauge wall and Bluetooth access — 2026-11-02
+
+### Reference image supplied by the owner
+The owner supplied a photo of a Torque-style round-gauge wall and asked for the same data in the app. Readable gauges in the photo:
+
+| Gauge | Photo unit | Source in this app |
+|---|---|---|
+| Revs ×1000 | rpm | OBD PID 010C |
+| Speed | mph | OBD PID 010D (km/h on the wire) |
+| Coolant | °C | OBD PID 0105 |
+| Accel G | g | Tablet accelerometer (not OBD) |
+| Intake | °C | OBD PID 010F |
+| EGR | % | OBD PID 012C (commanded EGR); 012D (EGR error) as a second reading |
+| Boost | psi | Derived: MAP (010B) − barometric (0133) |
+
+Three further small gauges in the photo are too small to read. They must NOT be guessed. The owner is asked for a clearer screenshot before they are added.
+
+### Rules for the gauge wall
+- Real data only. A gauge with no ECU value shows NO SIGNAL; a value older than 5 s shows STALE. No placeholder numbers, no invented red zones or limits.
+- An ECU that does not support a PID (for example 012C) shows "not supported by this ECU", not zero.
+- The G gauge is the tablet's sensor, so it is labelled "Device G". It is only meaningful once the tablet is mounted and calibrated; until then it shows magnitude only.
+- Units: the photo uses mph and psi; the app currently uses km/h and kPa. A speed (km/h | mph) and boost (kPa | bar | psi) preference is required, stored on the tablet, with tested converters. Default stays km/h and kPa, as used on Indian roads.
+- Dial scales are drawing ranges only, never engine limits.
+
+### Bluetooth access (owner report: adapter would not connect, no permission prompt)
+- Android 12+ needs the "Nearby devices" permission at run time. The app now requests BLUETOOTH_CONNECT and BLUETOOTH_SCAN together at launch and again on Connect.
+- If the owner denies it twice, Android stops showing the dialog. The Cockpit and Settings then show a banner with OPEN SETTINGS instead of failing silently.
+- Settings → OBD ADAPTER lists paired devices (tap to choose), scans for new ones and pairs them (PIN usually 1234 or 0000). The chosen adapter is remembered and wins over name matching.
+- Status: implemented on branch claude/obd-connection-fixes; compiled and tested only for the pure logic (82 JVM tests). The on-device behaviour is NOT yet verified. It needs a real tablet and the real Vgate iCar Pro.
