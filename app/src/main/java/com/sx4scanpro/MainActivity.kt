@@ -31,7 +31,7 @@ import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import android.os.Bundle
-import android.view.WindowManager
+//import android.view.WindowManager
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import android.os.Handler
