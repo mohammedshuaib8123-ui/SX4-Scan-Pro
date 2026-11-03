@@ -129,6 +129,8 @@ private fun GaugeCard(gauge: GaugeValue) {
 }
 
 /** Sensors that already have their own dial or tile; the picker skips them to avoid duplicates. */
+/** Sensors the home screen always shows (fuel level, control module voltage), polled whether or not picked in Settings. */
+private val HOME_PIDS = setOf(0x2F, 0x42)
 private val CORE_PIDS = setOf(0x04, 0x05, 0x0B, 0x0C, 0x0D, 0x0F, 0x10, 0x11, 0x2C)
 
 private const val RECEIVER_PACKAGE = "com.andrerinas.headunitrevived"
@@ -173,6 +175,8 @@ class MainActivity : ComponentActivity() {
         }
     }
     private var trip by mutableStateOf(TripStats())
+    /** Gauge keys ("coolant", "rpm", "boost") currently above an owner-set limit. */
+    private var alertSensors by mutableStateOf(emptySet<String>())
     private var tripTick by mutableStateOf(0)
     private var tripStartMs by mutableStateOf(0L)
     private var tripWriter: java.io.BufferedWriter? = null
@@ -305,6 +309,7 @@ class MainActivity : ComponentActivity() {
         var showWall by rememberSaveable { mutableStateOf(false) }
         var dtcStatus by remember { mutableStateOf("Connect the Vgate adapter to read engine ECU fault codes.") }
         var dtcCodes by remember { mutableStateOf<List<TroubleCodeResult>>(emptyList()) }
+        var dtcScanned by remember { mutableStateOf(false) }
         var scanningCodes by remember { mutableStateOf(false) }
         var headUnitStatus by remember { mutableStateOf("Open Headunit runs as a separate receiver app.") }
         var readiness by remember { mutableStateOf(computeHeadUnitReadiness()) }
@@ -427,6 +432,7 @@ class MainActivity : ComponentActivity() {
                 try {
                     val summary = withContext(Dispatchers.IO) { readTroubleCodes() }
                     dtcCodes = summary.codes
+                    dtcScanned = summary.supportedModes > 0
                     dtcStatus = when {
                         summary.supportedModes == 0 ->
                             "The engine ECU did not return a valid response for modes 03 / 07 / 0A. Check protocol support and adapter communication."
@@ -539,12 +545,18 @@ class MainActivity : ComponentActivity() {
                                 val spdShown = spd.value.toDoubleOrNull()?.takeIf { spd.available }?.let { spd.copy(value = GaugeUnits.speedText(it, speedUnit), unit = speedUnit.label) } ?: spd.copy(unit = speedUnit.label)
                                 val bst = g("Turbo boost")
                                 val bstShown = bst.value.toDoubleOrNull()?.takeIf { bst.available }?.let { bst.copy(value = GaugeUnits.boostText(it, boostUnit), unit = boostUnit.label) } ?: bst.copy(unit = boostUnit.label)
-                                ClusterHome(
-                                    rpm = g("Engine RPM"), speed = spdShown, speedUnitLabel = speedUnit.label,
-                                    boost = bstShown, boostScale = GaugeUnits.boostScale(boostUnit),
+                                SxCockpit(
+                                    connected = connected,
+                                    rpm = g("Engine RPM"), boost = bstShown, boostScale = GaugeUnits.boostScale(boostUnit),
+                                    boostCaption = boostUnit.label.uppercase(),
                                     coolant = g("Coolant temperature"), intake = g("Intake air temperature"),
-                                    load = g("Calculated engine load"), maf = g("MAF airflow"),
-                                    nowMs = nowMs, modifier = Modifier.weight(1f).fillMaxWidth()
+                                    egr = g("EGR commanded"), fuel = g("Fuel level"), battery = g("Control module voltage"),
+                                    tripKm = if (connected && trip.dataMs > 0) trip.distanceKm else null,
+                                    faultCount = if (dtcScanned) dtcCodes.size else null,
+                                    headUnit = huSession, alertSensors = alertSensors, nowMs = nowMs,
+                                    onOpenDiagnostics = { selectedTab = 1 }, onOpenHeadUnit = { selectedTab = 2 },
+                                    onReplayWelcome = { playEngineWelcome() },
+                                    modifier = Modifier.weight(1f).fillMaxWidth()
                                 )
                             }
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -1195,7 +1207,7 @@ class MainActivity : ComponentActivity() {
         } else GaugeValue("Turbo boost", "--", "kPa", false)
         val core = results.take(4) + listOf(map["Manifold pressure"]!!) + boost + results.drop(5)
         // Extra sensors the user chose (Torque-style). Only polled when the ECU advertises them.
-        val extras = extraPids.sorted().mapNotNull { PidCatalog.forPid(it) }.map { spec ->
+        val extras = (extraPids + HOME_PIDS).sorted().mapNotNull { PidCatalog.forPid(it) }.map { spec ->
             if (spec.pid !in supportedPids) GaugeValue(spec.name, "--", spec.unit, false)
             else {
                 val v = PidCatalog.decode(spec, sendCommand(spec.command))
