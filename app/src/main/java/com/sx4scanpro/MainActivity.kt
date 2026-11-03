@@ -5,6 +5,8 @@ import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothSocket
 import android.hardware.Sensor
+import android.view.WindowManager
+import androidx.core.content.FileProvider
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
@@ -156,6 +158,21 @@ class MainActivity : ComponentActivity() {
     private var deviceG by mutableStateOf<Double?>(null)
     private var connConfig by mutableStateOf(ConnectionConfig())
     private var extraPids by mutableStateOf<Set<Int>>(emptySet())
+    private var alertLimits by mutableStateOf(AlertLimits())
+    private var themeMode by mutableStateOf(ThemeMode.AUTO)
+    private var lightLux by mutableStateOf<Float?>(null)
+    private var phoneIp by mutableStateOf("")
+    private var trip by mutableStateOf(TripStats())
+    private var tripTick by mutableStateOf(0)
+    private var tripStartMs by mutableStateOf(0L)
+    private var tripWriter: java.io.BufferedWriter? = null
+    private var tripFile: java.io.File? = null
+    private var tripHeaderWritten = false
+    private var tripNote by mutableStateOf("")
+    private val lightListener = object : SensorEventListener {
+        override fun onSensorChanged(event: SensorEvent) { lightLux = event.values[0] }
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) { }
+    }
     private var deviceGAtMs by mutableStateOf(0L)
     private val gListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
@@ -190,7 +207,7 @@ class MainActivity : ComponentActivity() {
     private var supportedPids: Set<Int> = emptySet()
     private val engineStartDetector = EngineStartDetector()
     // Empty until verified SX4-specific rules are approved; pipeline is wired but inactive.
-    private val warningEngine = WarningEngine()
+    @Volatile private var warningEngine = WarningEngine()
     private var speechReady = false
     private var textToSpeech: TextToSpeech? = null
     private var chime: ToneGenerator? = null
@@ -215,6 +232,14 @@ class MainActivity : ComponentActivity() {
             adaptiveTiming = prefs.getBoolean("adaptive_timing", true)
         )
         extraPids = PidCatalog.parseSelection(prefs.getString("extra_pids", null))
+        alertLimits = AlertLimits(
+            coolantMaxC = AlertLimits.parse(prefs.getInt("alert_coolant", -1), AlertLimits.COOLANT),
+            rpmMax = AlertLimits.parse(prefs.getInt("alert_rpm", -1), AlertLimits.RPM),
+            boostMaxKpa = AlertLimits.parse(prefs.getInt("alert_boost", -1), AlertLimits.BOOST)
+        )
+        warningEngine = WarningEngine(alertLimits.rules())
+        themeMode = NightMode.modeOf(prefs.getString("theme_mode", null))
+        phoneIp = prefs.getString("phone_ip", "").orEmpty()
         speedUnit = GaugeUnits.speedUnitOf(prefs.getString("speed_unit", null))
         boostUnit = GaugeUnits.boostUnitOf(prefs.getString("boost_unit", null))
         val btFilter = IntentFilter().apply {
@@ -306,6 +331,7 @@ class MainActivity : ComponentActivity() {
         LaunchedEffect(selectedTab) { if (selectedTab == 2) readiness = computeHeadUnitReadiness() }
 
         fun disconnect() {
+            endTrip()
             userInitiatedDisconnect = true
             closeSocket()
             status = "Disconnected"
@@ -327,12 +353,14 @@ class MainActivity : ComponentActivity() {
                     val result = withContext(Dispatchers.IO) { connectAndRead() }
                     adapterName = result.first
                     status = "Connected"
+                    startTrip()
                     // The greeting plays only once the ECU has really answered (connectAndRead throws otherwise).
                     playEngineWelcome()
                     while (isActive && socket?.isConnected == true) {
                         gauges = withContext(Dispatchers.IO) { readDashboard() }
                         gauges.forEach { g -> history.record(g.label, if (g.available) g.value.toDoubleOrNull() else null) }
                         historyVersion++
+                        recordTrip(gauges)
                         val rpmGauge = gauges.firstOrNull { it.label == "Engine RPM" }
                         val sensorReadings = gauges.mapNotNull { gauge ->
                             val sensor = when (gauge.label) {
@@ -364,9 +392,11 @@ class MainActivity : ComponentActivity() {
                         gauges = gauges.map { it.copy(value = "--", available = false) }
                     }
                 } catch (e: SecurityException) {
+                    endTrip()
                     closeSocket()
                     status = "Permission required"
                 } catch (e: Exception) {
+                    endTrip()
                     closeSocket()
                     // Tapping DISCONNECT closes the socket mid-read; that is not a failure.
                     status = if (userInitiatedDisconnect) "Disconnected" else (e.message ?: "Connection failed")
@@ -408,6 +438,10 @@ class MainActivity : ComponentActivity() {
                 } finally { scanningCodes = false }
             }
         }
+
+        // Night driving: dim the real backlight from the light sensor (or the owner's Day/Night choice).
+        val dim = Math.round(NightMode.dimAlpha(themeMode, lightLux) / 0.05f) * 0.05f
+        LaunchedEffect(dim) { applyDim(dim) }
 
         // Back returns to the cockpit from any other section instead of closing the app.
         BackHandler(enabled = selectedTab != 0) { selectedTab = 0 }
@@ -523,6 +557,42 @@ class MainActivity : ComponentActivity() {
                         }
                         1 -> LazyColumn(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             item {
+                                val tick = tripTick
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("TRIP COMPUTER", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        val elapsed = if (tripStartMs > 0L && connected) nowMs - tripStartMs else 0L
+                                        val avg = trip.averageMovingKmh()
+                                        val l100 = trip.litresPer100Km()
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                            listOf(
+                                                "DISTANCE" to String.format(java.util.Locale.US, "%.2f km", trip.distanceKm),
+                                                "TIME" to TripStats.clock(elapsed),
+                                                "AVG MOVING" to (avg?.let { String.format(java.util.Locale.US, "%.0f km/h", it) } ?: "—"),
+                                                "MAX SPEED" to String.format(java.util.Locale.US, "%.0f km/h", trip.maxSpeedKmh)
+                                            ).forEach { (k, v) ->
+                                                Column {
+                                                    Text(k, color = muted, fontSize = 13.sp, letterSpacing = 1.sp)
+                                                    Text(v, color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Black)
+                                                }
+                                            }
+                                        }
+                                        Text(
+                                            if (l100 != null) String.format(java.util.Locale.US, "Fuel: %.1f L/100 km (from the ECU's fuel-rate reading)", l100)
+                                            else "Fuel use: not available. It needs the ECU to report fuel rate (tick Engine fuel rate in Settings); a diesel's MAF reading cannot give a reliable figure.",
+                                            color = muted, fontSize = 13.sp
+                                        )
+                                        Text("Distance is integrated from real speed readings only. Gaps in the data are skipped, never filled in. Each poll is also saved to a CSV file on this tablet.", color = muted, fontSize = 13.sp)
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            OutlinedButton(onClick = { startTrip() }, enabled = connected, modifier = Modifier.weight(1f)) { Text("NEW TRIP") }
+                                            Button(onClick = { shareLastTrip() }, modifier = Modifier.weight(1f)) { Text("SHARE TRIP CSV") }
+                                            OutlinedButton(onClick = { deleteSavedTrips() }, modifier = Modifier.weight(1f)) { Text("DELETE SAVED") }
+                                        }
+                                        Text(savedTrips().size.toString() + " saved trip file(s)" + if (tripNote.isNotBlank()) " • " + tripNote else "", color = Color(0xFFFFB84D), fontSize = 13.sp)
+                                    }
+                                }
+                            }
+                            item {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                         Text("ENGINE ECU • OBD-II", color = cyan, style = MaterialTheme.typography.titleMedium)
@@ -620,6 +690,26 @@ class MainActivity : ComponentActivity() {
                             }
                             item {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                        Text("WIRELESS PHONE LINK", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text("Turn on the phone's hotspot (or put both on the same Wi-Fi), enable wireless Android Auto on the phone, enter the phone's IPv4 address here, then tap CONNECT PHONE. This asks Open Headunit to connect; whether projection works depends on your phone and Android Auto version.", color = muted, fontSize = 13.sp)
+                                        OutlinedTextField(
+                                            value = phoneIp,
+                                            onValueChange = { phoneIp = it; prefs.edit().putString("phone_ip", it).apply() },
+                                            label = { Text("Phone IPv4 address") },
+                                            singleLine = true,
+                                            modifier = Modifier.fillMaxWidth()
+                                        )
+                                        Button(
+                                            onClick = { headUnitStatus = connectPhone() },
+                                            enabled = readiness.receiverInstalled,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) { Text("CONNECT PHONE") }
+                                    }
+                                }
+                            }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                                         Text("WIRED CONNECTION • FIRST BUILD TARGET", color = cyan, style = MaterialTheme.typography.titleMedium)
                                         listOf(
@@ -659,6 +749,33 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         else -> LazyColumn(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("ALERT LIMITS (YOURS)", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text("This app has no verified SX4 ZDi limits, so every alert is off until you choose a number. A limit shows a banner and speaks a caution after three fresh readings above it.", color = muted, fontSize = 13.sp)
+                                        fun save(key: String, v: Int?) = prefs.edit().putInt(key, v ?: -1).apply()
+                                        fun apply(next: AlertLimits) { alertLimits = next; warningEngine = WarningEngine(next.rules()) }
+                                        LimitRow("Coolant above", alertLimits.coolantMaxC, AlertLimits.COOLANT, AlertLimits.COOLANT_START, 5, "°C") { v -> save("alert_coolant", v); apply(alertLimits.copy(coolantMaxC = v)) }
+                                        LimitRow("Engine speed above", alertLimits.rpmMax, AlertLimits.RPM, AlertLimits.RPM_START, 100, "rpm") { v -> save("alert_rpm", v); apply(alertLimits.copy(rpmMax = v)) }
+                                        LimitRow("Boost above", alertLimits.boostMaxKpa, AlertLimits.BOOST, AlertLimits.BOOST_START, 10, "kPa") { v -> save("alert_boost", v); apply(alertLimits.copy(boostMaxKpa = v)) }
+                                    }
+                                }
+                            }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("DISPLAY", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text("Auto dims the tablet's backlight from its light sensor at night. Night keeps it dimmed; Day never changes it.", color = muted, fontSize = 13.sp)
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                            ThemeMode.values().forEach { m ->
+                                                FilterChip(selected = themeMode == m, onClick = { themeMode = m; prefs.edit().putString("theme_mode", m.name).apply() }, label = { Text(m.label) })
+                                            }
+                                        }
+                                        Text(lightLux?.let { "Light sensor: " + it.toInt() + " lux" } ?: "No light sensor reading (Auto will not dim).", color = muted, fontSize = 13.sp)
+                                    }
+                                }
+                            }
                             item {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1262,6 +1379,105 @@ class MainActivity : ComponentActivity() {
         "No app store is available on this tablet. Install Open Headunit another way, then tap RECHECK."
     }
 
+    private fun applyDim(alpha: Float) {
+        val lp = window.attributes
+        lp.screenBrightness = if (alpha <= 0f) WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE else (1f - alpha * 1.4f).coerceIn(0.08f, 1f)
+        window.attributes = lp
+    }
+
+    private fun startTrip() {
+        endTrip()
+        trip = TripStats()
+        tripStartMs = System.currentTimeMillis()
+        tripHeaderWritten = false
+        tripNote = ""
+        tripTick++
+        try {
+            val dir = java.io.File(filesDir, "trips").apply { mkdirs() }
+            val name = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
+            val file = java.io.File(dir, "trip-$name.csv")
+            tripFile = file
+            tripWriter = file.bufferedWriter()
+        } catch (e: Exception) {
+            tripWriter = null
+            tripNote = "Trip recording could not start: " + (e.message ?: "storage error")
+        }
+    }
+
+    private fun recordTrip(list: List<GaugeValue>) {
+        val now = System.currentTimeMillis()
+        fun num(label: String) = list.firstOrNull { it.label == label }?.takeIf { it.available }?.value?.toDoubleOrNull()
+        trip.add(now, num("Vehicle speed"), num("Engine fuel rate"))
+        tripTick++
+        val w = tripWriter ?: return
+        try {
+            if (!tripHeaderWritten) {
+                w.write(TripCsv.header(list.map { it.label }))
+                w.newLine()
+                tripHeaderWritten = true
+            }
+            val iso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).format(java.util.Date(now))
+            w.write(TripCsv.row(iso, list.map { if (it.available) it.value else null }))
+            w.newLine()
+            w.flush()
+        } catch (e: Exception) {
+            tripNote = "Trip file write failed: " + (e.message ?: "storage error")
+        }
+    }
+
+    private fun endTrip() {
+        try { tripWriter?.flush(); tripWriter?.close() } catch (_: Exception) { }
+        tripWriter = null
+    }
+
+    private fun savedTrips(): List<java.io.File> =
+        java.io.File(filesDir, "trips").listFiles { f -> f.extension == "csv" }?.sortedBy { it.name }.orEmpty()
+
+    private fun shareLastTrip() {
+        endTripFlushOnly()
+        val file = savedTrips().lastOrNull { it.length() > 0 }
+        if (file == null) {
+            tripNote = "No recorded trip yet. Connect the adapter and drive; every poll is saved."
+            return
+        }
+        try {
+            val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "text/csv"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "SX4 Scan Pro trip " + file.nameWithoutExtension)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(send, "Share trip CSV"))
+        } catch (e: Exception) {
+            tripNote = "Could not share the trip file: " + (e.message ?: "unknown error")
+        }
+    }
+
+    private fun endTripFlushOnly() {
+        try { tripWriter?.flush() } catch (_: Exception) { }
+    }
+
+    private fun deleteSavedTrips() {
+        endTrip()
+        val n = savedTrips().count { it.delete() }
+        tripNote = "Deleted $n saved trip file(s)."
+        tripTick++
+    }
+
+    /** Asks Open Headunit to connect to the phone at [phoneIp]. Returns the status line. */
+    private fun connectPhone(): String {
+        val uri = HeadUnitLink.connectUri(phoneIp)
+            ?: return "Enter the phone's IPv4 address first, for example 192.168.43.1."
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).setPackage(RECEIVER_PACKAGE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        return try {
+            startActivity(intent)
+            "Asked Open Headunit to connect to " + HeadUnitLink.normalizeIp(phoneIp) + ". Wireless Android Auto must be enabled on the phone. Not verified until you see the projection."
+        } catch (e: Exception) {
+            "Could not open the receiver link (is Open Headunit installed and up to date?): " + (e.message ?: "unknown error")
+        }
+    }
+
     private fun closeSocket() {
         try { socket?.close() } catch (_: Exception) { }
         socket = null
@@ -1354,7 +1570,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onPause() {
         super.onPause()
-        (getSystemService(SENSOR_SERVICE) as? SensorManager)?.unregisterListener(gListener)
+        (getSystemService(SENSOR_SERVICE) as? SensorManager)?.apply { unregisterListener(gListener); unregisterListener(lightListener) }
     }
 
     override fun onResume() {
@@ -1363,6 +1579,7 @@ class MainActivity : ComponentActivity() {
         val sm = getSystemService(SENSOR_SERVICE) as? SensorManager
         val sensor = sm?.getDefaultSensor(Sensor.TYPE_LINEAR_ACCELERATION)
         if (sensor != null) sm?.registerListener(gListener, sensor, SensorManager.SENSOR_DELAY_UI)
+        sm?.getDefaultSensor(Sensor.TYPE_LIGHT)?.let { sm.registerListener(lightListener, it, SensorManager.SENSOR_DELAY_NORMAL) }
         // Coming back from the system permission screen or Bluetooth settings.
         refreshBluetoothAccess()
         refreshPairedDevices()
@@ -1370,6 +1587,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         runCatching { unregisterReceiver(btReceiver) }
+        endTrip()
         runCatching { if (BluetoothAdapter.getDefaultAdapter()?.isDiscovering == true) BluetoothAdapter.getDefaultAdapter()?.cancelDiscovery() }
         closeSocket()
         mainHandler.removeCallbacksAndMessages(null)
@@ -1379,5 +1597,20 @@ class MainActivity : ComponentActivity() {
         cabinChimeTrack?.release()
         cabinChimeTrack = null
         super.onDestroy()
+    }
+}
+
+
+/** One owner-set alert limit: a switch and +/- buttons. Off by default; never a built-in number. */
+@Composable
+private fun LimitRow(label: String, value: Int?, range: IntRange, start: Int, step: Int, unit: String, onChange: (Int?) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Switch(checked = value != null, onCheckedChange = { on -> onChange(if (on) start else null) })
+        Column(Modifier.weight(1f)) {
+            Text(label, color = Color.White, fontWeight = FontWeight.Bold)
+            Text(if (value == null) "Off" else "Set by you: $value $unit", color = Color(0xFF8FA6B9), fontSize = 13.sp)
+        }
+        OutlinedButton(onClick = { if (value != null) onChange((value - step).coerceAtLeast(range.first)) }, enabled = value != null) { Text("−") }
+        OutlinedButton(onClick = { if (value != null) onChange((value + step).coerceAtMost(range.last)) }, enabled = value != null) { Text("+") }
     }
 }
