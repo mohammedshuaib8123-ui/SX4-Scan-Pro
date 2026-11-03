@@ -2,6 +2,8 @@ name: Android APK
 
 on:
   push:
+    branches: [ "main", "feature/crystal-glass-cockpit" ]
+  pull_request:
     branches: [ "main" ]
   workflow_dispatch:
 
