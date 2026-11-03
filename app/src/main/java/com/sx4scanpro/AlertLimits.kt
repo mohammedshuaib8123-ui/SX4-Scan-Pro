@@ -26,3 +26,25 @@ internal data class AlertLimits(
         fun parse(value: Int, range: IntRange): Int? = if (value in range) value else null
     }
 }
+
+/** Which gauge an alert rule belongs to, and what is said aloud. Limits are only the owner's own. */
+internal object AlertTargets {
+    /** How long the siren plays before the spoken message (the sound file itself is longer). */
+    const val SIREN_MS = 6_000L
+
+    private val names = mapOf("coolant" to "coolant temperature", "rpm" to "engine speed", "boost" to "boost pressure")
+
+    fun sensorOf(ruleId: String): String? =
+        if (ruleId.endsWith("-limit")) ruleId.removeSuffix("-limit").takeIf { it in names } else null
+
+    fun sensorsFor(ruleIds: Set<String>): Set<String> = ruleIds.mapNotNull { sensorOf(it) }.toSet()
+
+    fun speech(sensors: Set<String>): String {
+        val list = sensors.sorted().mapNotNull { names[it] }
+        return if (list.isEmpty()) "Problem in vehicle. Please check the vehicle condition."
+        else "Problem in vehicle. " + list.joinToString(" and ") + " above your set limit."
+    }
+
+    fun bannerText(sensors: Set<String>): String =
+        "PROBLEM IN VEHICLE" + if (sensors.isEmpty()) "" else ": " + sensors.sorted().joinToString(" + ") { it.uppercase() }
+}
