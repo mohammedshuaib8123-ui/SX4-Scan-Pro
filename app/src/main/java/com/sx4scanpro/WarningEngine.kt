@@ -104,5 +104,9 @@ class WarningEngine(private val rules: List<WarningRule> = emptyList()) {
         return events
     }
 
+    /** Rules that have triggered and not yet cleared below their hysteresis threshold. */
+    @Synchronized
+    fun activeRuleIds(): Set<String> = rules.filter { states.getValue(it.id).active }.map { it.id }.toSet()
+
     fun configuredRuleCount(): Int = rules.size
 }

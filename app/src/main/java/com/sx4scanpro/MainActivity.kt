@@ -129,6 +129,8 @@ private fun GaugeCard(gauge: GaugeValue) {
 }
 
 /** Sensors that already have their own dial or tile; the picker skips them to avoid duplicates. */
+/** Sensors the home screen always shows (fuel level, control module voltage), polled whether or not picked in Settings. */
+private val HOME_PIDS = setOf(0x2F, 0x42)
 private val CORE_PIDS = setOf(0x04, 0x05, 0x0B, 0x0C, 0x0D, 0x0F, 0x10, 0x11, 0x2C)
 
 private const val RECEIVER_PACKAGE = "com.andrerinas.headunitrevived"
@@ -173,6 +175,10 @@ class MainActivity : ComponentActivity() {
         }
     }
     private var trip by mutableStateOf(TripStats())
+    /** Gauge keys ("coolant", "rpm", "boost") currently above an owner-set limit. */
+    private var alertSensors by mutableStateOf(emptySet<String>())
+    private var welcomeSettings by mutableStateOf(WelcomeSettings())
+    private var welcomePlayedOnce = false
     private var tripTick by mutableStateOf(0)
     private var tripStartMs by mutableStateOf(0L)
     private var tripWriter: java.io.BufferedWriter? = null
@@ -242,6 +248,11 @@ class MainActivity : ComponentActivity() {
             adaptiveTiming = prefs.getBoolean("adaptive_timing", true)
         )
         extraPids = PidCatalog.parseSelection(prefs.getString("extra_pids", null))
+        welcomeSettings = WelcomeSettings(
+            durationSec = WelcomeSettings.clampDuration(prefs.getFloat("welcome_duration", WelcomeSettings.DEFAULT_DURATION_SEC)),
+            sound = prefs.getBoolean("welcome_sound", true),
+            everyConnection = prefs.getBoolean("welcome_every", true)
+        )
         alertLimits = AlertLimits(
             coolantMaxC = AlertLimits.parse(prefs.getInt("alert_coolant", -1), AlertLimits.COOLANT),
             rpmMax = AlertLimits.parse(prefs.getInt("alert_rpm", -1), AlertLimits.RPM),
@@ -288,10 +299,10 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     private fun Dashboard() {
-        val bg = Color(0xFF080D14)
-        val panel = Color(0xFF111B27)
-        val cyan = Color(0xFF38DDF5)
-        val muted = Color(0xFF8FA6B9)
+        val bg = Sx.Background
+        val panel = Sx.Card
+        val cyan = Sx.Primary
+        val muted = Sx.MutedForeground
         var status by remember { mutableStateOf("Not connected") }
         var adapterName by remember { mutableStateOf("Vgate iCar Pro • Bluetooth Classic") }
         var gauges by remember { mutableStateOf(listOf(
@@ -305,6 +316,7 @@ class MainActivity : ComponentActivity() {
         var showWall by rememberSaveable { mutableStateOf(false) }
         var dtcStatus by remember { mutableStateOf("Connect the Vgate adapter to read engine ECU fault codes.") }
         var dtcCodes by remember { mutableStateOf<List<TroubleCodeResult>>(emptyList()) }
+        var dtcScanned by remember { mutableStateOf(false) }
         var scanningCodes by remember { mutableStateOf(false) }
         var headUnitStatus by remember { mutableStateOf("Open Headunit runs as a separate receiver app.") }
         var readiness by remember { mutableStateOf(computeHeadUnitReadiness()) }
@@ -367,7 +379,8 @@ class MainActivity : ComponentActivity() {
                     status = "Connected"
                     startTrip()
                     // The greeting plays only once the ECU has really answered (connectAndRead throws otherwise).
-                    playEngineWelcome()
+                    if (welcomeSettings.shouldPlay(welcomePlayedOnce)) playEngineWelcome()
+                    welcomePlayedOnce = true
                     while (isActive && socket?.isConnected == true) {
                         gauges = withContext(Dispatchers.IO) { readDashboard() }
                         gauges.forEach { g -> history.record(g.label, if (g.available) g.value.toDoubleOrNull() else null) }
@@ -390,26 +403,28 @@ class MainActivity : ComponentActivity() {
                                 valid = gauge.available
                             )
                         }.toMap()
-                        warningEngine.evaluate(sensorReadings, System.currentTimeMillis()).forEach { event ->
-                            warningMessage = "⚠ ${event.severity}: ${event.ruleId.replace('-', ' ').uppercase()}"
-                            val spoken = if (event.severity == WarningSeverity.CRITICAL) "Critical warning. Please stop safely and check the vehicle." else "Caution. Please check the vehicle condition."
-                            chime?.startTone(ToneGenerator.TONE_PROP_NACK, 520)
-                            if (speechReady) textToSpeech?.speak(spoken, TextToSpeech.QUEUE_FLUSH, null, "sx4_warning_${event.ruleId}")
-                            mainHandler.postDelayed({ warningMessage = "" }, 8000)
-                        }
+                        val fired = warningEngine.evaluate(sensorReadings, System.currentTimeMillis())
+                        alertSensors = AlertTargets.sensorsFor(warningEngine.activeRuleIds())
+                        if (fired.isNotEmpty()) {
+                            warningMessage = AlertTargets.bannerText(alertSensors)
+                            playAlert(alertSensors)
+                        } else if (alertSensors.isEmpty()) warningMessage = ""
                         delay(1300)
                     }
                     if (status == "Connected") {
                         status = "Disconnected"
+                        alertSensors = emptySet()
                         gauges = gauges.map { it.copy(value = "--", available = false) }
                     }
                 } catch (e: SecurityException) {
                     endTrip()
                     closeSocket()
                     status = "Permission required"
+                    alertSensors = emptySet()
                 } catch (e: Exception) {
                     endTrip()
                     closeSocket()
+                    alertSensors = emptySet()
                     // Tapping DISCONNECT closes the socket mid-read; that is not a failure.
                     status = if (userInitiatedDisconnect) "Disconnected" else (e.message ?: "Connection failed")
                     if (!userInitiatedDisconnect) gauges = gauges.map { it.copy(value = "--", available = false) }
@@ -427,6 +442,7 @@ class MainActivity : ComponentActivity() {
                 try {
                     val summary = withContext(Dispatchers.IO) { readTroubleCodes() }
                     dtcCodes = summary.codes
+                    dtcScanned = summary.supportedModes > 0
                     dtcStatus = when {
                         summary.supportedModes == 0 ->
                             "The engine ECU did not return a valid response for modes 03 / 07 / 0A. Check protocol support and adapter communication."
@@ -460,25 +476,10 @@ class MainActivity : ComponentActivity() {
 
         MaterialTheme(colorScheme = darkColorScheme(primary = cyan, secondary = Color(0xFFFFB84D), background = bg, surface = panel, onBackground = Color.White, onSurface = Color.White, onSurfaceVariant = muted)) {
             Scaffold(containerColor = bg) { padding ->
-                Row(Modifier.fillMaxSize().padding(padding).background(Holo.Void)) {
-                SideDock(
-                    selectedTab = selectedTab,
-                    onSelect = { if (selectedTab != it) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedTab = it },
-                    onPower = { disconnect(); finish() }
-                )
-                Column(Modifier.weight(1f).fillMaxHeight()) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Column(Modifier.weight(1f).crystalPanel(12.dp).padding(horizontal = 16.dp, vertical = 10.dp)) {
-                            Text("S X 4   /   S C A N   P R O", color = Holo.Cyan, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                            Text(if (connected) "V-GATE / OBD-II • CONNECTED" else "V-GATE / OBD-II • STANDBY", color = Holo.White, fontSize = 17.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
-                        }
-                        Column(Modifier.crystalPanel(12.dp).padding(horizontal = 16.dp, vertical = 10.dp), horizontalAlignment = androidx.compose.ui.Alignment.End) {
-                            Text(if (connected) "● ECU CONNECTED" else "○ ECU OFFLINE", color = if (connected) Holo.Cyan else Holo.Muted, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                            Text("v0.8.0 • PRE-RELEASE • BUILD 26", color = Holo.Muted, fontSize = 13.sp)
-                        }
-                    }
+                Column(Modifier.fillMaxSize().padding(padding).background(Sx.Background)) {
+                SxTopBar(connected = connected, onPower = { disconnect(); finish() })
+                Column(Modifier.weight(1f).fillMaxWidth()) {
                     Box(Modifier.weight(1f).fillMaxWidth()) {
-                        if (selectedTab == 0) HoloCar(Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 24.dp))
                         AnimatedContent(
                             targetState = selectedTab,
                             transitionSpec = {
@@ -554,12 +555,18 @@ class MainActivity : ComponentActivity() {
                                 val spdShown = spd.value.toDoubleOrNull()?.takeIf { spd.available }?.let { spd.copy(value = GaugeUnits.speedText(it, speedUnit), unit = speedUnit.label) } ?: spd.copy(unit = speedUnit.label)
                                 val bst = g("Turbo boost")
                                 val bstShown = bst.value.toDoubleOrNull()?.takeIf { bst.available }?.let { bst.copy(value = GaugeUnits.boostText(it, boostUnit), unit = boostUnit.label) } ?: bst.copy(unit = boostUnit.label)
-                                ClusterHome(
-                                    rpm = g("Engine RPM"), speed = spdShown, speedUnitLabel = speedUnit.label,
-                                    boost = bstShown, boostScale = GaugeUnits.boostScale(boostUnit),
+                                SxCockpit(
+                                    connected = connected,
+                                    rpm = g("Engine RPM"), boost = bstShown, boostScale = GaugeUnits.boostScale(boostUnit),
+                                    boostCaption = boostUnit.label.uppercase(),
                                     coolant = g("Coolant temperature"), intake = g("Intake air temperature"),
-                                    load = g("Calculated engine load"), maf = g("MAF airflow"),
-                                    nowMs = nowMs, modifier = Modifier.weight(1f).fillMaxWidth()
+                                    egr = g("EGR commanded"), fuel = g("Fuel level"), battery = g("Control module voltage"),
+                                    tripKm = if (connected && trip.dataMs > 0) trip.distanceKm else null,
+                                    faultCount = if (dtcScanned) dtcCodes.size else null,
+                                    headUnit = huSession, alertSensors = alertSensors, nowMs = nowMs,
+                                    onOpenDiagnostics = { selectedTab = 1 }, onOpenHeadUnit = { selectedTab = 2 },
+                                    onReplayWelcome = { playEngineWelcome() },
+                                    modifier = Modifier.weight(1f).fillMaxWidth()
                                 )
                             }
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
@@ -794,7 +801,7 @@ class MainActivity : ComponentActivity() {
                                         Text("ALERT LIMITS (YOURS)", color = cyan, style = MaterialTheme.typography.titleMedium)
                                         Text("This app has no verified SX4 ZDi limits, so every alert is off until you choose a number. A limit shows a banner and speaks a caution after three fresh readings above it.", color = muted, fontSize = 13.sp)
                                         fun save(key: String, v: Int?) = prefs.edit().putInt(key, v ?: -1).apply()
-                                        fun apply(next: AlertLimits) { alertLimits = next; warningEngine = WarningEngine(next.rules()) }
+                                        fun apply(next: AlertLimits) { alertLimits = next; warningEngine = WarningEngine(next.rules()); alertSensors = emptySet(); warningMessage = "" }
                                         LimitRow("Coolant above", alertLimits.coolantMaxC, AlertLimits.COOLANT, AlertLimits.COOLANT_START, 5, "°C") { v -> save("alert_coolant", v); apply(alertLimits.copy(coolantMaxC = v)) }
                                         LimitRow("Engine speed above", alertLimits.rpmMax, AlertLimits.RPM, AlertLimits.RPM_START, 100, "rpm") { v -> save("alert_rpm", v); apply(alertLimits.copy(rpmMax = v)) }
                                         LimitRow("Boost above", alertLimits.boostMaxKpa, AlertLimits.BOOST, AlertLimits.BOOST_START, 10, "kPa") { v -> save("alert_boost", v); apply(alertLimits.copy(boostMaxKpa = v)) }
@@ -950,6 +957,24 @@ class MainActivity : ComponentActivity() {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text("WELCOME & ALERTS", color = cyan, style = MaterialTheme.typography.titleMedium)
                                         Text("Welcome: two-tone cabin chime followed by a calm-paced English announcement. It plays only after the ECU has answered on a successful OBD connection, never when the app opens or when only Bluetooth is connected.", color = muted)
+                                        fun saveWelcome(w: WelcomeSettings) {
+                                            welcomeSettings = w
+                                            prefs.edit().putFloat("welcome_duration", w.durationSec).putBoolean("welcome_sound", w.sound).putBoolean("welcome_every", w.everyConnection).apply()
+                                        }
+                                        Text("Welcome length: " + String.format(java.util.Locale.US, "%.1f", welcomeSettings.durationSec) + " s", color = Color.White)
+                                        Slider(
+                                            value = welcomeSettings.durationSec,
+                                            onValueChange = { saveWelcome(welcomeSettings.copy(durationSec = (Math.round(it * 2f) / 2f))) },
+                                            valueRange = WelcomeSettings.MIN_DURATION_SEC..WelcomeSettings.MAX_DURATION_SEC
+                                        )
+                                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                            Text("Chime and spoken welcome", color = Color.White, modifier = Modifier.weight(1f))
+                                            Switch(checked = welcomeSettings.sound, onCheckedChange = { saveWelcome(welcomeSettings.copy(sound = it)) })
+                                        }
+                                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                            Text("Play on every OBD connection (off = once per app launch)", color = Color.White, modifier = Modifier.weight(1f))
+                                            Switch(checked = welcomeSettings.everyConnection, onCheckedChange = { saveWelcome(welcomeSettings.copy(everyConnection = it)) })
+                                        }
                                         Button(onClick = { playEngineWelcome() }, modifier = Modifier.fillMaxWidth()) {
                                             Text("PREVIEW WELCOME ANNOUNCEMENT")
                                         }
@@ -959,9 +984,9 @@ class MainActivity : ComponentActivity() {
                                         Text("Tests the dashboard warning banner, alert tone and spoken message. This is a manual preview only; no SX4 warning limits are enabled yet.", color = muted)
                                         Button(onClick = {
                                             warningPreview = true
-                                            chime?.startTone(ToneGenerator.TONE_PROP_NACK, 520)
-                                            if (speechReady) textToSpeech?.speak("Warning. Please check the vehicle condition.", TextToSpeech.QUEUE_FLUSH, null, "sx4_warning_preview")
-                                            mainHandler.postDelayed({ warningPreview = false }, 2200)
+                                            alertSensors = setOf("coolant")
+                                            playAlert(setOf("coolant"))
+                                            mainHandler.postDelayed({ warningPreview = false; alertSensors = emptySet() }, AlertTargets.SIREN_MS + 3000L)
                                         }, modifier = Modifier.fillMaxWidth()) {
                                             Text("PREVIEW WARNING ALERT")
                                         }
@@ -995,23 +1020,17 @@ class MainActivity : ComponentActivity() {
                         }
                         Crossfade(targetState = welcomeOverlayVisible, animationSpec = tween(550), label = "welcome-overlay-fade") { visible ->
                             if (visible) {
-                                Box(Modifier.fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { welcomeOverlayVisible = false }) {
-                                    val rpmG = gauges.firstOrNull { it.label == "Engine RPM" }
-                                    val bstG = gauges.firstOrNull { it.label == "Turbo boost" }
-                                    val rpmNow = rpmG?.takeIf { it.available }?.value?.toDoubleOrNull()
-                                    val bstNow = bstG?.takeIf { it.available }?.value?.toDoubleOrNull()
-                                    val bstScale = GaugeUnits.boostScale(boostUnit)
-                                    IgnitionSequence(
-                                        linkActive = connected,
-                                        left = IgnitionGauge("RPM", rpmNow?.let { DialScale.forLabel("Engine RPM").fraction(it) }, rpmNow?.let { it.toInt().toString() } ?: "—"),
-                                        right = IgnitionGauge("BOOST " + boostUnit.label.uppercase(), bstNow?.let { bstScale.fraction(GaugeUnits.boost(it, boostUnit)) }, bstNow?.let { GaugeUnits.boostText(it, boostUnit) } ?: "—")
-                                    )
-                                }
+                                SxWelcome(durationMs = welcomeSettings.durationMs(reducedMotionOn()), onEnter = { welcomeOverlayVisible = false })
                             }
                         }
                     }
 
                 }
+                SxBottomNav(
+                    selectedTab = selectedTab,
+                    onSelect = { if (selectedTab != it) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedTab = it },
+                    faultCount = dtcCodes.size
+                )
                 }
             }
         }
@@ -1205,7 +1224,7 @@ class MainActivity : ComponentActivity() {
         } else GaugeValue("Turbo boost", "--", "kPa", false)
         val core = results.take(4) + listOf(map["Manifold pressure"]!!) + boost + results.drop(5)
         // Extra sensors the user chose (Torque-style). Only polled when the ECU advertises them.
-        val extras = extraPids.sorted().mapNotNull { PidCatalog.forPid(it) }.map { spec ->
+        val extras = (extraPids + HOME_PIDS).sorted().mapNotNull { PidCatalog.forPid(it) }.map { spec ->
             if (spec.pid !in supportedPids) GaugeValue(spec.name, "--", spec.unit, false)
             else {
                 val v = PidCatalog.decode(spec, sendCommand(spec.command))
@@ -1258,11 +1277,36 @@ class MainActivity : ComponentActivity() {
     @Volatile private var welcomePending = false
     @Volatile private var welcomeChimeFinished = false
 
+    private var siren: android.media.MediaPlayer? = null
+    private var alertBusyUntilMs = 0L
+
+    /** Siren for [AlertTargets.SIREN_MS], then the spoken "problem in vehicle" message. Re-triggers are ignored while it plays. */
+    private fun playAlert(sensors: Set<String>) {
+        val now = System.currentTimeMillis()
+        if (now < alertBusyUntilMs) return
+        alertBusyUntilMs = now + AlertTargets.SIREN_MS + 4000L
+        try {
+            siren?.release()
+            siren = android.media.MediaPlayer.create(this, R.raw.alarm_tone)?.apply { setVolume(1f, 1f); start() }
+        } catch (_: Exception) {
+            chime?.startTone(ToneGenerator.TONE_PROP_NACK, 520)
+        }
+        mainHandler.postDelayed({
+            runCatching { siren?.let { if (it.isPlaying) it.stop() }; siren?.release(); siren = null }
+            if (speechReady) textToSpeech?.speak(AlertTargets.speech(sensors), TextToSpeech.QUEUE_FLUSH, null, "sx4_problem_in_vehicle")
+        }, AlertTargets.SIREN_MS)
+    }
+
+    private fun reducedMotionOn(): Boolean =
+        android.provider.Settings.Global.getFloat(contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+
     private fun playEngineWelcome() {
+        welcomeOverlayVisible = true
+        val shownMs = welcomeSettings.durationMs(reducedMotionOn())
+        mainHandler.postDelayed({ welcomeOverlayVisible = false }, shownMs + 400L)
+        if (!welcomeSettings.sound) { welcomePending = false; return }
         welcomePending = true
         welcomeChimeFinished = false
-        welcomeOverlayVisible = true
-        mainHandler.postDelayed({ welcomeOverlayVisible = false }, 6500L)
         playAircraftCabinChime()
         mainHandler.postDelayed({
             welcomeChimeFinished = true
@@ -1593,6 +1637,7 @@ class MainActivity : ComponentActivity() {
         runCatching { if (BluetoothAdapter.getDefaultAdapter()?.isDiscovering == true) BluetoothAdapter.getDefaultAdapter()?.cancelDiscovery() }
         closeSocket()
         mainHandler.removeCallbacksAndMessages(null)
+        runCatching { siren?.release(); siren = null }
         textToSpeech?.stop()
         textToSpeech?.shutdown()
         chime?.release()
