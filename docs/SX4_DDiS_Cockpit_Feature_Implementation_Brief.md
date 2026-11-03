@@ -629,10 +629,10 @@ class ObdBluetoothManager(private val socket: BluetoothSocket) {
 
     suspend fun initializeElm327(): Boolean = withContext(Dispatchers.IO) {
         try {
-            sendRawCommand("ATZ\\r")
-            sendRawCommand("ATE0\\r")
-            sendRawCommand("ATL0\\r")
-            sendRawCommand("ATSP0\\r")
+            sendRawCommand("ATZ\r")
+            sendRawCommand("ATE0\r")
+            sendRawCommand("ATL0\r")
+            sendRawCommand("ATSP0\r")
             true
         } catch (e: Exception) {
             false
@@ -640,18 +640,18 @@ class ObdBluetoothManager(private val socket: BluetoothSocket) {
     }
 
     suspend fun readRpm(): Int = withContext(Dispatchers.IO) {
-        val response = sendRawCommand("010C\\r")
+        val response = sendRawCommand("010C\r")
         parseRpm(response)
     }
 
     suspend fun readManifoldPressure(): Float = withContext(Dispatchers.IO) {
-        val response = sendRawCommand("010B\\r")
+        val response = sendRawCommand("010B\r")
         val kpa = parseSingleByteHex(response)
         ((kpa - 101.3f) / 100f).coerceAtLeast(0.0f)
     }
 
     suspend fun readCoolantTemp(): Int = withContext(Dispatchers.IO) {
-        val response = sendRawCommand("0105\\r")
+        val response = sendRawCommand("0105\r")
         parseSingleByteHex(response) - 40
     }
 
@@ -866,7 +866,7 @@ package com.suzuki.sx4.cockpit.obd
 
 suspend fun ObdBluetoothManager.readDtcCodes(): List<String> =
     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        val response = sendRawCommand("03\\r")
+        val response = sendRawCommand("03\r")
         parseDtcCodes(response)
     }
 
@@ -916,7 +916,7 @@ The following is the original function supplied by the owner. Preserve it as par
 ```kotlin
 suspend fun ObdBluetoothManager.clearDtcCodes(): Boolean =
     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-        val response = sendRawCommand("04\\r")
+        val response = sendRawCommand("04\r")
         response.contains("44") || response.contains("OK")
     }
 ```
