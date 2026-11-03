@@ -460,7 +460,13 @@ class MainActivity : ComponentActivity() {
 
         MaterialTheme(colorScheme = darkColorScheme(primary = cyan, secondary = Color(0xFFFFB84D), background = bg, surface = panel, onBackground = Color.White, onSurface = Color.White, onSurfaceVariant = muted)) {
             Scaffold(containerColor = bg) { padding ->
-                Column(Modifier.fillMaxSize().padding(padding).background(Brush.verticalGradient(listOf(Color(0xFF05080E), Color(0xFF0B1421), Color(0xFF05080E))))) {
+                Row(Modifier.fillMaxSize().padding(padding).background(Holo.Void)) {
+                SideDock(
+                    selectedTab = selectedTab,
+                    onSelect = { if (selectedTab != it) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedTab = it },
+                    onPower = { disconnect(); finish() }
+                )
+                Column(Modifier.weight(1f).fillMaxHeight()) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                         Column {
                             Text("S X 4   /   S C A N   P R O", color = cyan, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
@@ -994,79 +1000,8 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
-                    Row(
-                        Modifier.fillMaxWidth().height(84.dp)
-                            .background(Color(0xFF070E18))
-                            .padding(horizontal = 8.dp, vertical = 5.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        listOf("Cockpit", "Diagnostics", "Head Unit", "Settings").forEachIndexed { i, label ->
-                            val selected = selectedTab == i
-                            val dockColor by animateColorAsState(
-                                targetValue = if (selected) Color(0xFF123447) else Color(0xFF101B28),
-                                animationSpec = tween(240),
-                                label = "dock-item-color-$i"
-                            )
-                            val iconColor by animateColorAsState(
-                                targetValue = if (selected) cyan else muted,
-                                animationSpec = tween(240),
-                                label = "dock-icon-color-$i"
-                            )
-                            val iconScale by animateFloatAsState(
-                                targetValue = if (selected) 1.2f else 1f,
-                                animationSpec = spring(dampingRatio = 0.45f, stiffness = Spring.StiffnessMedium),
-                                label = "dock-icon-scale-$i"
-                            )
-                            val indicatorProgress by animateFloatAsState(
-                                targetValue = if (selected) 1f else 0f,
-                                animationSpec = tween(280),
-                                label = "dock-indicator-$i"
-                            )
-                            Surface(
-                                onClick = {
-                                    if (selectedTab != i) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                                    selectedTab = i
-                                },
-                                modifier = Modifier.weight(1f).fillMaxHeight(),
-                                shape = RoundedCornerShape(14.dp),
-                                color = dockColor,
-                                border = androidx.compose.foundation.BorderStroke(
-                                    1.dp,
-                                    if (selected) cyan.copy(alpha = 0.75f) else Color(0xFF26394C)
-                                )
-                            ) {
-                                Column(
-                                    Modifier.fillMaxSize().padding(vertical = 4.dp),
-                                    horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.Center
-                                ) {
-                                    Icon(
-                                        imageVector = listOf(Icons.Outlined.Speed, Icons.Outlined.Build, Icons.Outlined.DirectionsCar, Icons.Outlined.Settings)[i],
-                                        contentDescription = null,
-                                        tint = iconColor,
-                                        modifier = Modifier.size(26.dp).graphicsLayer { scaleX = iconScale; scaleY = iconScale }
-                                    )
-                                    Text(
-                                        label.uppercase(),
-                                        color = if (selected) Color.White else muted,
-                                        fontSize = 13.sp,
-                                        fontWeight = if (selected) FontWeight.Black else FontWeight.Medium,
-                                        letterSpacing = 0.7.sp,
-                                        maxLines = 1
-                                    )
-                                    Box(
-                                        Modifier.fillMaxWidth(0.62f).height(3.dp)
-                                            .background(Color(0xFF26394C), RoundedCornerShape(3.dp))
-                                    ) {
-                                        Box(
-                                            Modifier.fillMaxWidth(indicatorProgress).height(3.dp)
-                                                .background(cyan, RoundedCornerShape(3.dp))
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
+
+                }
                 }
             }
         }
