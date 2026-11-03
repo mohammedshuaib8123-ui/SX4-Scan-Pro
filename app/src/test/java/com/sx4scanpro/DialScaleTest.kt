@@ -9,14 +9,14 @@ class DialScaleTest {
         val s = DialScale.forLabel("Engine RPM")
         assertEquals(0f, s.fraction(null), 0f)
         assertEquals(0f, s.fraction(-50.0), 0f)
-        assertEquals(0.5f, s.fraction(2500.0), 1e-6f)
+        assertEquals(0.5f, s.fraction(3500.0), 1e-6f)
         assertEquals(1f, s.fraction(9999.0), 0f)
         assertEquals(0f, s.fraction(Double.NaN), 0f)
     }
 
     @Test fun rpmTicksAreLabelledInThousands() {
         val s = DialScale.forLabel("Engine RPM")
-        assertEquals(listOf("0", "1", "2", "3", "4", "5"), s.majorTicks().map { s.tickLabel(it) })
+        assertEquals(listOf("0", "1", "2", "3", "4", "5", "6", "7"), s.majorTicks().map { s.tickLabel(it) })
     }
 
     @Test fun speedTicksCoverTheWholeRange() {

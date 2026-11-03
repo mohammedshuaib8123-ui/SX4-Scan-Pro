@@ -32,7 +32,7 @@ internal data class DialScale(
 
     companion object {
         fun forLabel(label: String): DialScale = when (label) {
-            "Engine RPM" -> DialScale(5000f, 1000f, 1000f, 4, "TICKS x1000 RPM")
+            "Engine RPM" -> DialScale(7000f, 1000f, 1000f, 4, "TICKS x1000 RPM")
             "Vehicle speed" -> DialScale(180f, 20f)
             "Coolant temperature" -> DialScale(120f, 20f)
             "Intake air temperature" -> DialScale(100f, 20f)
