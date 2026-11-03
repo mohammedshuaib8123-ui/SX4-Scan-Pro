@@ -478,6 +478,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                     Box(Modifier.weight(1f).fillMaxWidth()) {
+                        if (selectedTab == 0) HoloCar(Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 24.dp))
                         AnimatedContent(
                             targetState = selectedTab,
                             transitionSpec = {
