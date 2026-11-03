@@ -554,11 +554,12 @@ class MainActivity : ComponentActivity() {
                                 val spdShown = spd.value.toDoubleOrNull()?.takeIf { spd.available }?.let { spd.copy(value = GaugeUnits.speedText(it, speedUnit), unit = speedUnit.label) } ?: spd.copy(unit = speedUnit.label)
                                 val bst = g("Turbo boost")
                                 val bstShown = bst.value.toDoubleOrNull()?.takeIf { bst.available }?.let { bst.copy(value = GaugeUnits.boostText(it, boostUnit), unit = boostUnit.label) } ?: bst.copy(unit = boostUnit.label)
-                                ClusterHome(
+                                CrystalCockpitHome(
                                     rpm = g("Engine RPM"), speed = spdShown, speedUnitLabel = speedUnit.label,
-                                    boost = bstShown, boostScale = GaugeUnits.boostScale(boostUnit),
+                                    boost = bstShown,
                                     coolant = g("Coolant temperature"), intake = g("Intake air temperature"),
                                     load = g("Calculated engine load"), maf = g("MAF airflow"),
+                                    egr = g("EGR commanded"),
                                     nowMs = nowMs, modifier = Modifier.weight(1f).fillMaxWidth()
                                 )
                             }
