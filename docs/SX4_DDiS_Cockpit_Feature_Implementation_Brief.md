@@ -907,7 +907,21 @@ fun getDdiSCodeDescription(dtc: String): String = when (dtc) {
 }
 ```
 
-**Conflict resolution:** the original chat also supplied a `clearDtcCodes()` function that sends Mode 04. It is intentionally **not reproduced here** because the approved requirement is read-only diagnostics. Do not implement Mode 04 or a clear/reset UI. The parser above is only a simple reference; implement complete ELM response/frame handling and tests.
+**Reference note:** the original conversation also supplied a `clearDtcCodes()` function that sends Mode 04. It is preserved in the next subsection exactly as a historical/reference snippet because the owner asked to keep every pasted code example in this document. Its presence here does **not** authorize implementing or invoking it in the app. The approved product requirement in Section 5 remains read-only diagnostics; do not implement Mode 04 or a clear/reset UI. The parser above is only a simple reference; implement complete ELM response/frame handling and tests.
+
+### A8.1. Original DTC clear function supplied in chat — reference only
+
+The following is retained for completeness and reference. **Do not wire this function to the UI, call it automatically, or include it in the production diagnostics flow.** Mode 04 clears stored emissions-related diagnostic information and can erase evidence useful for diagnosis.
+
+```kotlin
+suspend fun ObdBluetoothManager.clearDtcCodes(): Boolean =
+    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val response = sendRawCommand("04\\r")
+        response.contains("44") || response.contains("OK")
+    }
+```
+
+This is the original simple acknowledgement check, not a robust confirmation that all vehicle modules or all fault records have been cleared. Keep it as documentation only.
 
 ## A9. Trip computer sketch — `TripComputer.kt`
 
