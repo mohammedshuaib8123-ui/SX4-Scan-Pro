@@ -151,6 +151,7 @@ private fun CrystalHero(
             .padding(horizontal = 22.dp, vertical = 16.dp),
         contentAlignment = Alignment.Center
     ) {
+        val speedFontSize = (maxWidth.value * 0.19f).coerceIn(48f, 100f).sp
         Column(
             Modifier.fillMaxSize(),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -169,7 +170,7 @@ private fun CrystalHero(
             Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(0.dp)) {
                 Text("VEHICLE SPEED", color = CrystalMuted, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 3.sp)
                 Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(value ?: "—", color = Color.White, fontSize = (maxWidth.value * 0.19f).coerceIn(48f, 100f).sp, fontWeight = FontWeight.Black, letterSpacing = (-3).sp)
+                    Text(value ?: "—", color = Color.White, fontSize = speedFontSize, fontWeight = FontWeight.Black, letterSpacing = (-3).sp)
                     Text(speedUnitLabel.uppercase(), color = CrystalCyan, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 13.dp))
                 }
                 Text("GEAR  —     •     DRIVE MODE  MANUAL", color = CrystalMuted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.2.sp)
