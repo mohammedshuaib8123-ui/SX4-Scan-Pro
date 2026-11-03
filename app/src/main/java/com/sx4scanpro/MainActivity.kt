@@ -996,7 +996,16 @@ class MainActivity : ComponentActivity() {
                         Crossfade(targetState = welcomeOverlayVisible, animationSpec = tween(550), label = "welcome-overlay-fade") { visible ->
                             if (visible) {
                                 Box(Modifier.fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { welcomeOverlayVisible = false }) {
-                                    WelcomeSequence()
+                                    val rpmG = gauges.firstOrNull { it.label == "Engine RPM" }
+                                    val bstG = gauges.firstOrNull { it.label == "Turbo boost" }
+                                    val rpmNow = rpmG?.takeIf { it.available }?.value?.toDoubleOrNull()
+                                    val bstNow = bstG?.takeIf { it.available }?.value?.toDoubleOrNull()
+                                    val bstScale = GaugeUnits.boostScale(boostUnit)
+                                    IgnitionSequence(
+                                        linkActive = connected,
+                                        left = IgnitionGauge("RPM", rpmNow?.let { DialScale.forLabel("Engine RPM").fraction(it) }, rpmNow?.let { it.toInt().toString() } ?: "—"),
+                                        right = IgnitionGauge("BOOST " + boostUnit.label.uppercase(), bstNow?.let { bstScale.fraction(GaugeUnits.boost(it, boostUnit)) }, bstNow?.let { GaugeUnits.boostText(it, boostUnit) } ?: "—")
+                                    )
                                 }
                             }
                         }
