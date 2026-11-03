@@ -467,14 +467,14 @@ class MainActivity : ComponentActivity() {
                     onPower = { disconnect(); finish() }
                 )
                 Column(Modifier.weight(1f).fillMaxHeight()) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column {
-                            Text("S X 4   /   S C A N   P R O", color = cyan, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                            Text("DIGITAL COCKPIT", color = Color.White, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black, letterSpacing = 1.5.sp)
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Column(Modifier.weight(1f).crystalPanel(12.dp).padding(horizontal = 16.dp, vertical = 10.dp)) {
+                            Text("S X 4   /   S C A N   P R O", color = Holo.Cyan, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                            Text(if (connected) "V-GATE / OBD-II • CONNECTED" else "V-GATE / OBD-II • STANDBY", color = Holo.White, fontSize = 17.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
                         }
-                        Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
-                            Text(if (connected) "● ECU LINK ACTIVE" else "○ ECU OFFLINE", color = if (connected) cyan else muted)
-                            Text("v0.7.0 • PRE-RELEASE • BUILD 25", color = muted, style = MaterialTheme.typography.labelSmall)
+                        Column(Modifier.crystalPanel(12.dp).padding(horizontal = 16.dp, vertical = 10.dp), horizontalAlignment = androidx.compose.ui.Alignment.End) {
+                            Text(if (connected) "● ECU CONNECTED" else "○ ECU OFFLINE", color = if (connected) Holo.Cyan else Holo.Muted, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                            Text("v0.8.0 • PRE-RELEASE • BUILD 26", color = Holo.Muted, fontSize = 13.sp)
                         }
                     }
                     Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -977,7 +977,7 @@ class MainActivity : ComponentActivity() {
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                             OutlinedButton(onClick = { logPreview = traffic.tail(14) }, modifier = Modifier.weight(1f)) { Text("REFRESH") }
                                             Button(onClick = {
-                                                val header = "SX4 Scan Pro adapter log\n" + "v0.7.0 • PRE-RELEASE • BUILD 25" + "\nStatus: " + status + "\nStandard PIDs advertised: " + supportedPids.size
+                                                val header = "SX4 Scan Pro adapter log\n" + "v0.8.0 • PRE-RELEASE • BUILD 26" + "\nStatus: " + status + "\nStandard PIDs advertised: " + supportedPids.size
                                                 val send = Intent(Intent.ACTION_SEND).apply {
                                                     type = "text/plain"
                                                     putExtra(Intent.EXTRA_TEXT, traffic.asText(header))
@@ -989,7 +989,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
-                            item { Text("Build v0.7.0 • PRE-RELEASE • BUILD 25", color = muted) }
+                            item { Text("Build v0.8.0 • PRE-RELEASE • BUILD 26", color = muted) }
                         }
                             }
                         }

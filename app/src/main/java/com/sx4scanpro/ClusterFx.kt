@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -40,6 +41,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.contentDescription
@@ -232,9 +234,72 @@ internal fun ShiftBar(fraction: Float, active: Boolean, modifier: Modifier = Mod
     }
 }
 
+/** Multi-segment boost arc in a crystal pod, top left of the home screen. [gauge] is in the display unit. */
+@Composable
+private fun BoostPod(gauge: GaugeValue, scale: DialScale, nowMs: Long, modifier: Modifier = Modifier) {
+    val number = readingOf(gauge)
+    val stale = number != null && nowMs - gauge.capturedAtMs > CL.STALE_MS
+    val fraction by animateFloatAsState(scale.fraction(number), tween(700, easing = Holo.Ease), label = "boost-arc")
+    val total = 22
+    val lit = ClusterMath.litSegments(fraction, total)
+    val description = if (number == null) "Boost: no signal" else "Boost: ${gauge.value} ${gauge.unit}" + if (stale) ", stale" else ""
+    Box(modifier.crystalPanel(14.dp).semantics(mergeDescendants = true) { contentDescription = description }, contentAlignment = Alignment.Center) {
+        Canvas(Modifier.fillMaxSize().padding(16.dp)) {
+            val side = minOf(size.width, size.height)
+            val r = side / 2f * 0.88f
+            val c = Offset(size.width / 2f, size.height / 2f)
+            val each = 240f / total
+            for (i in 0 until total) {
+                val on = i < lit && number != null
+                val color = if (on) lerp(Holo.Cyan, Holo.Violet, i / (total - 1f)) else Color.White.copy(alpha = 0.08f)
+                drawArc(color, 150f + i * each, each - 3f, false, Offset(c.x - r, c.y - r), Size(r * 2f, r * 2f), style = Stroke(side * 0.07f))
+            }
+        }
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Text(
+                if (number == null) "—" else gauge.value, color = if (number != null && !stale) Holo.White else Holo.Muted,
+                style = TNUM, fontSize = 34.sp, fontWeight = FontWeight.Black
+            )
+            Text(
+                if (number == null) "NO SIGNAL" else if (stale) "STALE" else gauge.unit.uppercase() + " BOOST",
+                color = if (stale) CL.Amber else Holo.Muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp
+            )
+        }
+    }
+}
+
+/** One of the three micro crystal panels along the bottom: label, live value, and a thin level bar. */
+@Composable
+private fun MicroPanel(title: String, gauge: GaugeValue, scale: DialScale, nowMs: Long, modifier: Modifier = Modifier) {
+    val number = readingOf(gauge)
+    val stale = number != null && nowMs - gauge.capturedAtMs > CL.STALE_MS
+    val fraction by animateFloatAsState(scale.fraction(number), tween(600, easing = Holo.Ease), label = "micro-bar")
+    val description = if (number == null) "$title: no signal" else "$title: ${gauge.value} ${gauge.unit}" + if (stale) ", stale" else ""
+    Column(
+        modifier.crystalPanel(10.dp).padding(horizontal = 16.dp, vertical = 10.dp).semantics(mergeDescendants = true) { contentDescription = description },
+        verticalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(title, color = Holo.Muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp)
+        Row(verticalAlignment = Alignment.Bottom) {
+            Text(
+                if (number == null) "—" else gauge.value, color = if (number != null && !stale) Holo.White else Holo.Muted,
+                style = TNUM, fontSize = 30.sp, fontWeight = FontWeight.Black
+            )
+            Text(
+                if (number == null) "NO SIGNAL" else if (stale) "STALE" else gauge.unit,
+                color = if (stale) CL.Amber else Holo.Muted, fontSize = 14.sp, modifier = Modifier.padding(start = 8.dp, bottom = 4.dp)
+            )
+        }
+        Box(Modifier.fillMaxWidth().height(4.dp).background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(2.dp))) {
+            Box(Modifier.fillMaxHeight().fillMaxWidth(fraction).background(Brush.horizontalGradient(listOf(Holo.Cyan, Holo.Violet)), RoundedCornerShape(2.dp)))
+        }
+    }
+}
+
 /**
- * The home page. [speed], [boost] arrive already converted to the display unit; the scales
- * match those units. Nothing here invents a value.
+ * The live home screen: boost arc top left, large tachometer (0-7) in the centre, road speed and
+ * load on the right, and COOLANT / INTAKE / MAF micro panels along the bottom. [speed] and [boost]
+ * arrive already converted to the display unit. Nothing here invents a value.
  */
 @Composable
 internal fun ClusterHome(
@@ -250,37 +315,42 @@ internal fun ClusterHome(
     nowMs: Long,
     modifier: Modifier = Modifier
 ) {
-    val rpmScale = DialScale.forLabel("Engine RPM")
-    val rpmNumber = readingOf(rpm)
     val speedNumber = readingOf(speed)
-    val loadFraction = DialScale(100f, 20f).fraction(readingOf(load))
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        ShiftBar(rpmScale.fraction(rpmNumber), rpmNumber != null, Modifier.fillMaxWidth(0.5f).height(10.dp).align(Alignment.CenterHorizontally))
-        Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            MiniDial("BOOST", boost, boostScale, nowMs, Modifier.weight(0.85f).fillMaxHeight())
-            HeroTach(rpm, rpmScale, nowMs, Modifier.weight(1.5f).fillMaxHeight())
-            Column(Modifier.weight(1.15f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.End) {
-                    Text(
-                        if (speedNumber == null) "—" else speed.value, color = if (speedNumber == null) CL.Muted else Color.White,
-                        style = TNUM, fontSize = 56.sp, fontWeight = FontWeight.Black
-                    )
-                    Text(speedUnitLabel.uppercase(), color = CL.Muted, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 8.dp, bottom = 10.dp))
+    val loadNumber = readingOf(load)
+    val loadFraction by animateFloatAsState(DialScale(100f, 20f).fraction(loadNumber), tween(600, easing = Holo.Ease), label = "load-bar")
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(0.9f).fillMaxHeight()) {
+                BoostPod(boost, boostScale, nowMs, Modifier.fillMaxWidth().weight(1.5f))
+                Spacer(Modifier.weight(1f))
+            }
+            HeroTach(rpm, DialScale.forLabel("Engine RPM"), nowMs, Modifier.weight(1.6f).fillMaxHeight())
+            Column(Modifier.weight(0.9f).fillMaxHeight(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Column(Modifier.fillMaxWidth().crystalPanel(14.dp).padding(16.dp)) {
+                    Text("ROAD SPEED", color = Holo.Muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp)
+                    Row(verticalAlignment = Alignment.Bottom) {
+                        Text(
+                            if (speedNumber == null) "—" else speed.value, color = if (speedNumber == null) Holo.Muted else Holo.White,
+                            style = TNUM, fontSize = 52.sp, fontWeight = FontWeight.Black
+                        )
+                        Text(speedUnitLabel.uppercase(), color = Holo.Muted, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 8.dp, bottom = 10.dp))
+                    }
                 }
-                Row(Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    MiniDial("COOLANT", coolant, DialScale.forLabel("Coolant temperature"), nowMs, Modifier.weight(1f).fillMaxHeight())
-                    MiniDial("INTAKE", intake, DialScale.forLabel("Intake air temperature"), nowMs, Modifier.weight(1f).fillMaxHeight())
+                Column(Modifier.fillMaxWidth().crystalPanel(14.dp).padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text("ENGINE LOAD", color = Holo.Muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.6.sp)
+                        Text(if (loadNumber == null) "—" else load.value + " %", color = Holo.White, fontSize = 16.sp, style = TNUM, fontWeight = FontWeight.Bold)
+                    }
+                    Box(Modifier.fillMaxWidth().height(6.dp).background(Color.White.copy(alpha = 0.08f), RoundedCornerShape(3.dp))) {
+                        Box(Modifier.fillMaxHeight().fillMaxWidth(loadFraction).background(Brush.horizontalGradient(listOf(Holo.Cyan, Holo.Violet)), RoundedCornerShape(3.dp)))
+                    }
                 }
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("LOAD", color = CL.Muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-            Box(Modifier.weight(1f).height(6.dp).background(Color(0xFF1B2733), RoundedCornerShape(3.dp))) {
-                Box(Modifier.fillMaxHeight().fillMaxWidth(loadFraction).background(CL.Cyan, RoundedCornerShape(3.dp)))
-            }
-            Text(if (readingOf(load) == null) "—" else load.value + " %", color = Color.White, fontSize = 14.sp, style = TNUM)
-            Text("MAF", color = CL.Muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
-            Text(if (readingOf(maf) == null) "—" else maf.value + " g/s", color = Color.White, fontSize = 14.sp, style = TNUM)
+        Row(Modifier.fillMaxWidth().height(100.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            MicroPanel("COOLANT", coolant, DialScale.forLabel("Coolant temperature"), nowMs, Modifier.weight(1f).fillMaxHeight())
+            MicroPanel("INTAKE", intake, DialScale.forLabel("Intake air temperature"), nowMs, Modifier.weight(1f).fillMaxHeight())
+            MicroPanel("MAF", maf, DialScale.forLabel("MAF airflow"), nowMs, Modifier.weight(1f).fillMaxHeight())
         }
     }
 }

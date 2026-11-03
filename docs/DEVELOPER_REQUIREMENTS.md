@@ -871,3 +871,15 @@ Three further small gauges in the photo are too small to read. They must NOT be 
 - **Head Unit (owner decision: personal use only, AGPL acceptable):** Open Headunit stays a separate app. SX4 Scan Pro drives it through its documented automation receiver (package `com.andrerinas.headunitrevived`, action prefix `com.andrerinas.openheadunit`): connect via the phone's hotspot (the Wi-Fi gateway is the phone's address), connect USB, show projection, disconnect, and day/night sync. It also shows Open Headunit's real session state (connecting, connected, projecting, disconnected, failed, and the reason). Copying its ~1,200 files and native FFmpeg code into this repo was judged not worth the risk, because it cannot be built or tested here.
 - **Honesty:** "projecting" is shown only when Open Headunit itself reports it. Whether Android Auto works still depends on the phone, its Android Auto version and its wireless head-unit setting, and is verified only by seeing it on the tablet.
 - **Status:** logic is unit-tested (117 JVM tests). The Compose screens have not been compiled or run on a device.
+
+## 22. Holographic cockpit redesign — 2026-11-03
+
+Implemented natively in Jetpack Compose from the owner's web-style spec (the spec's CSS stack is not applicable to an Android app).
+- **Tokens:** void #02040B, cyan #00F2FE, violet #7A22FF, white, crimson #FF3B30; physics curve cubic-bezier(0.16, 1, 0.3, 1) (`Holo`).
+- **Crystal panel:** translucent gradient fill, bright top-left rim and dim bottom-right rim, inner top highlight and deep drop shadow. Compose has no backdrop blur, so the 25 px frosted refraction is approximated, not reproduced.
+- **Side dock:** 80 dp glass strip (Menu, Cockpit, Diagnostics, Head Unit, Settings, Power) with a cyan aura on the active item. Menu widens it to show labels; Power needs a second tap within 3 s, then disconnects and closes the app.
+- **Holographic car:** wireframe supercar behind the Cockpit tab, stroke gradient flowing cyan (front) to violet (rear).
+- **Ignition sequence (timeline in IgnitionTimeline, unit-tested):** 0-1.2 s laser line splits into frame lines; 1.2-2.5 s car unfolds and the headline types in; 2.5-4.5 s gauges sweep to full scale and settle on the live reading; then ECU LINK ESTABLISHED, or ECU OFFLINE if no link. Tap anywhere skips. During the sweep the flanking readouts say CALIBRATING because they are animation, not data. The sequence still plays only after the ECU answers; the Settings preview ends on ECU OFFLINE.
+- **Home screen:** header pod and status pod, boost multi-segment arc top left, large tachometer scaled 0-7 (a drawing range only, not a limit), road speed and load on the right, COOLANT / INTAKE / MAF micro panels along the bottom. Every value is real or shows NO SIGNAL / STALE.
+- **Decisions to confirm:** the spec's header text "LOAD: V-GATE / OBD-II" was written as "V-GATE / OBD-II • STANDBY" (the "LOAD:" prefix looked like a typo). The spec's boost example is in bar; the app uses the unit chosen in Settings (default kPa).
+- **Status:** timeline logic is unit-tested (123 JVM tests). The Compose screens have not been compiled or run on a device.
