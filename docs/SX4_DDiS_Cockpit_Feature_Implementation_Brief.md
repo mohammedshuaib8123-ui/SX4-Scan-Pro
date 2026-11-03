@@ -10,7 +10,7 @@
 4. Do not assume that sample code previously discussed in chat is production-ready. Use it as a feature/visual reference only. Validate APIs, parsing, concurrency, lifecycle, permissions, and hardware support.
 5. Build incrementally. Add unit tests for parsing, calculations, state transitions, and timer logic. Run the available Gradle build and tests. Report exactly what passed, failed, or remains blocked.
 6. Do not fabricate telemetry. If a PID is unsupported, unavailable, stale, invalid, or not yet tested on this SX4 ECU, show **Unavailable / — / Stale** and explain why. Never show sample/default numbers as if they are live vehicle data.
-7. Keep diagnostics read-only in the initial release. **Do not add a DTC clear/reset command or automatically clear ECU codes.** Reading codes must not be presented as a complete scan of ABS, airbag, BCM, immobilizer, or other modules.
+7. Review the complete DTC requirements and all supplied reference snippets, including the original `clearDtcCodes()` function. Assess the technical behaviour, compatibility, user experience, and diagnostic implications of each option. Do not silently omit a requested capability or make an unrequested product decision; document any concerns and recommended approach for the owner to review. Reading standard powertrain codes must not be presented as a complete scan of ABS, airbag, BCM, immobilizer, or other modules.
 8. Do not claim a feature is vehicle-tested until it has been tested with the owner's 2012 Maruti Suzuki SX4 ZDi 1.3 DDiS manual and Vgate iCar Pro Bluetooth 3.0 adapter.
 9. Keep the UI responsive on the **Realme Pad 2 (Android 14, landscape/tablet-first)** and adapt sensibly to phone layouts.
 10. Keep the existing build-preview marker (currently requested as **UI PREVIEW • BUILD n**) visible until the owner explicitly approves its removal.
@@ -188,14 +188,14 @@ Common standard OBD-II references (verify support and response format on the tar
 
 These are standard PID formulas, not a guarantee that the SX4 ECU supports each PID or exposes a value that matches every dashboard interpretation. Confirm positive responses, payload length, units, and plausibility. Manufacturer-specific data requires documented/validated support.
 
-## 5. DTC diagnostics — read-only
+## 5. DTC diagnostics
 
 - Add a diagnostic screen to request Mode 03 stored powertrain DTCs, and optionally Mode 07/0A only if properly supported and clearly labelled.
 - Parse response framing correctly, including headers, multiple frames, zero padding, and adapter formatting. Add unit tests with representative raw responses.
 - Display code, generic description, raw response, and a note that diagnosis requires inspection; a code is not proof that a named part has failed.
 - Include a small curated DDiS/Multijet explanation catalogue for known codes (e.g. P0400 EGR flow, P0234 turbo overboost, P0100 MAF circuit, P0115 coolant-temperature circuit, P0087 fuel-rail/system pressure too low, P0670 glow-plug control module). Descriptions must be cautious and must not prescribe replacing a component based on a code alone.
 - Clearly state: standard OBD Mode 03 is not a full-vehicle scan and may not access ABS, airbags, BCM, immobilizer, or manufacturer-specific modules.
-- **Read-only requirement: no Mode 04 clear command, no “Reset Codes” button, and no automatic clearing.** Preserve fault evidence for diagnosis.
+- Evaluate whether and how Mode 04 code clearing should be supported, including an explicit user-initiated action, confirmation flow, ECU/adapter response handling, and the diagnostic consequences of clearing stored information. Explain the trade-offs and proposed behaviour to the owner; do not silently exclude the supplied function or assume a product decision that the owner has not made.
 
 ## 6. Trip computer and fuel economy log — `TripComputer.kt` or equivalent
 
@@ -907,11 +907,11 @@ fun getDdiSCodeDescription(dtc: String): String = when (dtc) {
 }
 ```
 
-**Reference note:** the original conversation also supplied a `clearDtcCodes()` function that sends Mode 04. It is preserved in the next subsection exactly as a historical/reference snippet because the owner asked to keep every pasted code example in this document. Its presence here does **not** authorize implementing or invoking it in the app. The approved product requirement in Section 5 remains read-only diagnostics; do not implement Mode 04 or a clear/reset UI. The parser above is only a simple reference; implement complete ELM response/frame handling and tests.
+**Reference note:** the original conversation also supplied a `clearDtcCodes()` function that sends Mode 04. It is preserved in the next subsection because the owner asked to keep every pasted code example in this document. Review this function alongside the main DTC requirements, assess its behaviour and limitations, and decide on an implementation recommendation to discuss with the owner. The parser above is only a simple reference; implement complete ELM response/frame handling and tests.
 
-### A8.1. Original DTC clear function supplied in chat — reference only
+### A8.1. Original DTC clear function supplied in chat
 
-The following is retained for completeness and reference. **Do not wire this function to the UI, call it automatically, or include it in the production diagnostics flow.** Mode 04 clears stored emissions-related diagnostic information and can erase evidence useful for diagnosis.
+The following is the original function supplied by the owner. Preserve it as part of the implementation brief and assess it as you would the other supplied code. Mode 04 can clear stored emissions-related diagnostic information and may erase evidence useful for diagnosis; account for this behaviour when evaluating the implementation and user-confirmation flow.
 
 ```kotlin
 suspend fun ObdBluetoothManager.clearDtcCodes(): Boolean =
@@ -921,7 +921,7 @@ suspend fun ObdBluetoothManager.clearDtcCodes(): Boolean =
     }
 ```
 
-This is the original simple acknowledgement check, not a robust confirmation that all vehicle modules or all fault records have been cleared. Keep it as documentation only.
+This is the original simple acknowledgement check. Assess whether its response validation is sufficient; do not assume that an acknowledgement confirms all vehicle modules or all fault records have been cleared.
 
 ## A9. Trip computer sketch — `TripComputer.kt`
 
