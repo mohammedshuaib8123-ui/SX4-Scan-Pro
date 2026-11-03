@@ -288,10 +288,10 @@ class MainActivity : ComponentActivity() {
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     private fun Dashboard() {
-        val bg = Color(0xFF080D14)
-        val panel = Color(0xFF111B27)
-        val cyan = Color(0xFF38DDF5)
-        val muted = Color(0xFF8FA6B9)
+        val bg = Sx.Background
+        val panel = Sx.Card
+        val cyan = Sx.Primary
+        val muted = Sx.MutedForeground
         var status by remember { mutableStateOf("Not connected") }
         var adapterName by remember { mutableStateOf("Vgate iCar Pro • Bluetooth Classic") }
         var gauges by remember { mutableStateOf(listOf(
@@ -460,25 +460,10 @@ class MainActivity : ComponentActivity() {
 
         MaterialTheme(colorScheme = darkColorScheme(primary = cyan, secondary = Color(0xFFFFB84D), background = bg, surface = panel, onBackground = Color.White, onSurface = Color.White, onSurfaceVariant = muted)) {
             Scaffold(containerColor = bg) { padding ->
-                Row(Modifier.fillMaxSize().padding(padding).background(Holo.Void)) {
-                SideDock(
-                    selectedTab = selectedTab,
-                    onSelect = { if (selectedTab != it) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedTab = it },
-                    onPower = { disconnect(); finish() }
-                )
-                Column(Modifier.weight(1f).fillMaxHeight()) {
-                    Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Column(Modifier.weight(1f).crystalPanel(12.dp).padding(horizontal = 16.dp, vertical = 10.dp)) {
-                            Text("S X 4   /   S C A N   P R O", color = Holo.Cyan, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                            Text(if (connected) "V-GATE / OBD-II • CONNECTED" else "V-GATE / OBD-II • STANDBY", color = Holo.White, fontSize = 17.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp)
-                        }
-                        Column(Modifier.crystalPanel(12.dp).padding(horizontal = 16.dp, vertical = 10.dp), horizontalAlignment = androidx.compose.ui.Alignment.End) {
-                            Text(if (connected) "● ECU CONNECTED" else "○ ECU OFFLINE", color = if (connected) Holo.Cyan else Holo.Muted, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                            Text("v0.8.0 • PRE-RELEASE • BUILD 26", color = Holo.Muted, fontSize = 13.sp)
-                        }
-                    }
+                Column(Modifier.fillMaxSize().padding(padding).background(Sx.Background)) {
+                SxTopBar(connected = connected, onPower = { disconnect(); finish() })
+                Column(Modifier.weight(1f).fillMaxWidth()) {
                     Box(Modifier.weight(1f).fillMaxWidth()) {
-                        if (selectedTab == 0) HoloCar(Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 24.dp))
                         AnimatedContent(
                             targetState = selectedTab,
                             transitionSpec = {
@@ -1012,6 +997,11 @@ class MainActivity : ComponentActivity() {
                     }
 
                 }
+                SxBottomNav(
+                    selectedTab = selectedTab,
+                    onSelect = { if (selectedTab != it) haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove); selectedTab = it },
+                    faultCount = dtcCodes.size
+                )
                 }
             }
         }

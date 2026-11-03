@@ -13,14 +13,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-/** Design tokens of the holographic cockpit: void black, neon cyan, deep purple, crimson for faults. */
+/** Legacy token names, now remapped to the red-and-black palette (see Sx) so older widgets match until each is rebuilt. `Cyan` is the red accent. */
 internal object Holo {
-    val Void = Color(0xFF02040B)
-    val Cyan = Color(0xFF00F2FE)
-    val Violet = Color(0xFF7A22FF)
+    val Void = Color(0xFF050404)
+    val Cyan = Color(0xFFFD2A37)
+    val Violet = Color(0xFFFF6A65)
     val White = Color(0xFFFFFFFF)
-    val Crimson = Color(0xFFFF3B30)
-    val Muted = Color(0xFF8FA6B9)
+    val Crimson = Color(0xFFFF6A65)
+    val Muted = Color(0xFF9B9393)
 
     /** The premium physics curve of the spec: cubic-bezier(0.16, 1, 0.3, 1). */
     val Ease = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
