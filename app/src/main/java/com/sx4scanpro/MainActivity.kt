@@ -403,26 +403,28 @@ class MainActivity : ComponentActivity() {
                                 valid = gauge.available
                             )
                         }.toMap()
-                        warningEngine.evaluate(sensorReadings, System.currentTimeMillis()).forEach { event ->
-                            warningMessage = "⚠ ${event.severity}: ${event.ruleId.replace('-', ' ').uppercase()}"
-                            val spoken = if (event.severity == WarningSeverity.CRITICAL) "Critical warning. Please stop safely and check the vehicle." else "Caution. Please check the vehicle condition."
-                            chime?.startTone(ToneGenerator.TONE_PROP_NACK, 520)
-                            if (speechReady) textToSpeech?.speak(spoken, TextToSpeech.QUEUE_FLUSH, null, "sx4_warning_${event.ruleId}")
-                            mainHandler.postDelayed({ warningMessage = "" }, 8000)
-                        }
+                        val fired = warningEngine.evaluate(sensorReadings, System.currentTimeMillis())
+                        alertSensors = AlertTargets.sensorsFor(warningEngine.activeRuleIds())
+                        if (fired.isNotEmpty()) {
+                            warningMessage = AlertTargets.bannerText(alertSensors)
+                            playAlert(alertSensors)
+                        } else if (alertSensors.isEmpty()) warningMessage = ""
                         delay(1300)
                     }
                     if (status == "Connected") {
                         status = "Disconnected"
+                        alertSensors = emptySet()
                         gauges = gauges.map { it.copy(value = "--", available = false) }
                     }
                 } catch (e: SecurityException) {
                     endTrip()
                     closeSocket()
                     status = "Permission required"
+                    alertSensors = emptySet()
                 } catch (e: Exception) {
                     endTrip()
                     closeSocket()
+                    alertSensors = emptySet()
                     // Tapping DISCONNECT closes the socket mid-read; that is not a failure.
                     status = if (userInitiatedDisconnect) "Disconnected" else (e.message ?: "Connection failed")
                     if (!userInitiatedDisconnect) gauges = gauges.map { it.copy(value = "--", available = false) }
@@ -799,7 +801,7 @@ class MainActivity : ComponentActivity() {
                                         Text("ALERT LIMITS (YOURS)", color = cyan, style = MaterialTheme.typography.titleMedium)
                                         Text("This app has no verified SX4 ZDi limits, so every alert is off until you choose a number. A limit shows a banner and speaks a caution after three fresh readings above it.", color = muted, fontSize = 13.sp)
                                         fun save(key: String, v: Int?) = prefs.edit().putInt(key, v ?: -1).apply()
-                                        fun apply(next: AlertLimits) { alertLimits = next; warningEngine = WarningEngine(next.rules()) }
+                                        fun apply(next: AlertLimits) { alertLimits = next; warningEngine = WarningEngine(next.rules()); alertSensors = emptySet(); warningMessage = "" }
                                         LimitRow("Coolant above", alertLimits.coolantMaxC, AlertLimits.COOLANT, AlertLimits.COOLANT_START, 5, "°C") { v -> save("alert_coolant", v); apply(alertLimits.copy(coolantMaxC = v)) }
                                         LimitRow("Engine speed above", alertLimits.rpmMax, AlertLimits.RPM, AlertLimits.RPM_START, 100, "rpm") { v -> save("alert_rpm", v); apply(alertLimits.copy(rpmMax = v)) }
                                         LimitRow("Boost above", alertLimits.boostMaxKpa, AlertLimits.BOOST, AlertLimits.BOOST_START, 10, "kPa") { v -> save("alert_boost", v); apply(alertLimits.copy(boostMaxKpa = v)) }
@@ -982,9 +984,9 @@ class MainActivity : ComponentActivity() {
                                         Text("Tests the dashboard warning banner, alert tone and spoken message. This is a manual preview only; no SX4 warning limits are enabled yet.", color = muted)
                                         Button(onClick = {
                                             warningPreview = true
-                                            chime?.startTone(ToneGenerator.TONE_PROP_NACK, 520)
-                                            if (speechReady) textToSpeech?.speak("Warning. Please check the vehicle condition.", TextToSpeech.QUEUE_FLUSH, null, "sx4_warning_preview")
-                                            mainHandler.postDelayed({ warningPreview = false }, 2200)
+                                            alertSensors = setOf("coolant")
+                                            playAlert(setOf("coolant"))
+                                            mainHandler.postDelayed({ warningPreview = false; alertSensors = emptySet() }, AlertTargets.SIREN_MS + 3000L)
                                         }, modifier = Modifier.fillMaxWidth()) {
                                             Text("PREVIEW WARNING ALERT")
                                         }
@@ -1274,6 +1276,26 @@ class MainActivity : ComponentActivity() {
 
     @Volatile private var welcomePending = false
     @Volatile private var welcomeChimeFinished = false
+
+    private var siren: android.media.MediaPlayer? = null
+    private var alertBusyUntilMs = 0L
+
+    /** Siren for [AlertTargets.SIREN_MS], then the spoken "problem in vehicle" message. Re-triggers are ignored while it plays. */
+    private fun playAlert(sensors: Set<String>) {
+        val now = System.currentTimeMillis()
+        if (now < alertBusyUntilMs) return
+        alertBusyUntilMs = now + AlertTargets.SIREN_MS + 4000L
+        try {
+            siren?.release()
+            siren = android.media.MediaPlayer.create(this, R.raw.alarm_tone)?.apply { setVolume(1f, 1f); start() }
+        } catch (_: Exception) {
+            chime?.startTone(ToneGenerator.TONE_PROP_NACK, 520)
+        }
+        mainHandler.postDelayed({
+            runCatching { siren?.let { if (it.isPlaying) it.stop() }; siren?.release(); siren = null }
+            if (speechReady) textToSpeech?.speak(AlertTargets.speech(sensors), TextToSpeech.QUEUE_FLUSH, null, "sx4_problem_in_vehicle")
+        }, AlertTargets.SIREN_MS)
+    }
 
     private fun reducedMotionOn(): Boolean =
         android.provider.Settings.Global.getFloat(contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
@@ -1615,6 +1637,7 @@ class MainActivity : ComponentActivity() {
         runCatching { if (BluetoothAdapter.getDefaultAdapter()?.isDiscovering == true) BluetoothAdapter.getDefaultAdapter()?.cancelDiscovery() }
         closeSocket()
         mainHandler.removeCallbacksAndMessages(null)
+        runCatching { siren?.release(); siren = null }
         textToSpeech?.stop()
         textToSpeech?.shutdown()
         chime?.release()
