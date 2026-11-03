@@ -162,6 +162,16 @@ class MainActivity : ComponentActivity() {
     private var themeMode by mutableStateOf(ThemeMode.AUTO)
     private var lightLux by mutableStateOf<Float?>(null)
     private var phoneIp by mutableStateOf("")
+    private var huSession by mutableStateOf(HeadUnitSession.None)
+    private val sessionReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action != HeadUnitProtocol.SESSION_STATE_ACTION) return
+            huSession = HeadUnitProtocol.parse(
+                intent.getStringExtra("state"), intent.getStringExtra("transport"),
+                intent.getStringExtra("reason"), intent.getLongExtra("uptime_ms", 0L)
+            )
+        }
+    }
     private var trip by mutableStateOf(TripStats())
     private var tripTick by mutableStateOf(0)
     private var tripStartMs by mutableStateOf(0L)
@@ -248,6 +258,8 @@ class MainActivity : ComponentActivity() {
             addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
         }
         ContextCompat.registerReceiver(this, btReceiver, btFilter, ContextCompat.RECEIVER_NOT_EXPORTED)
+        // Open Headunit is another app, so its status broadcast needs an exported receiver.
+        ContextCompat.registerReceiver(this, sessionReceiver, IntentFilter(HeadUnitProtocol.SESSION_STATE_ACTION), ContextCompat.RECEIVER_EXPORTED)
         refreshBluetoothAccess()
         // Ask straight away on first launch: Android 12+ shows one "Nearby devices" dialog.
         if (btAccess == AccessStatus.NEEDS_REQUEST || scanAccess == AccessStatus.NEEDS_REQUEST && android.os.Build.VERSION.SDK_INT >= 31) {
@@ -456,7 +468,7 @@ class MainActivity : ComponentActivity() {
                         }
                         Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
                             Text(if (connected) "● ECU LINK ACTIVE" else "○ ECU OFFLINE", color = if (connected) cyan else muted)
-                            Text("v0.6.0 • PRE-RELEASE • BUILD 24", color = muted, style = MaterialTheme.typography.labelSmall)
+                            Text("v0.7.0 • PRE-RELEASE • BUILD 25", color = muted, style = MaterialTheme.typography.labelSmall)
                         }
                     }
                     Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -662,6 +674,26 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             }
                                         }
+                                        Text("LIVE STATUS", color = muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                        Text(
+                                            HeadUnitProtocol.describe(huSession),
+                                            color = when (huSession.phase) {
+                                                SessionPhase.PROJECTING -> Color(0xFF70F0D2)
+                                                SessionPhase.FAILED -> Color(0xFFFF5252)
+                                                else -> Color.White
+                                            },
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Button(
+                                            onClick = { headUnitStatus = connectViaHotspot() },
+                                            enabled = readiness.receiverInstalled,
+                                            modifier = Modifier.fillMaxWidth()
+                                        ) { Text("CONNECT VIA PHONE HOTSPOT") }
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            OutlinedButton(onClick = { headUnitStatus = connectUsb() }, enabled = readiness.receiverInstalled, modifier = Modifier.weight(1f)) { Text("CONNECT USB") }
+                                            OutlinedButton(onClick = { headUnitStatus = receiverCommandStatus(HeadUnitProtocol.RAISE_PROJECTION, "Asked Open Headunit to bring the projection to the front.") }, enabled = readiness.receiverInstalled, modifier = Modifier.weight(1f)) { Text("SHOW PROJECTION") }
+                                            OutlinedButton(onClick = { headUnitStatus = receiverCommandStatus(HeadUnitProtocol.DISCONNECT, "Asked Open Headunit to disconnect.") }, enabled = readiness.receiverInstalled, modifier = Modifier.weight(1f)) { Text("DISCONNECT") }
+                                        }
                                         Button(
                                             onClick = { headUnitStatus = launchReceiver(adjacent = true) },
                                             enabled = readiness.receiverInstalled,
@@ -769,7 +801,7 @@ class MainActivity : ComponentActivity() {
                                         Text("Auto dims the tablet's backlight from its light sensor at night. Night keeps it dimmed; Day never changes it.", color = muted, fontSize = 13.sp)
                                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                             ThemeMode.values().forEach { m ->
-                                                FilterChip(selected = themeMode == m, onClick = { themeMode = m; prefs.edit().putString("theme_mode", m.name).apply() }, label = { Text(m.label) })
+                                                FilterChip(selected = themeMode == m, onClick = { themeMode = m; prefs.edit().putString("theme_mode", m.name).apply(); sendReceiverCommand(HeadUnitProtocol.SET_NIGHT_MODE, "state" to HeadUnitProtocol.nightModeState(m)) }, label = { Text(m.label) })
                                             }
                                         }
                                         Text(lightLux?.let { "Light sensor: " + it.toInt() + " lux" } ?: "No light sensor reading (Auto will not dim).", color = muted, fontSize = 13.sp)
@@ -938,7 +970,7 @@ class MainActivity : ComponentActivity() {
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                             OutlinedButton(onClick = { logPreview = traffic.tail(14) }, modifier = Modifier.weight(1f)) { Text("REFRESH") }
                                             Button(onClick = {
-                                                val header = "SX4 Scan Pro adapter log\n" + "v0.6.0 • PRE-RELEASE • BUILD 24" + "\nStatus: " + status + "\nStandard PIDs advertised: " + supportedPids.size
+                                                val header = "SX4 Scan Pro adapter log\n" + "v0.7.0 • PRE-RELEASE • BUILD 25" + "\nStatus: " + status + "\nStandard PIDs advertised: " + supportedPids.size
                                                 val send = Intent(Intent.ACTION_SEND).apply {
                                                     type = "text/plain"
                                                     putExtra(Intent.EXTRA_TEXT, traffic.asText(header))
@@ -950,7 +982,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
-                            item { Text("Build v0.6.0 • PRE-RELEASE • BUILD 24", color = muted) }
+                            item { Text("Build v0.7.0 • PRE-RELEASE • BUILD 25", color = muted) }
                         }
                             }
                         }
@@ -1465,18 +1497,42 @@ class MainActivity : ComponentActivity() {
         tripTick++
     }
 
+    /** Sends one command to Open Headunit's automation receiver (no overlay permission needed). */
+    private fun sendReceiverCommand(name: String, vararg extras: Pair<String, String>): Boolean {
+        if (packageManager.getLaunchIntentForPackage(HeadUnitProtocol.PACKAGE) == null) return false
+        val intent = Intent(HeadUnitProtocol.action(name)).setClassName(HeadUnitProtocol.PACKAGE, HeadUnitProtocol.RECEIVER_CLASS)
+        extras.forEach { (k, v) -> intent.putExtra(k, v) }
+        return try { sendBroadcast(intent); true } catch (_: Exception) { false }
+    }
+
     /** Asks Open Headunit to connect to the phone at [phoneIp]. Returns the status line. */
     private fun connectPhone(): String {
-        val uri = HeadUnitLink.connectUri(phoneIp)
+        val ip = HeadUnitLink.normalizeIp(phoneIp)
             ?: return "Enter the phone's IPv4 address first, for example 192.168.43.1."
-        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(uri)).setPackage(RECEIVER_PACKAGE).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        return try {
-            startActivity(intent)
-            "Asked Open Headunit to connect to " + HeadUnitLink.normalizeIp(phoneIp) + ". Wireless Android Auto must be enabled on the phone. Not verified until you see the projection."
-        } catch (e: Exception) {
-            "Could not open the receiver link (is Open Headunit installed and up to date?): " + (e.message ?: "unknown error")
-        }
+        return if (sendReceiverCommand(HeadUnitProtocol.CONNECT, "ip" to ip))
+            "Asked Open Headunit to connect to $ip. Wireless Android Auto must be enabled on the phone. The status above shows what it reports."
+        else "Could not reach Open Headunit. Is it installed and up to date?"
     }
+
+    /** One tap when the tablet is on the phone's hotspot: the phone is the Wi-Fi gateway. */
+    private fun connectViaHotspot(): String {
+        @Suppress("DEPRECATION")
+        val gateway = try {
+            (applicationContext.getSystemService(WIFI_SERVICE) as? android.net.wifi.WifiManager)?.dhcpInfo?.gateway ?: 0
+        } catch (_: Exception) { 0 }
+        val ip = HeadUnitProtocol.gatewayIp(gateway)
+            ?: return "The tablet is not on a Wi-Fi network. Turn on the phone's hotspot and join it from the tablet first."
+        phoneIp = ip
+        prefs.edit().putString("phone_ip", ip).apply()
+        return connectPhone()
+    }
+
+    private fun connectUsb(): String =
+        if (sendReceiverCommand(HeadUnitProtocol.CONNECT)) "Asked Open Headunit to check the USB port. Plug the phone in and unlock it."
+        else "Could not reach Open Headunit. Is it installed and up to date?"
+
+    private fun receiverCommandStatus(name: String, done: String): String =
+        if (sendReceiverCommand(name)) done else "Could not reach Open Headunit. Is it installed and up to date?"
 
     private fun closeSocket() {
         try { socket?.close() } catch (_: Exception) { }
@@ -1587,6 +1643,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         runCatching { unregisterReceiver(btReceiver) }
+        runCatching { unregisterReceiver(sessionReceiver) }
         endTrip()
         runCatching { if (BluetoothAdapter.getDefaultAdapter()?.isDiscovering == true) BluetoothAdapter.getDefaultAdapter()?.cancelDiscovery() }
         closeSocket()

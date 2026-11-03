@@ -862,3 +862,12 @@ Three further small gauges in the photo are too small to read. They must NOT be 
 - **Torque-style sensors:** Settings lists the standard Mode 01 sensors (SAE J1979 formulas, 40 entries in PidCatalog). Ticked sensors are polled and shown on the Gauge Wall, which scrolls past eight dials. A sensor the ECU does not advertise shows NO SIGNAL. Each extra sensor adds one ECU request, so refresh slows down. Manufacturer-specific (Mode 22) sensors are NOT covered.
 - **Connection configuration (owner: the same adapter connected in Torque Pro):** protocol choice (Automatic, ISO 9141-2, KWP slow/fast, CAN variants), insecure-socket-first switch, and adaptive timing (ATAT1). The chosen protocol is tried first, then automatic, then the K-line fallbacks.
 - **Status:** logic is unit-tested (100 JVM tests). The Compose screens have not been compiled or seen on a device. If the app still will not connect, the Settings → ADAPTER LOG (SHARE LOG) is the next diagnostic step.
+
+## 21. Driving features and Head Unit control — 2026-11-03
+
+- **Trip computer:** distance, moving time, max and average speed; fuel use only when the ECU reports PID 015E. Gaps in data are skipped, never filled. Trips are written to CSV and can be shared.
+- **Alert limits:** coolant, RPM and boost limits are all OFF until the owner turns one on and sets the number (no verified SX4 ZDi limit exists in this app).
+- **Night dimming:** Auto / Day / Night from the tablet's light sensor; the choice is also sent to Open Headunit.
+- **Head Unit (owner decision: personal use only, AGPL acceptable):** Open Headunit stays a separate app. SX4 Scan Pro drives it through its documented automation receiver (package `com.andrerinas.headunitrevived`, action prefix `com.andrerinas.openheadunit`): connect via the phone's hotspot (the Wi-Fi gateway is the phone's address), connect USB, show projection, disconnect, and day/night sync. It also shows Open Headunit's real session state (connecting, connected, projecting, disconnected, failed, and the reason). Copying its ~1,200 files and native FFmpeg code into this repo was judged not worth the risk, because it cannot be built or tested here.
+- **Honesty:** "projecting" is shown only when Open Headunit itself reports it. Whether Android Auto works still depends on the phone, its Android Auto version and its wireless head-unit setting, and is verified only by seeing it on the tablet.
+- **Status:** logic is unit-tested (117 JVM tests). The Compose screens have not been compiled or run on a device.
