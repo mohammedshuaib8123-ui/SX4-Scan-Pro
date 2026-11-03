@@ -177,6 +177,8 @@ class MainActivity : ComponentActivity() {
     private var trip by mutableStateOf(TripStats())
     /** Gauge keys ("coolant", "rpm", "boost") currently above an owner-set limit. */
     private var alertSensors by mutableStateOf(emptySet<String>())
+    private var welcomeSettings by mutableStateOf(WelcomeSettings())
+    private var welcomePlayedOnce = false
     private var tripTick by mutableStateOf(0)
     private var tripStartMs by mutableStateOf(0L)
     private var tripWriter: java.io.BufferedWriter? = null
@@ -246,6 +248,11 @@ class MainActivity : ComponentActivity() {
             adaptiveTiming = prefs.getBoolean("adaptive_timing", true)
         )
         extraPids = PidCatalog.parseSelection(prefs.getString("extra_pids", null))
+        welcomeSettings = WelcomeSettings(
+            durationSec = WelcomeSettings.clampDuration(prefs.getFloat("welcome_duration", WelcomeSettings.DEFAULT_DURATION_SEC)),
+            sound = prefs.getBoolean("welcome_sound", true),
+            everyConnection = prefs.getBoolean("welcome_every", true)
+        )
         alertLimits = AlertLimits(
             coolantMaxC = AlertLimits.parse(prefs.getInt("alert_coolant", -1), AlertLimits.COOLANT),
             rpmMax = AlertLimits.parse(prefs.getInt("alert_rpm", -1), AlertLimits.RPM),
@@ -372,7 +379,8 @@ class MainActivity : ComponentActivity() {
                     status = "Connected"
                     startTrip()
                     // The greeting plays only once the ECU has really answered (connectAndRead throws otherwise).
-                    playEngineWelcome()
+                    if (welcomeSettings.shouldPlay(welcomePlayedOnce)) playEngineWelcome()
+                    welcomePlayedOnce = true
                     while (isActive && socket?.isConnected == true) {
                         gauges = withContext(Dispatchers.IO) { readDashboard() }
                         gauges.forEach { g -> history.record(g.label, if (g.available) g.value.toDoubleOrNull() else null) }
@@ -947,6 +955,24 @@ class MainActivity : ComponentActivity() {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text("WELCOME & ALERTS", color = cyan, style = MaterialTheme.typography.titleMedium)
                                         Text("Welcome: two-tone cabin chime followed by a calm-paced English announcement. It plays only after the ECU has answered on a successful OBD connection, never when the app opens or when only Bluetooth is connected.", color = muted)
+                                        fun saveWelcome(w: WelcomeSettings) {
+                                            welcomeSettings = w
+                                            prefs.edit().putFloat("welcome_duration", w.durationSec).putBoolean("welcome_sound", w.sound).putBoolean("welcome_every", w.everyConnection).apply()
+                                        }
+                                        Text("Welcome length: " + String.format(java.util.Locale.US, "%.1f", welcomeSettings.durationSec) + " s", color = Color.White)
+                                        Slider(
+                                            value = welcomeSettings.durationSec,
+                                            onValueChange = { saveWelcome(welcomeSettings.copy(durationSec = (Math.round(it * 2f) / 2f))) },
+                                            valueRange = WelcomeSettings.MIN_DURATION_SEC..WelcomeSettings.MAX_DURATION_SEC
+                                        )
+                                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                            Text("Chime and spoken welcome", color = Color.White, modifier = Modifier.weight(1f))
+                                            Switch(checked = welcomeSettings.sound, onCheckedChange = { saveWelcome(welcomeSettings.copy(sound = it)) })
+                                        }
+                                        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                            Text("Play on every OBD connection (off = once per app launch)", color = Color.White, modifier = Modifier.weight(1f))
+                                            Switch(checked = welcomeSettings.everyConnection, onCheckedChange = { saveWelcome(welcomeSettings.copy(everyConnection = it)) })
+                                        }
                                         Button(onClick = { playEngineWelcome() }, modifier = Modifier.fillMaxWidth()) {
                                             Text("PREVIEW WELCOME ANNOUNCEMENT")
                                         }
@@ -992,18 +1018,7 @@ class MainActivity : ComponentActivity() {
                         }
                         Crossfade(targetState = welcomeOverlayVisible, animationSpec = tween(550), label = "welcome-overlay-fade") { visible ->
                             if (visible) {
-                                Box(Modifier.fillMaxSize().clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { welcomeOverlayVisible = false }) {
-                                    val rpmG = gauges.firstOrNull { it.label == "Engine RPM" }
-                                    val bstG = gauges.firstOrNull { it.label == "Turbo boost" }
-                                    val rpmNow = rpmG?.takeIf { it.available }?.value?.toDoubleOrNull()
-                                    val bstNow = bstG?.takeIf { it.available }?.value?.toDoubleOrNull()
-                                    val bstScale = GaugeUnits.boostScale(boostUnit)
-                                    IgnitionSequence(
-                                        linkActive = connected,
-                                        left = IgnitionGauge("RPM", rpmNow?.let { DialScale.forLabel("Engine RPM").fraction(it) }, rpmNow?.let { it.toInt().toString() } ?: "—"),
-                                        right = IgnitionGauge("BOOST " + boostUnit.label.uppercase(), bstNow?.let { bstScale.fraction(GaugeUnits.boost(it, boostUnit)) }, bstNow?.let { GaugeUnits.boostText(it, boostUnit) } ?: "—")
-                                    )
-                                }
+                                SxWelcome(durationMs = welcomeSettings.durationMs(reducedMotionOn()), onEnter = { welcomeOverlayVisible = false })
                             }
                         }
                     }
@@ -1260,11 +1275,16 @@ class MainActivity : ComponentActivity() {
     @Volatile private var welcomePending = false
     @Volatile private var welcomeChimeFinished = false
 
+    private fun reducedMotionOn(): Boolean =
+        android.provider.Settings.Global.getFloat(contentResolver, android.provider.Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f
+
     private fun playEngineWelcome() {
+        welcomeOverlayVisible = true
+        val shownMs = welcomeSettings.durationMs(reducedMotionOn())
+        mainHandler.postDelayed({ welcomeOverlayVisible = false }, shownMs + 400L)
+        if (!welcomeSettings.sound) { welcomePending = false; return }
         welcomePending = true
         welcomeChimeFinished = false
-        welcomeOverlayVisible = true
-        mainHandler.postDelayed({ welcomeOverlayVisible = false }, 6500L)
         playAircraftCabinChime()
         mainHandler.postDelayed({
             welcomeChimeFinished = true
