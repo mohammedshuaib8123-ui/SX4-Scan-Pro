@@ -385,3 +385,35 @@ For the next vehicle test, capture:
 - Repeated scans only where needed to distinguish transient failures from unsupported services.
 
 Do not claim a root cause until the relevant code and evidence support it.
+
+## 10. Related V2 diagnostic-explorer code inventory
+
+The following six Kotlin files were supplied as part of the separate SX4 Scan Pro V2 diagnostic-explorer implementation work. They are recorded here as a cross-reference for future review and handover.
+
+**Important:** This inventory is implementation context, not evidence from the real-vehicle test. It does not establish that these classes are present in, integrated into, or validated against the original SX4 Scan Pro application. Keep the original-version vehicle observations and V2 implementation work clearly separated.
+
+Paths below are relative to the Kotlin source root; package names are recorded exactly as supplied.
+
+| File | Package | Classes / types |
+|---|---|---|
+| `model/DiagnosticModels.kt` | `com.sx4.zdi.diagnostics.explorer.model` | `DiagnosticProtocol` (enum), `EcuTarget` (enum), `DiagnosticTroubleCode` (data class), `DtcSeverity` (enum), `DtcStatus` (enum), `LiveParameter` (data class), `ParameterCategory` (enum), `EcuProfile` (data class) |
+| `engine/ObdTransport.kt` | `com.sx4.zdi.diagnostics.explorer.engine` | `ObdTransport` (interface), `DiagnosticCommandPipeline` (class) |
+| `engine/SuzukiParamDecoders.kt` | `com.sx4.zdi.diagnostics.explorer.engine` | `SuzukiParamDecoders` (object / singleton decoder utility) |
+| `mock/MockDiagnosticEngine.kt` | `com.sx4.zdi.diagnostics.explorer.mock` | `MockDiagnosticEngine` (class implementing `ObdTransport`) |
+| `ui/SuzukiEcuExplorerScreen.kt` | `com.sx4.zdi.diagnostics.explorer.ui` | `ExplorerTab` (enum), `EcuCardItem` (data class), `SuzukiEcuExplorerScreen` (main `@Composable` screen function) |
+| `test/SuzukiParamDecodersTest.kt` | `com.sx4.zdi.diagnostics.explorer.test` | `SuzukiParamDecodersTest` (JUnit 4 test class) |
+
+### How this inventory relates to the investigation
+
+- `DiagnosticModels.kt` describes the data model for diagnostic protocols, ECU targets, trouble codes, live parameters and ECU profiles.
+- `ObdTransport.kt` defines the transport abstraction and serialized diagnostic command pipeline; review it against the single-command-in-flight requirement in Sections 4 and 5.
+- `SuzukiParamDecoders.kt` contains decoder logic; validate every decoder against documented raw responses and verified protocol information before displaying decoded values.
+- `MockDiagnosticEngine.kt` is a mock implementation. Any mock/simulated values must remain visibly identified as simulation and must never be presented as live vehicle data.
+- `SuzukiEcuExplorerScreen.kt` is the explorer UI reference; it should remain separate from the original Cockpit, Diagnostics and Gauge Wall unless a separately approved integration plan says otherwise.
+- `SuzukiParamDecodersTest.kt` provides decoder test coverage; passing unit tests do not replace real-vehicle validation.
+
+### Code evidence still required for a complete handover
+
+The file/class inventory is not a substitute for the actual source. For a reproducible code review, retain the exact source snapshots or immutable commit reference for these six files, along with test output. Record which decoders are standard OBD-II, which are Suzuki-specific, the source/specification for each formula or identifier, and which have been confirmed on the user's vehicle.
+
+Do not copy V2 source into the original repository merely to make this document self-contained. Keep the original application baseline and the V2 implementation as separate workstreams.
