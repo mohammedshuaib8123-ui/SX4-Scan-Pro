@@ -893,3 +893,7 @@ Adopted natively: red/black tokens (`SxTheme`), top bar and bottom navigation (`
 Deliberately NOT copied because it is demo data: the fake media player, the estimated range, "hold to rev", fixed fuel, battery and rail numbers. Each is a real ECU reading or a dash (NO SIGNAL / STALE). Range stays a dash because tank capacity and consumption are not known. The ECO dial shows km/L only when road speed and the ECU fuel rate (PID 5E) are both present. The shift-light thresholds are the owner's own values from the prototype.
 
 Differences: the welcome plays after each successful ECU connection (not each app launch); fonts stay on the platform font until Chakra Petch and Manrope are added under `res/font`.
+
+Fidelity pass (second reading of the prototype): the cockpit home now follows its CSS section by section: a continuous cluster band with a red wash, the 240 degree dial arc with 41 ticks (amber ticks appear only above a limit the owner set), the flat five-cell telemetry row, the health / fault row in warning style, the Head Unit section laid out like the player, the footer, the top bar and bottom navigation at the compact tablet sizes, the welcome timings, and the cockpit arrival animation.
+
+CI: `.github/workflows/branch-check.yml` compiles and tests every push to a `claude/*` branch and writes the build log to the `ci-log` branch, so Compose errors are found before merging to `main`. The existing `Android APK` workflow is unchanged.
