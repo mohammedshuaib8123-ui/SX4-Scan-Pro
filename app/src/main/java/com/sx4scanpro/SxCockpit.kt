@@ -47,16 +47,6 @@ internal fun SxShiftLights(rpm: Double?, modifier: Modifier = Modifier) {
     }
 }
 
-@Composable
-private fun CheckRow(label: String, ok: Boolean?, detail: String, modifier: Modifier = Modifier) {
-    Row(modifier.fillMaxWidth().padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        val dot = when (ok) { true -> Sx.Foreground; false -> Sx.Primary; null -> Sx.MutedForeground }
-        Box(Modifier.size(10.dp).clip(CircleShape).background(dot))
-        Text(label, color = Sx.Foreground, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 12.dp).weight(1f))
-        Text(detail, color = Sx.MutedForeground, fontSize = 13.sp)
-    }
-}
-
 /**
  * The red-and-black cockpit home. Every number is a live ECU reading or an honest dash.
  * [alertSensors] holds the gauge keys ("coolant", "rpm", "boost") currently above an owner-set limit.
@@ -86,20 +76,30 @@ internal fun SxCockpit(
     onOpenDiagnostics: () -> Unit,
     onOpenHeadUnit: () -> Unit,
     onReplayWelcome: () -> Unit,
+    receiverInstalled: Boolean,
+    onShowProjection: () -> Unit,
+    statusText: String,
+    wallOn: Boolean,
+    onConnect: () -> Unit,
+    onDisconnect: () -> Unit,
+    onToggleWall: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val rpmSignal = readingOf(rpm) != null && !isStale(rpm, nowMs)
     val hudDim = if (mode == DriveMode.HUD) 0.45f else 1f
-    Column(modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+    Column(modifier.verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("YOUR DRIVE, AT A GLANCE", color = Sx.MutedForeground, fontSize = 11.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold)
-                Text("Cockpit.", color = Sx.Foreground, fontSize = 30.sp, fontWeight = FontWeight.Black)
+                Text("YOUR DRIVE, AT A GLANCE", color = Sx.MutedForeground, fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
+                Row {
+                    Text("Cockpit", color = Sx.Foreground, fontSize = 26.sp, fontWeight = FontWeight.Medium)
+                    Text(".", color = Sx.Primary, fontSize = 26.sp, fontWeight = FontWeight.Medium)
+                }
             }
-            Box(Modifier.size(9.dp).clip(CircleShape).background(if (connected) Sx.Primary else Sx.MutedForeground))
+            Box(Modifier.size(5.dp).clip(CircleShape).background(if (connected) Sx.Primary else Sx.MutedForeground))
             Text(
-                if (connected) "SYSTEM ONLINE" else "SYSTEM STANDBY", color = if (connected) Sx.Primary else Sx.MutedForeground,
-                fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, modifier = Modifier.padding(start = 8.dp)
+                if (connected) "SYSTEM ONLINE" else "SYSTEM STANDBY", color = Sx.MutedForeground,
+                fontSize = 9.sp, modifier = Modifier.padding(start = 8.dp)
             )
         }
         Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).clusterBand()) {
@@ -112,50 +112,10 @@ internal fun SxCockpit(
             else SxInstrument("VGT BOOST", boost, boostScale, boostCaption, "Boost pressure", nowMs, "boost" in alertSensors, "Variable geometry turbo", Modifier.weight(1f), hotFrom = hotBoost)
         }
         Box(Modifier.alpha(hudDim)) { SxTelemetry(coolant, intake, egr, rail, tripKm, "coolant" in alertSensors, nowMs) }
-        Row(Modifier.fillMaxWidth().alpha(hudDim), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            Column(Modifier.weight(1f).sxPanel(16.dp).padding(16.dp)) {
-                Text("VEHICLE HEALTH", color = Sx.MutedForeground, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                Spacer(Modifier.height(6.dp))
-                CheckRow("Engine", if (connected) rpmSignal else null, if (!connected) "Not connected" else if (rpmSignal) "Reporting" else "No RPM signal")
-                CheckRow("ECU", if (connected) true else null, if (connected) "Answering" else "Not connected")
-                CheckRow("OBD link", connected, if (connected) "Adapter linked" else "Offline")
-                Box(Modifier.fillMaxWidth().height(1.dp).background(Sx.Border))
-                Row(
-                    Modifier.fillMaxWidth().clickable { onOpenDiagnostics() }.padding(top = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        when { faultCount == null -> "Fault codes: not scanned yet"; faultCount == 0 -> "Fault codes: none in last scan"; else -> "Fault codes: $faultCount stored" },
-                        color = if ((faultCount ?: 0) > 0) Sx.Primary else Sx.Foreground, fontSize = 14.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f)
-                    )
-                    Text("OPEN DIAGNOSTICS ›", color = Sx.Primary, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
-                }
-            }
-            Column(Modifier.weight(1f).sxPanel(16.dp).clickable { onOpenHeadUnit() }.padding(16.dp)) {
-                Text("HEAD UNIT", color = Sx.MutedForeground, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    when (headUnit.phase) {
-                        SessionPhase.PROJECTING -> "Android Auto projecting"
-                        SessionPhase.CONNECTED -> "Phone connected"
-                        SessionPhase.CONNECTING -> "Connecting…"
-                        SessionPhase.FAILED -> "Connection failed"
-                        SessionPhase.DISCONNECTED -> "Disconnected"
-                        SessionPhase.UNKNOWN -> "No session reported"
-                    },
-                    color = if (headUnit.phase == SessionPhase.PROJECTING) Sx.Primary else Sx.Foreground, fontSize = 18.sp, fontWeight = FontWeight.Black
-                )
-                if (headUnit.reason.isNotBlank()) Text(headUnit.reason, color = Sx.MutedForeground, fontSize = 13.sp)
-                Spacer(Modifier.height(6.dp))
-                Text("OPEN HEAD UNIT CONTROLS ›", color = Sx.Primary, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp)
-            }
+        Row(Modifier.fillMaxWidth().alpha(hudDim), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            SxHealth(connected, rpmSignal, faultCount, onOpenDiagnostics, Modifier.weight(1f))
+            SxHeadUnit(headUnit, receiverInstalled, onOpenHeadUnit, onShowProjection, Modifier.weight(1f))
         }
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                if (connected) "ELM327 • adapter linked, ECU answering" else "ELM327 • waiting for adapter",
-                color = Sx.MutedForeground, fontSize = 12.sp, letterSpacing = 1.sp, modifier = Modifier.weight(1f)
-            )
-            Text("REPLAY WELCOME", color = Sx.Primary, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp, modifier = Modifier.clickable { onReplayWelcome() }.padding(8.dp))
-        }
+        SxFooter(connected, statusText, wallOn, onReplayWelcome, onConnect, onDisconnect, onToggleWall)
     }
 }

@@ -602,9 +602,14 @@ class MainActivity : ComponentActivity() {
                                     nowMs = nowMs,
                                     onOpenDiagnostics = { selectedTab = 1 }, onOpenHeadUnit = { selectedTab = 2 },
                                     onReplayWelcome = { playEngineWelcome() },
+                                    receiverInstalled = readiness.receiverInstalled,
+                                    onShowProjection = { headUnitStatus = receiverCommandStatus(HeadUnitProtocol.RAISE_PROJECTION, "Asked Open Headunit to bring the projection to the front.") },
+                                    statusText = if (connected) adapterName else status,
+                                    wallOn = showWall, onConnect = { connect() }, onDisconnect = { disconnect() }, onToggleWall = { showWall = !showWall },
                                     modifier = Modifier.weight(1f).fillMaxWidth()
                                 )
                             }
+                            if (showWall) {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
                                     Text(if (connected) "V-GATE / OBD-II • CONNECTED" else "V-GATE / OBD-II • STANDBY", color = if (connected) Color(0xFF70F0D2) else muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
@@ -616,6 +621,7 @@ class MainActivity : ComponentActivity() {
                                 OutlinedButton(onClick = { disconnect() }, enabled = connected, shape = RoundedCornerShape(12.dp)) { Text("DISCONNECT", fontWeight = FontWeight.Bold) }
                             }
                             Text("Informational display only • Do not operate the tablet while driving", color = Color(0xFF718397), fontSize = 13.sp)
+                            }
                         }
                         1 -> LazyColumn(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             item {
