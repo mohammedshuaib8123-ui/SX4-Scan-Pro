@@ -179,6 +179,13 @@ class MainActivity : ComponentActivity() {
     private var alertSensors by mutableStateOf(emptySet<String>())
     private var welcomeSettings by mutableStateOf(WelcomeSettings())
     private var welcomePlayedOnce = false
+    private var freezeEntries by mutableStateOf<List<FreezeFrame.Entry>?>(null)
+    private var freezeNote by mutableStateOf("")
+    private var freezeBusy by mutableStateOf(false)
+    private val uiScope = kotlinx.coroutines.MainScope()
+    private var trackedKm by mutableStateOf(0.0)
+    private var maintVersion by mutableStateOf(0)
+    private var reportNote by mutableStateOf("")
     private var tripTick by mutableStateOf(0)
     private var tripStartMs by mutableStateOf(0L)
     private var tripWriter: java.io.BufferedWriter? = null
@@ -248,6 +255,7 @@ class MainActivity : ComponentActivity() {
             adaptiveTiming = prefs.getBoolean("adaptive_timing", true)
         )
         extraPids = PidCatalog.parseSelection(prefs.getString("extra_pids", null))
+        trackedKm = prefs.getFloat("tracked_km", 0f).toDouble()
         welcomeSettings = WelcomeSettings(
             durationSec = WelcomeSettings.clampDuration(prefs.getFloat("welcome_duration", WelcomeSettings.DEFAULT_DURATION_SEC)),
             sound = prefs.getBoolean("welcome_sound", true),
@@ -654,6 +662,59 @@ class MainActivity : ComponentActivity() {
                                             Text(result.category, color = cyan, fontWeight = FontWeight.Bold)
                                             Text("ENGINE ECU", color = muted, style = MaterialTheme.typography.labelSmall)
                                         }
+                                    }
+                                    DtcExplainer.explain(result.code)?.let { x ->
+                                        Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp)) {
+                                            x.lines().forEach { Text(it, color = muted, fontSize = 13.sp) }
+                                            Text("What this exact code means for the SX4 must be checked in the service manual.", color = muted, fontSize = 12.sp)
+                                        }
+                                    }
+                                }
+                            }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("FREEZE FRAME", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text("Sensor values the ECU stored when a fault was set (Mode 02). Read-only. Many ECUs return nothing when no fault is stored.", color = muted)
+                                        Button(onClick = { readFreezeFrame() }, enabled = connected && !freezeBusy) { Text(if (freezeBusy) "READING…" else "READ FREEZE FRAME") }
+                                        val fe = freezeEntries
+                                        if (fe != null) {
+                                            if (fe.isEmpty()) Text("The ECU returned no freeze-frame data.", color = Color(0xFFFFB84D))
+                                            fe.forEach { Text(it.name + ": " + it.value + " " + it.unit, color = Color.White) }
+                                        }
+                                        if (freezeNote.isNotBlank()) Text(freezeNote, color = muted, fontSize = 13.sp)
+                                    }
+                                }
+                            }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("MAINTENANCE REMINDERS", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text("Counts kilometres this app has tracked while connected (" + String.format(java.util.Locale.US, "%.0f", trackedKm) + " km so far). You set every interval; none are assumed. Distance driven without the app is not counted.", color = muted, fontSize = 13.sp)
+                                        val mv = maintVersion
+                                        Maintenance.ITEMS.forEach { name ->
+                                            val iKey = Maintenance.key(name, "interval")
+                                            val dKey = Maintenance.key(name, "done")
+                                            val interval = prefs.getInt(iKey, -1).takeIf { it > 0 }
+                                            val st = Maintenance.status(interval, trackedKm, prefs.getFloat(dKey, 0f).toDouble())
+                                            key(mv) {
+                                                LimitRow(name, interval, 1000..40000, 10000, 500, "km") { v -> prefs.edit().putInt(iKey, v ?: -1).apply(); maintVersion++ }
+                                            }
+                                            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                                Text(Maintenance.describe(st), color = if (st.state == Maintenance.State.OVERDUE) cyan else muted, fontWeight = if (st.state == Maintenance.State.OVERDUE) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f))
+                                                if (interval != null) OutlinedButton(onClick = { prefs.edit().putFloat(dKey, trackedKm.toFloat()).apply(); maintVersion++ }) { Text("MARK DONE") }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("HEALTH REPORT", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text("A one-page PDF of the current readings, the last fault scan, distance and maintenance status. Anything not read is marked as such.", color = muted)
+                                        Button(onClick = { shareHealthReport(dtcScanned, dtcCodes) }) { Text("SHARE HEALTH REPORT (PDF)") }
+                                        if (reportNote.isNotBlank()) Text(reportNote, color = muted, fontSize = 13.sp)
                                     }
                                 }
                             }
@@ -1449,10 +1510,83 @@ class MainActivity : ComponentActivity() {
     private fun endTrip() {
         try { tripWriter?.flush(); tripWriter?.close() } catch (_: Exception) { }
         tripWriter = null
+        // Fold this trip's distance into the lifetime tracked distance exactly once.
+        if (trip.distanceKm > 0.0) {
+            trackedKm += trip.distanceKm
+            prefs.edit().putFloat("tracked_km", trackedKm.toFloat()).apply()
+            trip = TripStats()
+        }
     }
 
     private fun savedTrips(): List<java.io.File> =
         java.io.File(filesDir, "trips").listFiles { f -> f.extension == "csv" }?.sortedBy { it.name }.orEmpty()
+
+    @Synchronized
+    private fun readFreezeFrameBlocking(): List<FreezeFrame.Entry> {
+        val out = mutableListOf<FreezeFrame.Entry>()
+        for (pid in FreezeFrame.PIDS) {
+            if (pid !in supportedPids) continue
+            val spec = PidCatalog.forPid(pid) ?: continue
+            val reply = try { sendCommand(FreezeFrame.command(pid)) } catch (_: IOException) { break }
+            FreezeFrame.decode(spec, reply)?.let { out += it }
+        }
+        return out
+    }
+
+    private fun readFreezeFrame() {
+        if (freezeBusy) return
+        freezeBusy = true
+        freezeNote = ""
+        uiScope.launch {
+            try {
+                freezeEntries = withContext(Dispatchers.IO) { readFreezeFrameBlocking() }
+            } catch (e: Exception) {
+                freezeNote = "Could not read freeze frame: " + (e.message ?: "unknown error")
+            } finally { freezeBusy = false }
+        }
+    }
+
+    private fun shareHealthReport(scanned: Boolean, codes: List<TroubleCodeResult>) {
+        try {
+            val now = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).format(java.util.Date())
+            val readings = gauges.filter { it.available && it.label != "Manifold pressure" }.map { Triple(it.label, it.value, it.unit) }
+            val maint = Maintenance.ITEMS.map { n ->
+                val interval = prefs.getInt(Maintenance.key(n, "interval"), -1).takeIf { it > 0 }
+                n to Maintenance.describe(Maintenance.status(interval, trackedKm, prefs.getFloat(Maintenance.key(n, "done"), 0f).toDouble()))
+            }.filter { it.second != "No interval set" }
+            val lines = HealthReport.lines(HealthReport.Input(
+                now, status == "Connected", adapterName, readings,
+                if (scanned) codes.map { it.code to it.category } else null,
+                if (status == "Connected" && trip.dataMs > 0) trip.distanceKm else null, trackedKm, maint
+            ))
+            val doc = android.graphics.pdf.PdfDocument()
+            val page = doc.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(595, 842, 1).create())
+            val paint = android.graphics.Paint().apply { textSize = 11f; isAntiAlias = true; typeface = android.graphics.Typeface.MONOSPACE }
+            var y = 48f
+            lines.forEachIndexed { i, line ->
+                paint.isFakeBoldText = i == 0 || line.isNotEmpty() && line == line.uppercase() && !line.startsWith(" ")
+                paint.textSize = if (i == 0) 15f else 11f
+                if (y < 810f) page.canvas.drawText(line.take(80), 40f, y, paint)
+                y += if (i == 0) 24f else 15f
+            }
+            doc.finishPage(page)
+            val dir = java.io.File(filesDir, "reports").apply { mkdirs() }
+            val file = java.io.File(dir, "health_" + java.text.SimpleDateFormat("yyyyMMdd_HHmm", java.util.Locale.US).format(java.util.Date()) + ".pdf")
+            java.io.FileOutputStream(file).use { doc.writeTo(it) }
+            doc.close()
+            val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "application/pdf"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "SX4 Scan Pro health report")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(send, "Share health report"))
+            reportNote = "Report saved as " + file.name
+        } catch (e: Exception) {
+            reportNote = "Could not create the report: " + (e.message ?: "unknown error")
+        }
+    }
 
     private fun shareLastTrip() {
         endTripFlushOnly()
@@ -1638,6 +1772,7 @@ class MainActivity : ComponentActivity() {
         closeSocket()
         mainHandler.removeCallbacksAndMessages(null)
         runCatching { siren?.release(); siren = null }
+        uiScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
         textToSpeech?.stop()
         textToSpeech?.shutdown()
         chime?.release()
