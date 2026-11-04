@@ -130,7 +130,7 @@ private fun GaugeCard(gauge: GaugeValue) {
 
 /** Sensors that already have their own dial or tile; the picker skips them to avoid duplicates. */
 /** Sensors the home screen always shows (fuel level, control module voltage), polled whether or not picked in Settings. */
-private val HOME_PIDS = setOf(0x2F, 0x42)
+private val HOME_PIDS = setOf(0x2F, 0x42, 0x23, 0x5E)
 private val CORE_PIDS = setOf(0x04, 0x05, 0x0B, 0x0C, 0x0D, 0x0F, 0x10, 0x11, 0x2C)
 
 private const val RECEIVER_PACKAGE = "com.andrerinas.headunitrevived"
@@ -179,6 +179,7 @@ class MainActivity : ComponentActivity() {
     private var alertSensors by mutableStateOf(emptySet<String>())
     private var welcomeSettings by mutableStateOf(WelcomeSettings())
     private var welcomePlayedOnce = false
+    private var driveMode by mutableStateOf(DriveMode.SPORT)
     private var freezeEntries by mutableStateOf<List<FreezeFrame.Entry>?>(null)
     private var freezeNote by mutableStateOf("")
     private var freezeBusy by mutableStateOf(false)
@@ -256,10 +257,12 @@ class MainActivity : ComponentActivity() {
         )
         extraPids = PidCatalog.parseSelection(prefs.getString("extra_pids", null))
         trackedKm = prefs.getFloat("tracked_km", 0f).toDouble()
+        driveMode = DriveMode.parse(prefs.getString("drive_mode", null))
         welcomeSettings = WelcomeSettings(
             durationSec = WelcomeSettings.clampDuration(prefs.getFloat("welcome_duration", WelcomeSettings.DEFAULT_DURATION_SEC)),
             sound = prefs.getBoolean("welcome_sound", true),
-            everyConnection = prefs.getBoolean("welcome_every", true)
+            everyConnection = prefs.getBoolean("welcome_every", true),
+            volume = WelcomeSettings.clampVolume(prefs.getFloat("welcome_volume", 1f))
         )
         alertLimits = AlertLimits(
             coolantMaxC = AlertLimits.parse(prefs.getInt("alert_coolant", -1), AlertLimits.COOLANT),
@@ -479,13 +482,22 @@ class MainActivity : ComponentActivity() {
         val dim = Math.round(NightMode.dimAlpha(themeMode, lightLux) / 0.05f) * 0.05f
         LaunchedEffect(dim) { applyDim(dim) }
 
+        // Drive mode recolours the whole cockpit with a 0.3 s fade.
+        val modeColors = SxPalette.of(driveMode)
+        val pAccent by animateColorAsState(modeColors.accent, tween(300), label = "mode-accent")
+        val pBg by animateColorAsState(modeColors.background, tween(300), label = "mode-bg")
+        val pCard by animateColorAsState(modeColors.card, tween(300), label = "mode-card")
+        val pFg by animateColorAsState(modeColors.foreground, tween(300), label = "mode-fg")
+        val pMuted by animateColorAsState(modeColors.mutedForeground, tween(300), label = "mode-muted")
+        SideEffect { Sx.palette = SxPalette(pAccent, pBg, pCard, pFg, pMuted) }
+
         // Back returns to the cockpit from any other section instead of closing the app.
         BackHandler(enabled = selectedTab != 0) { selectedTab = 0 }
 
         MaterialTheme(colorScheme = darkColorScheme(primary = cyan, secondary = Color(0xFFFFB84D), background = bg, surface = panel, onBackground = Color.White, onSurface = Color.White, onSurfaceVariant = muted)) {
             Scaffold(containerColor = bg) { padding ->
                 Column(Modifier.fillMaxSize().padding(padding).background(Sx.Background)) {
-                SxTopBar(connected = connected, onPower = { disconnect(); finish() })
+                SxTopBar(connected = connected, mode = driveMode, onMode = { m -> driveMode = m; prefs.edit().putString("drive_mode", m.name).apply() }, onPower = { disconnect(); finish() })
                 Column(Modifier.weight(1f).fillMaxWidth()) {
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         AnimatedContent(
@@ -567,6 +579,19 @@ class MainActivity : ComponentActivity() {
                                     connected = connected,
                                     rpm = g("Engine RPM"), boost = bstShown, boostScale = GaugeUnits.boostScale(boostUnit),
                                     boostCaption = boostUnit.label.uppercase(),
+                                    mode = driveMode,
+                                    economy = run {
+                                        val kmpl = Economy.kmPerLitre(
+                                            g("Vehicle speed").takeIf { it.available }?.value?.toDoubleOrNull(),
+                                            g("Engine fuel rate").takeIf { it.available }?.value?.toDoubleOrNull()
+                                        )
+                                        if (kmpl == null) GaugeValue("Fuel economy", "--", "km/L", false)
+                                        else GaugeValue("Fuel economy", String.format(java.util.Locale.US, "%.1f", kmpl), "km/L", true, g("Engine fuel rate").capturedAtMs)
+                                    },
+                                    rail = g("Fuel rail pressure").let { r ->
+                                        r.value.toDoubleOrNull()?.takeIf { r.available }
+                                            ?.let { r.copy(value = String.format(java.util.Locale.US, "%.0f", it / 100.0), unit = "bar") } ?: r.copy(unit = "bar")
+                                    },
                                     coolant = g("Coolant temperature"), intake = g("Intake air temperature"),
                                     egr = g("EGR commanded"), fuel = g("Fuel level"), battery = g("Control module voltage"),
                                     tripKm = if (connected && trip.dataMs > 0) trip.distanceKm else null,
@@ -1020,7 +1045,7 @@ class MainActivity : ComponentActivity() {
                                         Text("Welcome: two-tone cabin chime followed by a calm-paced English announcement. It plays only after the ECU has answered on a successful OBD connection, never when the app opens or when only Bluetooth is connected.", color = muted)
                                         fun saveWelcome(w: WelcomeSettings) {
                                             welcomeSettings = w
-                                            prefs.edit().putFloat("welcome_duration", w.durationSec).putBoolean("welcome_sound", w.sound).putBoolean("welcome_every", w.everyConnection).apply()
+                                            prefs.edit().putFloat("welcome_duration", w.durationSec).putBoolean("welcome_sound", w.sound).putBoolean("welcome_every", w.everyConnection).putFloat("welcome_volume", w.volume).apply()
                                         }
                                         Text("Welcome length: " + String.format(java.util.Locale.US, "%.1f", welcomeSettings.durationSec) + " s", color = Color.White)
                                         Slider(
@@ -1028,6 +1053,8 @@ class MainActivity : ComponentActivity() {
                                             onValueChange = { saveWelcome(welcomeSettings.copy(durationSec = (Math.round(it * 2f) / 2f))) },
                                             valueRange = WelcomeSettings.MIN_DURATION_SEC..WelcomeSettings.MAX_DURATION_SEC
                                         )
+                                        Text("Welcome volume: " + Math.round(welcomeSettings.volume * 100) + " %  (warnings always play at full volume)", color = Color.White)
+                                        Slider(value = welcomeSettings.volume, onValueChange = { saveWelcome(welcomeSettings.copy(volume = WelcomeSettings.clampVolume(it))) }, valueRange = 0f..1f)
                                         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                                             Text("Chime and spoken welcome", color = Color.White, modifier = Modifier.weight(1f))
                                             Switch(checked = welcomeSettings.sound, onCheckedChange = { saveWelcome(welcomeSettings.copy(sound = it)) })
@@ -1405,6 +1432,7 @@ class MainActivity : ComponentActivity() {
             cabinChimeTrack = track
             track.setVolume(0.72f)
             track.write(samples, 0, samples.size)
+            track.setVolume(0.72f * welcomeSettings.volume)
             track.play()
             mainHandler.postDelayed({
                 runCatching { track.stop() }
@@ -1421,7 +1449,7 @@ class MainActivity : ComponentActivity() {
         if (!speechReady || !welcomePending || !welcomeChimeFinished) return
         welcomePending = false
         welcomeChimeFinished = false
-        textToSpeech?.speak("Welcome to SX4 Airlines 2874", TextToSpeech.QUEUE_FLUSH, null, "sx4_engine_start")
+        textToSpeech?.speak("Welcome to SX4 Airlines 2874", TextToSpeech.QUEUE_FLUSH, android.os.Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, welcomeSettings.volume) }, "sx4_engine_start")
     }
 
     private fun computeHeadUnitReadiness(): HeadUnitReadiness {

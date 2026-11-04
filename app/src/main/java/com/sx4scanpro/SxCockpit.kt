@@ -1,6 +1,10 @@
 package com.sx4scanpro
 
+import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.Canvas
@@ -27,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -59,7 +64,9 @@ internal fun SxDial(
     caption: String,
     nowMs: Long,
     alert: Boolean,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    shiftLights: Boolean = false,
+    footer: String = ""
 ) {
     val number = readingOf(gauge)
     val stale = isStale(gauge, nowMs)
@@ -71,6 +78,7 @@ internal fun SxDial(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(title, color = Sx.MutedForeground, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+        if (shiftLights) SxShiftLights(if (stale) null else number, Modifier.padding(top = 8.dp))
         Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
             Canvas(Modifier.fillMaxSize()) {
                 val side = min(size.width, size.height)
@@ -99,6 +107,21 @@ internal fun SxDial(
                     color = if (stale) Sx.Warning else Sx.MutedForeground, fontSize = 11.sp, letterSpacing = 1.5.sp, fontWeight = FontWeight.Bold
                 )
             }
+        }
+        if (footer.isNotBlank()) Text(footer, color = Sx.MutedForeground, fontSize = 11.sp, letterSpacing = 1.sp)
+    }
+}
+
+/** Eight shift LEDs: three green, three amber, two accent-red; all eight flash at the upshift point. */
+@Composable
+internal fun SxShiftLights(rpm: Double?, modifier: Modifier = Modifier) {
+    val lit = ShiftLights.lit(rpm)
+    val flash by rememberInfiniteTransition(label = "shift-flash").animateFloat(1f, 0.2f, infiniteRepeatable(tween(90), RepeatMode.Reverse), label = "shift-a")
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        ShiftLights.THRESHOLDS.forEachIndexed { i, _ ->
+            val color = when { i < 3 -> Color(0xFF34D058); i < 6 -> Color(0xFFF5B83D); else -> Sx.Primary }
+            val a = if (i < lit) (if (lit == ShiftLights.THRESHOLDS.size) flash else 1f) else 0.18f
+            Box(Modifier.size(18.dp, 6.dp).alpha(a).background(color, RoundedCornerShape(3.dp)))
         }
     }
 }
@@ -160,8 +183,12 @@ private fun VehicleStage(fuel: GaugeValue, battery: GaugeValue, nowMs: Long, mod
         Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Sx.Background.copy(alpha = 0.92f)))))
         Column(Modifier.align(Alignment.TopStart).padding(16.dp)) {
             Text("SX4 1.3 DDiS", color = Sx.Foreground, fontSize = 20.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
-            Text("FIAT 1.3 MULTIJET", color = Sx.MutedForeground, fontSize = 11.sp, letterSpacing = 2.sp)
+            Text("SUZUKI · DIESEL", color = Sx.MutedForeground, fontSize = 11.sp, letterSpacing = 2.sp)
         }
+        Text(
+            "S4", color = Sx.Primary, fontSize = 13.sp, fontWeight = FontWeight.Black, letterSpacing = 1.sp,
+            modifier = Modifier.align(Alignment.TopEnd).padding(14.dp).border(1.dp, Sx.Primary, RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 3.dp)
+        )
         Row(Modifier.align(Alignment.BottomStart).padding(14.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             val f = readingOf(fuel)
             val b = readingOf(battery)
@@ -193,6 +220,9 @@ internal fun SxCockpit(
     boost: GaugeValue,
     boostScale: DialScale,
     boostCaption: String,
+    mode: DriveMode,
+    economy: GaugeValue,
+    rail: GaugeValue,
     coolant: GaugeValue,
     intake: GaugeValue,
     egr: GaugeValue,
@@ -209,9 +239,13 @@ internal fun SxCockpit(
     modifier: Modifier = Modifier
 ) {
     val rpmSignal = readingOf(rpm) != null && !isStale(rpm, nowMs)
+    val hudDim = if (mode == DriveMode.HUD) 0.45f else 1f
     Column(modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("Cockpit.", color = Sx.Foreground, fontSize = 30.sp, fontWeight = FontWeight.Black, modifier = Modifier.weight(1f))
+            Column(Modifier.weight(1f)) {
+                Text("YOUR DRIVE, AT A GLANCE", color = Sx.MutedForeground, fontSize = 11.sp, letterSpacing = 2.sp, fontWeight = FontWeight.Bold)
+                Text("Cockpit.", color = Sx.Foreground, fontSize = 30.sp, fontWeight = FontWeight.Black)
+            }
             Box(Modifier.size(9.dp).clip(CircleShape).background(if (connected) Sx.Primary else Sx.MutedForeground))
             Text(
                 if (connected) "SYSTEM ONLINE" else "SYSTEM STANDBY", color = if (connected) Sx.Primary else Sx.MutedForeground,
@@ -219,18 +253,20 @@ internal fun SxCockpit(
             )
         }
         Row(Modifier.fillMaxWidth().height(300.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            SxDial("ENGINE SPEED", rpm, DialScale.forLabel("Engine RPM"), "×1000 r/min", nowMs, "rpm" in alertSensors, Modifier.weight(1f).fillMaxSize())
-            VehicleStage(fuel, battery, nowMs, Modifier.weight(1.3f).fillMaxSize())
-            SxDial("TURBO BOOST", boost, boostScale, boostCaption, nowMs, "boost" in alertSensors, Modifier.weight(1f).fillMaxSize())
+            SxDial("ENGINE SPEED", rpm, DialScale.forLabel("Engine RPM"), "×1000 r/min", nowMs, "rpm" in alertSensors, Modifier.weight(1f).fillMaxSize(), shiftLights = true, footer = "Diesel · 1,248 cc")
+            VehicleStage(fuel, battery, nowMs, Modifier.weight(1.3f).fillMaxSize().alpha(hudDim))
+            if (mode == DriveMode.ECO) SxDial("FUEL ECONOMY", economy, DialScale(40f, 10f), "KM/L", nowMs, false, Modifier.weight(1f).fillMaxSize(), footer = "From ECU fuel rate and road speed")
+            else SxDial("VGT BOOST", boost, boostScale, boostCaption, nowMs, "boost" in alertSensors, Modifier.weight(1f).fillMaxSize(), footer = "Variable geometry turbo")
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+        Row(Modifier.fillMaxWidth().alpha(hudDim), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             val coolantAlert = "coolant" in alertSensors
             Box(Modifier.weight(1f).alertPulse(coolantAlert, 12.dp)) { SxStat("Coolant", coolant, nowMs, Modifier.fillMaxWidth()) }
             SxStat("Intake air", intake, nowMs, Modifier.weight(1f))
-            SxStat("EGR", egr, nowMs, Modifier.weight(1f))
+            SxStat("EGR duty", egr, nowMs, Modifier.weight(1f))
+            SxStat("Rail pressure", rail, nowMs, Modifier.weight(1f))
             SxStatText("Trip distance", tripKm?.let { String.format(java.util.Locale.US, "%.1f", it) }, "km", Modifier.weight(1f))
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+        Row(Modifier.fillMaxWidth().alpha(hudDim), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             Column(Modifier.weight(1f).sxPanel(16.dp).padding(16.dp)) {
                 Text("VEHICLE HEALTH", color = Sx.MutedForeground, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
                 Spacer(Modifier.height(6.dp))

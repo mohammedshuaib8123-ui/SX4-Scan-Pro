@@ -50,3 +50,29 @@ class DiagnosticsExtrasTest {
         assertNotNull(l.firstOrNull { it.startsWith("OBD link: not connected") })
     }
 }
+
+class DriveModeTest {
+    @Test fun shiftLightThresholds() {
+        assertEquals(0, ShiftLights.lit(2100.0))
+        assertEquals(3, ShiftLights.lit(2900.0))
+        assertEquals(8, ShiftLights.lit(4100.0))
+        assertEquals(0, ShiftLights.lit(null))
+        assertEquals(0, ShiftLights.lit(Double.NaN))
+        assertTrue(ShiftLights.flashing(4300.0))
+        assertTrue(!ShiftLights.flashing(4099.0))
+    }
+
+    @Test fun economy() {
+        assertEquals(20.0, Economy.kmPerLitre(60.0, 3.0)!!, 1e-9)
+        assertNull(Economy.kmPerLitre(null, 3.0))
+        assertNull(Economy.kmPerLitre(60.0, null))
+        assertNull(Economy.kmPerLitre(2.0, 3.0))
+        assertNull(Economy.kmPerLitre(60.0, 0.0))
+    }
+
+    @Test fun modeParse() {
+        assertEquals(DriveMode.ECO, DriveMode.parse("ECO"))
+        assertEquals(DriveMode.SPORT, DriveMode.parse("nonsense"))
+        assertEquals(DriveMode.SPORT, DriveMode.parse(null))
+    }
+}

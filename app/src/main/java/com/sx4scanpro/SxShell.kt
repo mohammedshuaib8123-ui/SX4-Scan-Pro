@@ -3,6 +3,7 @@ package com.sx4scanpro
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -54,7 +56,7 @@ import java.util.Locale
  * Power asks twice (tap, then tap again within three seconds) so it cannot be hit while driving.
  */
 @Composable
-internal fun SxTopBar(connected: Boolean, onPower: () -> Unit, modifier: Modifier = Modifier) {
+internal fun SxTopBar(connected: Boolean, mode: DriveMode, onMode: (DriveMode) -> Unit, onPower: () -> Unit, modifier: Modifier = Modifier) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { now = System.currentTimeMillis(); delay(15_000) } }
     var powerArmed by remember { mutableStateOf(false) }
@@ -72,6 +74,19 @@ internal fun SxTopBar(connected: Boolean, onPower: () -> Unit, modifier: Modifie
             Text("SX4 • SCAN PRO", color = Sx.MutedForeground, fontSize = 10.sp, letterSpacing = 2.sp)
         }
         Box(Modifier.weight(1f))
+        Row(Modifier.clip(RoundedCornerShape(50)).border(1.dp, Sx.Border, RoundedCornerShape(50)).padding(2.dp)) {
+            DriveMode.values().forEach { m ->
+                val on = m == mode
+                Text(
+                    m.name, color = if (on) Sx.Background else Sx.MutedForeground, fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(50)).background(if (on) Sx.Primary else Color.Transparent)
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onMode(m) }
+                        .semantics { contentDescription = "Drive mode " + m.name }
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                )
+            }
+        }
+        Box(Modifier.width(24.dp))
         val link = if (connected) Sx.Primary else Sx.MutedForeground
         Icon(Icons.Outlined.Bluetooth, contentDescription = "Bluetooth adapter", tint = link, modifier = Modifier.size(20.dp))
         Text(
