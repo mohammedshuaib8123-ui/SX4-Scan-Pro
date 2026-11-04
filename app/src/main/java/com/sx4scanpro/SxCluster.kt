@@ -253,7 +253,7 @@ internal fun SxTelemetry(
         val c = valueOf(coolant, nowMs); val a = valueOf(intake, nowMs); val e = valueOf(egr, nowMs); val r = valueOf(rail, nowMs)
         Metric(Icons.Outlined.Thermostat, "Coolant", "Engine coolant", c.first, c.second, true, false, Modifier.weight(1f).fillMaxHeight().alertPulse(coolantAlert, 8.dp))
         Metric(Icons.Outlined.Air, "Intake air", "Air temperature", a.first, a.second, false, false, Modifier.weight(1f).fillMaxHeight())
-        Metric(Icons.Outlined.Autorenew, "EGR duty", "Commanded valve opening", e.first, e.second, false, false, Modifier.weight(1f).fillMaxHeight())
+        Metric(Icons.Outlined.Autorenew, "EGR commanded", "Commanded valve opening", e.first, e.second, false, false, Modifier.weight(1f).fillMaxHeight())
         Metric(Icons.Outlined.Speed, "Rail pressure", "Common rail", r.first, r.second, false, false, Modifier.weight(1f).fillMaxHeight())
         Metric(Icons.Outlined.Route, "Trip distance", "Since the adapter connected", tripKm?.let { String.format(java.util.Locale.US, "%.1f", it) }, if (tripKm == null) "NO SIGNAL" else "km", false, true, Modifier.weight(1f).fillMaxHeight())
     }

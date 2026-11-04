@@ -18,7 +18,7 @@ For anyone (or any later Claude session) continuing this work.
 ## Architecture of the OBD path
 - `MainActivity.sendCommand()` — the only place that writes to the adapter; `@Synchronized`, drains input, writes `cmd\r`, waits for `>`, logs via `logTraffic` (on-screen `TrafficLog` + file `SessionLog`). Any exception closes the socket.
 - `connectAndRead()` — opens SPP socket, `ATZ` + init commands, captures `ATI/ATRV/ATDP`, runs `EcuNegotiation` (protocol fallback 5/4/3/6, `0100/0120/0140`).
-- `readDashboard()` — currently a flat round-robin of 9 core PIDs + baro + extras, then `delay(1300)` in the `connect()` loop. This is the cause of the ~4.4 s refresh and is what S2/S3 replace.
+- `readDashboard()` — OLD flat round-robin, now unused after S3 (the live loop is `runPollSlice` + `LivePoller`, intervals in `PollPlan`). It was a flat round-robin of 9 core PIDs + baro + extras, then `delay(1300)` in the `connect()` loop. This is the cause of the ~4.4 s refresh and is what S2/S3 replace.
 - `ElmReply` — classifies adapter replies (NO DATA, UNABLE TO CONNECT, …).
 - `SessionLog` — rolling file in `filesDir/logs`, exported through FileProvider (`logs/` in `file_paths.xml`).
 - Decoders: `ObdPidResponseDecoder` (strict, no banner stripping), `ObdPidSupport`, `ObdTroubleCodeDecoder` (K-line framing only so far), `PidCatalog` (40 PIDs).
@@ -35,3 +35,8 @@ Read-only ECU access; no invented values; no stale-as-live; no parallel commands
 
 ## After each stage
 Update `CURRENT_STATUS.md` and `docs/DEVELOPER_REQUIREMENTS.md`, then report modified files, tests, build outcome and outstanding vehicle validations.
+
+## S3 implementation map
+- `LiveGauges.kt`: `PollPlan` (what is polled and how often), `GaugeAssembler` (readings to dashboard gauges, freshness rule, boost = MAP minus cached baro).
+- `MainActivity`: `elmPort` (adapter for `LivePoller`), `sendCommand(..., timedOut = TimeoutFlag())` opt-in resync on timeout (sends one CR, waits for `>`), `runPollSlice`, `buildPoller`, `linkState`; cockpit and health read `ecuOnline`.
+- Default `sendCommand` behaviour (close socket on any failure) is deliberately unchanged for negotiation and DTC reads.

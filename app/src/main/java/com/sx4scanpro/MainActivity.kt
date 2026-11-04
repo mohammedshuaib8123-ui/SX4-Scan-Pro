@@ -136,6 +136,7 @@ private val CORE_PIDS = setOf(0x04, 0x05, 0x0B, 0x0C, 0x0D, 0x0F, 0x10, 0x11, 0x
 private const val RECEIVER_PACKAGE = "com.andrerinas.headunitrevived"
 private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
+internal class TimeoutFlag { var hit = false }
 data class GaugeValue(val label: String, val value: String, val unit: String = "", val available: Boolean = true, val capturedAtMs: Long = System.currentTimeMillis())
 data class TroubleCodeResult(val category: String, val code: String)
 private data class DtcScanSummary(val codes: List<TroubleCodeResult>, val supportedModes: Int, val noDataModes: Int, val invalidModes: Int, val failedModes: Int, val partialModes: Int = 0)
@@ -235,6 +236,7 @@ class MainActivity : ComponentActivity() {
     }
     private var socket: BluetoothSocket? = null
     private var supportedPids: Set<Int> = emptySet()
+    private var linkState by mutableStateOf(LinkState.COMMUNICATING)
     private val engineStartDetector = EngineStartDetector()
     // Empty until verified SX4-specific rules are approved; pipeline is wired but inactive.
     @Volatile private var warningEngine = WarningEngine()
@@ -349,6 +351,7 @@ class MainActivity : ComponentActivity() {
         var warningMessage by remember { mutableStateOf("") }
         val scope = rememberCoroutineScope()
         val connected = status == "Connected"
+        val ecuOnline = connected && linkState == LinkState.COMMUNICATING
         val connecting = status == "Connecting…"
         val haptic = LocalHapticFeedback.current
         val history = remember { GaugeHistory() }
@@ -405,11 +408,25 @@ class MainActivity : ComponentActivity() {
                     // The greeting plays only once the ECU has really answered (connectAndRead throws otherwise).
                     if (welcomeSettings.shouldPlay(welcomePlayedOnce)) playEngineWelcome()
                     welcomePlayedOnce = true
+                    val poller = buildPoller()
+                    linkState = LinkState.COMMUNICATING
+                    var lastRecordMs = 0L
+                    sessionLog.append("EVT", "live polling started: " + poller.scheduler.pids().size + " PIDs scheduled, " + supportedPids.size + " advertised")
                     while (isActive && socket?.isConnected == true) {
-                        gauges = withContext(Dispatchers.IO) { readDashboard() }
-                        gauges.forEach { g -> history.record(g.label, if (g.available) g.value.toDoubleOrNull() else null) }
-                        historyVersion++
-                        recordTrip(gauges)
+                        val before = poller.monitor.state
+                        withContext(Dispatchers.IO) { runPollSlice(poller) }
+                        val nowMs = System.currentTimeMillis()
+                        val after = poller.monitor.state
+                        if (after != before) sessionLog.append("EVT", "ECU link $before -> $after")
+                        linkState = after
+                        gauges = GaugeAssembler.build({ poller.reading(it) }, supportedPids, extraPids, nowMs)
+                            .map { GaugeValue(it.label, it.value, it.unit, it.available, it.capturedAtMs) }
+                        if (nowMs - lastRecordMs >= 1000L) {
+                            lastRecordMs = nowMs
+                            gauges.forEach { g -> history.record(g.label, if (g.available) g.value.toDoubleOrNull() else null) }
+                            historyVersion++
+                            recordTrip(gauges)
+                        }
                         val rpmGauge = gauges.firstOrNull { it.label == "Engine RPM" }
                         val sensorReadings = gauges.mapNotNull { gauge ->
                             val sensor = when (gauge.label) {
@@ -433,7 +450,7 @@ class MainActivity : ComponentActivity() {
                             warningMessage = AlertTargets.bannerText(alertSensors)
                             playAlert(alertSensors)
                         } else if (alertSensors.isEmpty()) warningMessage = ""
-                        delay(1300)
+                        delay(poller.pauseMs(nowMs))
                     }
                     if (status == "Connected") {
                         status = "Disconnected"
@@ -592,6 +609,7 @@ class MainActivity : ComponentActivity() {
                                 SxCockpit(
                                     arrive = arrive,
                                     connected = connected,
+                                    ecuOnline = ecuOnline,
                                     rpm = g("Engine RPM"), boost = bstShown, boostScale = GaugeUnits.boostScale(boostUnit),
                                     boostCaption = boostUnit.label.uppercase(),
                                     mode = driveMode,
@@ -1259,7 +1277,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Synchronized
-    private fun sendCommand(command: String, timeoutMs: Long = 5000, keepLines: Boolean = false): String {
+    private fun sendCommand(command: String, timeoutMs: Long = 5000, keepLines: Boolean = false, timedOut: TimeoutFlag? = null): String {
         val s = socket ?: throw IOException("Not connected")
         if (!s.isConnected) throw IOException("OBD adapter connection is closed")
 
@@ -1295,7 +1313,15 @@ class MainActivity : ComponentActivity() {
                     Thread.sleep(12)
                 }
             }
-            if (!promptReceived) throw IOException("Timed out waiting for OBD response to $command")
+            if (!promptReceived) {
+                // Opt-in (live polling only): try to bring a late/busy adapter back to its prompt instead of dropping the link.
+                if (timedOut != null && resyncStream(s)) {
+                    timedOut.hit = true
+                    logTraffic("ERR", "$command: timed out after ${timeoutMs} ms, adapter prompt recovered")
+                    return ""
+                }
+                throw IOException("Timed out waiting for OBD response to $command")
+            }
             logTraffic("RX", out.toString().trim().replace("\r", " ⏎ "))
             // DTC replies keep one line per ECU frame so multi-frame answers can be decoded;
             // everything else is compacted as before.
@@ -1316,6 +1342,52 @@ class MainActivity : ComponentActivity() {
             closeSocket()
             throw if (e is IOException) e else IOException("OBD transaction failed for $command", e)
         }
+    }
+
+    /** A lone CR interrupts a busy ELM327 (it prints STOPPED) or repeats a read-only command; either way a `>` means the stream is clean again. */
+    private fun resyncStream(s: BluetoothSocket): Boolean {
+        return try {
+            s.outputStream.write("\r".toByteArray(Charsets.US_ASCII)); s.outputStream.flush()
+            val input = s.inputStream
+            val end = System.currentTimeMillis() + 2500
+            while (System.currentTimeMillis() < end) {
+                if (input.available() > 0) { if (input.read().toChar() == '>') return true } else Thread.sleep(12)
+            }
+            false
+        } catch (_: Exception) { false }
+    }
+
+    private val elmPort = object : ElmPort {
+        override fun send(command: String, timeoutMs: Long): ElmResult {
+            val t0 = android.os.SystemClock.elapsedRealtime()
+            val flag = TimeoutFlag()
+            val raw = sendCommand(command, timeoutMs, timedOut = flag)
+            return ElmResult(command, raw, ElmReply.classify(raw), android.os.SystemClock.elapsedRealtime() - t0, flag.hit)
+        }
+    }
+
+    /** One bounded slice of polling (about 0.4 s): one command at a time, then control returns so the UI can refresh. */
+    private fun runPollSlice(poller: LivePoller) {
+        val end = android.os.SystemClock.elapsedRealtime() + 400
+        while (android.os.SystemClock.elapsedRealtime() < end) {
+            when (val ev = poller.step(System.currentTimeMillis())) {
+                is PollEvent.Recovery -> { sessionLog.append("EVT", "ECU recovery " + ev.step + (if (ev.recovered) " succeeded" else " no answer")); return }
+                is PollEvent.Idle -> return
+                is PollEvent.Polled -> {}
+            }
+            if (poller.monitor.state != LinkState.COMMUNICATING) return
+        }
+    }
+
+    private fun buildPoller(): LivePoller {
+        val scheduler = PollScheduler().also { PollPlan.configure(it, extraPids + HOME_PIDS) }
+        val caps = PidCapabilities().also { it.setAdvertised(supportedPids) }
+        val cfg = connConfig
+        return LivePoller(
+            port = elmPort, scheduler = scheduler, capabilities = caps,
+            lightReinit = listOf("ATPC"),
+            fullReinit = listOf("ATZ") + cfg.initCommands()
+        )
     }
 
     // Hold the same Activity monitor for the complete PID batch so a DTC scan cannot

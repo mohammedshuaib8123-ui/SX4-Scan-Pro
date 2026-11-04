@@ -1,6 +1,6 @@
 # CURRENT STATUS — SX4 Scan Pro
 
-Last updated: 2026-11-04 · Active branch: `claude/obd-recovery-and-ecu-info` · Not merged to `main`.
+Last updated: 2026-11-05 · Active branch: `claude/obd-recovery-and-ecu-info` · Not merged to `main`.
 
 ## Product
 Personal-use Kotlin/Compose tablet cockpit for a 2012 Maruti Suzuki SX4 ZDi (1.3 DDiS, manual), Vgate iCar Pro (Bluetooth Classic ELM327), Realme Pad 2 (Android 14, landscape). Never commercial, never Play Store.
@@ -23,8 +23,8 @@ Implementing `docs/OBD_TEST_RESULTS_AND_REQUIRED_CHANGES.md` (Section 12 order).
 | Stage | Scope | Status |
 |---|---|---|
 | S1 | `ElmReply`, `SessionLog` (3 × ~700 KB rolling file), BT ACL events, `ATI/ATRV/ATDP` capture, "Share full session log" button, `logs/` FileProvider path, APK artifact in CI | **Done, CI green** |
-| S2 | `LinkMonitor`, `PidCapabilities`, `PollScheduler` (earliest-deadline-first), `LivePoller`, fake-port JVM tests | **Done (pure logic, not yet wired in), CI pending** |
-| S3 | Wire poller into `connect()` loop; ECU recovery (probe `0100` → light re-init → full re-init); link-state UI; per-label stale thresholds; cached baro; rename "EGR duty" → "EGR commanded" | Next |
+| S2 | `LinkMonitor`, `PidCapabilities`, `PollScheduler`, `LivePoller`, fake-port tests | **Done, CI green (ac44f34)** |
+| S3 | Live polling wired into `connect()` (`LiveGauges.kt` plan + assembler, timeout resync, ECU recovery on the existing socket, link state in cockpit/health, "EGR commanded" rename, cached baro) | **Code written, CI pending** |
 | S4 | `Mode09Decoder`, `EcuScan`, `EcuProfile` (+JSON), `ProfileDiff`, DTC decoder for K-line and CAN framing | Pending |
 | S5 | ECU Information screen, top-bar chip, profile storage, JSON/CSV/PDF export | Pending |
 
@@ -45,3 +45,10 @@ The 18 acceptance tests from the OBD document, after S3 is built: install the de
 
 ## Known evidence gaps
 Cause of the earlier `socket closed`; the real protocol (`ATDP` was never logged before S1); exact command count per poll cycle. The S1 session log will answer these on the next drive.
+
+## S3 notes (for the next vehicle test)
+- Poll intervals (`PollPlan` in `LiveGauges.kt`): RPM 600 ms, speed/MAP 1 s, MAF 1.5 s, load/throttle 2 s, coolant/IAT/EGR/extras 3.5 s, baro 10 s. These are starting values: the old loop managed about 200 ms per command, so this plan may be slightly over capacity. Tune from the session log timings (`RX` lines).
+- A reading older than max(4 s, 3 x interval) is shown as `--`, never as live.
+- Recovery on silence: probe `0100`, then `ATPC`, then `ATZ` + init. The Bluetooth socket is not reopened. A real socket failure still ends the session as before.
+- Unchanged: `sendCommand` default behaviour, `EcuNegotiation`, DTC reading, Gauge Wall.
+- `readDashboard()` is now unused (kept for one stage, to be removed once the car test confirms the new loop).
