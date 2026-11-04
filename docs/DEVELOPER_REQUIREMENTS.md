@@ -883,3 +883,17 @@ Implemented natively in Jetpack Compose from the owner's web-style spec (the spe
 - **Home screen:** header pod and status pod, boost multi-segment arc top left, large tachometer scaled 0-7 (a drawing range only, not a limit), road speed and load on the right, COOLANT / INTAKE / MAF micro panels along the bottom. Every value is real or shows NO SIGNAL / STALE.
 - **Decisions to confirm:** the spec's header text "LOAD: V-GATE / OBD-II" was written as "V-GATE / OBD-II • STANDBY" (the "LOAD:" prefix looked like a typo). The spec's boost example is in bar; the app uses the unit chosen in Settings (default kPa).
 - **Status:** timeline logic is unit-tested (123 JVM tests). The Compose screens have not been compiled or run on a device.
+
+## 23. android-ui-refresh adoption (red-and-black cockpit)
+
+Source: github.com/mohammedshuaib8123-ui/android-ui-refresh (a web prototype with demo data), read at d033592.
+
+Adopted natively: red/black tokens (`SxTheme`), top bar and bottom navigation (`SxShell`), cockpit home with 41-tick dials, car stage, telemetry strip, health and Head Unit cards (`SxCockpit`), configurable welcome (`SxWelcome`, `WelcomeSettings`), SPORT / ECO / HUD drive modes with a 0.3 s colour fade (`DriveMode`, `SxPalette`), 8-LED shift lights (`ShiftLights`), fuel-economy dial in ECO (`Economy`).
+
+Deliberately NOT copied because it is demo data: the fake media player, the estimated range, "hold to rev", fixed fuel, battery and rail numbers. Each is a real ECU reading or a dash (NO SIGNAL / STALE). Range stays a dash because tank capacity and consumption are not known. The ECO dial shows km/L only when road speed and the ECU fuel rate (PID 5E) are both present. The shift-light thresholds are the owner's own values from the prototype.
+
+Differences: the welcome plays after each successful ECU connection (not each app launch); fonts stay on the platform font until Chakra Petch and Manrope are added under `res/font`.
+
+Fidelity pass (second reading of the prototype): the cockpit home now follows its CSS section by section: a continuous cluster band with a red wash, the 240 degree dial arc with 41 ticks (amber ticks appear only above a limit the owner set), the flat five-cell telemetry row, the health / fault row in warning style, the Head Unit section laid out like the player, the footer, the top bar and bottom navigation at the compact tablet sizes, the welcome timings, and the cockpit arrival animation.
+
+CI: `.github/workflows/branch-check.yml` compiles and tests every push to a `claude/*` branch and writes the build log to the `ci-log` branch, so Compose errors are found before merging to `main`. The existing `Android APK` workflow is unchanged.

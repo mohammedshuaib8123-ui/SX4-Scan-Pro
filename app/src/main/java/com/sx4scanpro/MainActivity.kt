@@ -130,7 +130,7 @@ private fun GaugeCard(gauge: GaugeValue) {
 
 /** Sensors that already have their own dial or tile; the picker skips them to avoid duplicates. */
 /** Sensors the home screen always shows (fuel level, control module voltage), polled whether or not picked in Settings. */
-private val HOME_PIDS = setOf(0x2F, 0x42)
+private val HOME_PIDS = setOf(0x2F, 0x42, 0x23, 0x5E)
 private val CORE_PIDS = setOf(0x04, 0x05, 0x0B, 0x0C, 0x0D, 0x0F, 0x10, 0x11, 0x2C)
 
 private const val RECEIVER_PACKAGE = "com.andrerinas.headunitrevived"
@@ -179,6 +179,14 @@ class MainActivity : ComponentActivity() {
     private var alertSensors by mutableStateOf(emptySet<String>())
     private var welcomeSettings by mutableStateOf(WelcomeSettings())
     private var welcomePlayedOnce = false
+    private var driveMode by mutableStateOf(DriveMode.SPORT)
+    private var freezeEntries by mutableStateOf<List<FreezeFrame.Entry>?>(null)
+    private var freezeNote by mutableStateOf("")
+    private var freezeBusy by mutableStateOf(false)
+    private val uiScope = kotlinx.coroutines.MainScope()
+    private var trackedKm by mutableStateOf(0.0)
+    private var maintVersion by mutableStateOf(0)
+    private var reportNote by mutableStateOf("")
     private var tripTick by mutableStateOf(0)
     private var tripStartMs by mutableStateOf(0L)
     private var tripWriter: java.io.BufferedWriter? = null
@@ -248,10 +256,13 @@ class MainActivity : ComponentActivity() {
             adaptiveTiming = prefs.getBoolean("adaptive_timing", true)
         )
         extraPids = PidCatalog.parseSelection(prefs.getString("extra_pids", null))
+        trackedKm = prefs.getFloat("tracked_km", 0f).toDouble()
+        driveMode = DriveMode.parse(prefs.getString("drive_mode", null))
         welcomeSettings = WelcomeSettings(
             durationSec = WelcomeSettings.clampDuration(prefs.getFloat("welcome_duration", WelcomeSettings.DEFAULT_DURATION_SEC)),
             sound = prefs.getBoolean("welcome_sound", true),
-            everyConnection = prefs.getBoolean("welcome_every", true)
+            everyConnection = prefs.getBoolean("welcome_every", true),
+            volume = WelcomeSettings.clampVolume(prefs.getFloat("welcome_volume", 1f))
         )
         alertLimits = AlertLimits(
             coolantMaxC = AlertLimits.parse(prefs.getInt("alert_coolant", -1), AlertLimits.COOLANT),
@@ -471,13 +482,22 @@ class MainActivity : ComponentActivity() {
         val dim = Math.round(NightMode.dimAlpha(themeMode, lightLux) / 0.05f) * 0.05f
         LaunchedEffect(dim) { applyDim(dim) }
 
+        // Drive mode recolours the whole cockpit with a 0.3 s fade.
+        val modeColors = SxPalette.of(driveMode)
+        val pAccent by animateColorAsState(modeColors.accent, tween(300), label = "mode-accent")
+        val pBg by animateColorAsState(modeColors.background, tween(300), label = "mode-bg")
+        val pCard by animateColorAsState(modeColors.card, tween(300), label = "mode-card")
+        val pFg by animateColorAsState(modeColors.foreground, tween(300), label = "mode-fg")
+        val pMuted by animateColorAsState(modeColors.mutedForeground, tween(300), label = "mode-muted")
+        SideEffect { Sx.palette = SxPalette(pAccent, pBg, pCard, pFg, pMuted) }
+
         // Back returns to the cockpit from any other section instead of closing the app.
         BackHandler(enabled = selectedTab != 0) { selectedTab = 0 }
 
         MaterialTheme(colorScheme = darkColorScheme(primary = cyan, secondary = Color(0xFFFFB84D), background = bg, surface = panel, onBackground = Color.White, onSurface = Color.White, onSurfaceVariant = muted)) {
             Scaffold(containerColor = bg) { padding ->
                 Column(Modifier.fillMaxSize().padding(padding).background(Sx.Background)) {
-                SxTopBar(connected = connected, onPower = { disconnect(); finish() })
+                SxTopBar(connected = connected, mode = driveMode, onMode = { m -> driveMode = m; prefs.edit().putString("drive_mode", m.name).apply() }, onPower = { disconnect(); finish() })
                 Column(Modifier.weight(1f).fillMaxWidth()) {
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         AnimatedContent(
@@ -555,20 +575,43 @@ class MainActivity : ComponentActivity() {
                                 val spdShown = spd.value.toDoubleOrNull()?.takeIf { spd.available }?.let { spd.copy(value = GaugeUnits.speedText(it, speedUnit), unit = speedUnit.label) } ?: spd.copy(unit = speedUnit.label)
                                 val bst = g("Turbo boost")
                                 val bstShown = bst.value.toDoubleOrNull()?.takeIf { bst.available }?.let { bst.copy(value = GaugeUnits.boostText(it, boostUnit), unit = boostUnit.label) } ?: bst.copy(unit = boostUnit.label)
+                                val arrive by animateFloatAsState(if (welcomeOverlayVisible) 0f else 1f, tween(if (welcomeOverlayVisible) 1 else 1200), label = "cockpit-arrive")
                                 SxCockpit(
+                                    arrive = arrive,
                                     connected = connected,
                                     rpm = g("Engine RPM"), boost = bstShown, boostScale = GaugeUnits.boostScale(boostUnit),
                                     boostCaption = boostUnit.label.uppercase(),
+                                    mode = driveMode,
+                                    economy = run {
+                                        val kmpl = Economy.kmPerLitre(
+                                            g("Vehicle speed").takeIf { it.available }?.value?.toDoubleOrNull(),
+                                            g("Engine fuel rate").takeIf { it.available }?.value?.toDoubleOrNull()
+                                        )
+                                        if (kmpl == null) GaugeValue("Fuel economy", "--", "km/L", false)
+                                        else GaugeValue("Fuel economy", String.format(java.util.Locale.US, "%.1f", kmpl), "km/L", true, g("Engine fuel rate").capturedAtMs)
+                                    },
+                                    rail = g("Fuel rail pressure").let { r ->
+                                        r.value.toDoubleOrNull()?.takeIf { r.available }
+                                            ?.let { r.copy(value = String.format(java.util.Locale.US, "%.0f", it / 100.0), unit = "bar") } ?: r.copy(unit = "bar")
+                                    },
                                     coolant = g("Coolant temperature"), intake = g("Intake air temperature"),
                                     egr = g("EGR commanded"), fuel = g("Fuel level"), battery = g("Control module voltage"),
                                     tripKm = if (connected && trip.dataMs > 0) trip.distanceKm else null,
                                     faultCount = if (dtcScanned) dtcCodes.size else null,
-                                    headUnit = huSession, alertSensors = alertSensors, nowMs = nowMs,
+                                    headUnit = huSession, alertSensors = alertSensors,
+                                    hotRpm = alertLimits.rpmMax?.let { it / DialScale.forLabel("Engine RPM").max },
+                                    hotBoost = alertLimits.boostMaxKpa?.let { (GaugeUnits.boost(it.toDouble(), boostUnit) / GaugeUnits.boostScale(boostUnit).max).toFloat() },
+                                    nowMs = nowMs,
                                     onOpenDiagnostics = { selectedTab = 1 }, onOpenHeadUnit = { selectedTab = 2 },
                                     onReplayWelcome = { playEngineWelcome() },
+                                    receiverInstalled = readiness.receiverInstalled,
+                                    onShowProjection = { headUnitStatus = receiverCommandStatus(HeadUnitProtocol.RAISE_PROJECTION, "Asked Open Headunit to bring the projection to the front.") },
+                                    statusText = if (connected) adapterName else status,
+                                    wallOn = showWall, onConnect = { connect() }, onDisconnect = { disconnect() }, onToggleWall = { showWall = !showWall },
                                     modifier = Modifier.weight(1f).fillMaxWidth()
                                 )
                             }
+                            if (showWall) {
                             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                                 Column(Modifier.weight(1f)) {
                                     Text(if (connected) "V-GATE / OBD-II • CONNECTED" else "V-GATE / OBD-II • STANDBY", color = if (connected) Color(0xFF70F0D2) else muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
@@ -580,6 +623,7 @@ class MainActivity : ComponentActivity() {
                                 OutlinedButton(onClick = { disconnect() }, enabled = connected, shape = RoundedCornerShape(12.dp)) { Text("DISCONNECT", fontWeight = FontWeight.Bold) }
                             }
                             Text("Informational display only • Do not operate the tablet while driving", color = Color(0xFF718397), fontSize = 13.sp)
+                            }
                         }
                         1 -> LazyColumn(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             item {
@@ -654,6 +698,59 @@ class MainActivity : ComponentActivity() {
                                             Text(result.category, color = cyan, fontWeight = FontWeight.Bold)
                                             Text("ENGINE ECU", color = muted, style = MaterialTheme.typography.labelSmall)
                                         }
+                                    }
+                                    DtcExplainer.explain(result.code)?.let { x ->
+                                        Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp)) {
+                                            x.lines().forEach { Text(it, color = muted, fontSize = 13.sp) }
+                                            Text("What this exact code means for the SX4 must be checked in the service manual.", color = muted, fontSize = 12.sp)
+                                        }
+                                    }
+                                }
+                            }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("FREEZE FRAME", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text("Sensor values the ECU stored when a fault was set (Mode 02). Read-only. Many ECUs return nothing when no fault is stored.", color = muted)
+                                        Button(onClick = { readFreezeFrame() }, enabled = connected && !freezeBusy) { Text(if (freezeBusy) "READING…" else "READ FREEZE FRAME") }
+                                        val fe = freezeEntries
+                                        if (fe != null) {
+                                            if (fe.isEmpty()) Text("The ECU returned no freeze-frame data.", color = Color(0xFFFFB84D))
+                                            fe.forEach { Text(it.name + ": " + it.value + " " + it.unit, color = Color.White) }
+                                        }
+                                        if (freezeNote.isNotBlank()) Text(freezeNote, color = muted, fontSize = 13.sp)
+                                    }
+                                }
+                            }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("MAINTENANCE REMINDERS", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text("Counts kilometres this app has tracked while connected (" + String.format(java.util.Locale.US, "%.0f", trackedKm) + " km so far). You set every interval; none are assumed. Distance driven without the app is not counted.", color = muted, fontSize = 13.sp)
+                                        val mv = maintVersion
+                                        Maintenance.ITEMS.forEach { name ->
+                                            val iKey = Maintenance.key(name, "interval")
+                                            val dKey = Maintenance.key(name, "done")
+                                            val interval = prefs.getInt(iKey, -1).takeIf { it > 0 }
+                                            val st = Maintenance.status(interval, trackedKm, prefs.getFloat(dKey, 0f).toDouble())
+                                            key(mv) {
+                                                LimitRow(name, interval, 1000..40000, 10000, 500, "km") { v -> prefs.edit().putInt(iKey, v ?: -1).apply(); maintVersion++ }
+                                            }
+                                            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                                                Text(Maintenance.describe(st), color = if (st.state == Maintenance.State.OVERDUE) cyan else muted, fontWeight = if (st.state == Maintenance.State.OVERDUE) FontWeight.Bold else FontWeight.Normal, modifier = Modifier.weight(1f))
+                                                if (interval != null) OutlinedButton(onClick = { prefs.edit().putFloat(dKey, trackedKm.toFloat()).apply(); maintVersion++ }) { Text("MARK DONE") }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("HEALTH REPORT", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text("A one-page PDF of the current readings, the last fault scan, distance and maintenance status. Anything not read is marked as such.", color = muted)
+                                        Button(onClick = { shareHealthReport(dtcScanned, dtcCodes, gauges, connected, adapterName) }) { Text("SHARE HEALTH REPORT (PDF)") }
+                                        if (reportNote.isNotBlank()) Text(reportNote, color = muted, fontSize = 13.sp)
                                     }
                                 }
                             }
@@ -959,7 +1056,7 @@ class MainActivity : ComponentActivity() {
                                         Text("Welcome: two-tone cabin chime followed by a calm-paced English announcement. It plays only after the ECU has answered on a successful OBD connection, never when the app opens or when only Bluetooth is connected.", color = muted)
                                         fun saveWelcome(w: WelcomeSettings) {
                                             welcomeSettings = w
-                                            prefs.edit().putFloat("welcome_duration", w.durationSec).putBoolean("welcome_sound", w.sound).putBoolean("welcome_every", w.everyConnection).apply()
+                                            prefs.edit().putFloat("welcome_duration", w.durationSec).putBoolean("welcome_sound", w.sound).putBoolean("welcome_every", w.everyConnection).putFloat("welcome_volume", w.volume).apply()
                                         }
                                         Text("Welcome length: " + String.format(java.util.Locale.US, "%.1f", welcomeSettings.durationSec) + " s", color = Color.White)
                                         Slider(
@@ -967,6 +1064,8 @@ class MainActivity : ComponentActivity() {
                                             onValueChange = { saveWelcome(welcomeSettings.copy(durationSec = (Math.round(it * 2f) / 2f))) },
                                             valueRange = WelcomeSettings.MIN_DURATION_SEC..WelcomeSettings.MAX_DURATION_SEC
                                         )
+                                        Text("Welcome volume: " + Math.round(welcomeSettings.volume * 100) + " %  (warnings always play at full volume)", color = Color.White)
+                                        Slider(value = welcomeSettings.volume, onValueChange = { saveWelcome(welcomeSettings.copy(volume = WelcomeSettings.clampVolume(it))) }, valueRange = 0f..1f)
                                         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                                             Text("Chime and spoken welcome", color = Color.White, modifier = Modifier.weight(1f))
                                             Switch(checked = welcomeSettings.sound, onCheckedChange = { saveWelcome(welcomeSettings.copy(sound = it)) })
@@ -1344,6 +1443,7 @@ class MainActivity : ComponentActivity() {
             cabinChimeTrack = track
             track.setVolume(0.72f)
             track.write(samples, 0, samples.size)
+            track.setVolume(0.72f * welcomeSettings.volume)
             track.play()
             mainHandler.postDelayed({
                 runCatching { track.stop() }
@@ -1360,7 +1460,7 @@ class MainActivity : ComponentActivity() {
         if (!speechReady || !welcomePending || !welcomeChimeFinished) return
         welcomePending = false
         welcomeChimeFinished = false
-        textToSpeech?.speak("Welcome to SX4 Airlines 2874", TextToSpeech.QUEUE_FLUSH, null, "sx4_engine_start")
+        textToSpeech?.speak("Welcome to SX4 Airlines 2874", TextToSpeech.QUEUE_FLUSH, android.os.Bundle().apply { putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, welcomeSettings.volume) }, "sx4_engine_start")
     }
 
     private fun computeHeadUnitReadiness(): HeadUnitReadiness {
@@ -1449,10 +1549,83 @@ class MainActivity : ComponentActivity() {
     private fun endTrip() {
         try { tripWriter?.flush(); tripWriter?.close() } catch (_: Exception) { }
         tripWriter = null
+        // Fold this trip's distance into the lifetime tracked distance exactly once.
+        if (trip.distanceKm > 0.0) {
+            trackedKm += trip.distanceKm
+            prefs.edit().putFloat("tracked_km", trackedKm.toFloat()).apply()
+            trip = TripStats()
+        }
     }
 
     private fun savedTrips(): List<java.io.File> =
         java.io.File(filesDir, "trips").listFiles { f -> f.extension == "csv" }?.sortedBy { it.name }.orEmpty()
+
+    @Synchronized
+    private fun readFreezeFrameBlocking(): List<FreezeFrame.Entry> {
+        val out = mutableListOf<FreezeFrame.Entry>()
+        for (pid in FreezeFrame.PIDS) {
+            if (pid !in supportedPids) continue
+            val spec = PidCatalog.forPid(pid) ?: continue
+            val reply = try { sendCommand(FreezeFrame.command(pid)) } catch (_: IOException) { break }
+            FreezeFrame.decode(spec, reply)?.let { out += it }
+        }
+        return out
+    }
+
+    private fun readFreezeFrame() {
+        if (freezeBusy) return
+        freezeBusy = true
+        freezeNote = ""
+        uiScope.launch {
+            try {
+                freezeEntries = withContext(Dispatchers.IO) { readFreezeFrameBlocking() }
+            } catch (e: Exception) {
+                freezeNote = "Could not read freeze frame: " + (e.message ?: "unknown error")
+            } finally { freezeBusy = false }
+        }
+    }
+
+    private fun shareHealthReport(scanned: Boolean, codes: List<TroubleCodeResult>, gauges: List<GaugeValue>, isConnected: Boolean, adapterName: String) {
+        try {
+            val now = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).format(java.util.Date())
+            val readings = gauges.filter { it.available && it.label != "Manifold pressure" }.map { Triple(it.label, it.value, it.unit) }
+            val maint = Maintenance.ITEMS.map { n ->
+                val interval = prefs.getInt(Maintenance.key(n, "interval"), -1).takeIf { it > 0 }
+                n to Maintenance.describe(Maintenance.status(interval, trackedKm, prefs.getFloat(Maintenance.key(n, "done"), 0f).toDouble()))
+            }.filter { it.second != "No interval set" }
+            val lines = HealthReport.lines(HealthReport.Input(
+                now, isConnected, adapterName, readings,
+                if (scanned) codes.map { it.code to it.category } else null,
+                if (isConnected && trip.dataMs > 0) trip.distanceKm else null, trackedKm, maint
+            ))
+            val doc = android.graphics.pdf.PdfDocument()
+            val page = doc.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(595, 842, 1).create())
+            val paint = android.graphics.Paint().apply { textSize = 11f; isAntiAlias = true; typeface = android.graphics.Typeface.MONOSPACE }
+            var y = 48f
+            lines.forEachIndexed { i, line ->
+                paint.isFakeBoldText = i == 0 || line.isNotEmpty() && line == line.uppercase() && !line.startsWith(" ")
+                paint.textSize = if (i == 0) 15f else 11f
+                if (y < 810f) page.canvas.drawText(line.take(80), 40f, y, paint)
+                y += if (i == 0) 24f else 15f
+            }
+            doc.finishPage(page)
+            val dir = java.io.File(filesDir, "reports").apply { mkdirs() }
+            val file = java.io.File(dir, "health_" + java.text.SimpleDateFormat("yyyyMMdd_HHmm", java.util.Locale.US).format(java.util.Date()) + ".pdf")
+            java.io.FileOutputStream(file).use { doc.writeTo(it) }
+            doc.close()
+            val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = "application/pdf"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "SX4 Scan Pro health report")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(send, "Share health report"))
+            reportNote = "Report saved as " + file.name
+        } catch (e: Exception) {
+            reportNote = "Could not create the report: " + (e.message ?: "unknown error")
+        }
+    }
 
     private fun shareLastTrip() {
         endTripFlushOnly()
@@ -1638,6 +1811,7 @@ class MainActivity : ComponentActivity() {
         closeSocket()
         mainHandler.removeCallbacksAndMessages(null)
         runCatching { siren?.release(); siren = null }
+        uiScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
         textToSpeech?.stop()
         textToSpeech?.shutdown()
         chime?.release()

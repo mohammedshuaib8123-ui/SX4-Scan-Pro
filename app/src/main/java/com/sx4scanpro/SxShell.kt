@@ -3,6 +3,7 @@ package com.sx4scanpro
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -14,15 +15,16 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.ShowChart
 import androidx.compose.material.icons.outlined.Bluetooth
-import androidx.compose.material.icons.outlined.Build
 import androidx.compose.material.icons.outlined.DirectionsCar
 import androidx.compose.material.icons.outlined.PowerSettingsNew
-import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Speed
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -41,7 +43,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -50,39 +56,57 @@ import java.util.Date
 import java.util.Locale
 
 /**
- * Top bar of the red-and-black cockpit: Suzuki/SX4 brand, live OBD link state and a clock.
- * Power asks twice (tap, then tap again within three seconds) so it cannot be hit while driving.
+ * Top bar like the prototype: "POWERED BY / Suzuki" brand (first letter red), OBD link state, the drive-mode
+ * pill and a clock. Power asks twice (tap, then tap again within three seconds) so it cannot be hit while driving.
  */
 @Composable
-internal fun SxTopBar(connected: Boolean, onPower: () -> Unit, modifier: Modifier = Modifier) {
+internal fun SxTopBar(connected: Boolean, mode: DriveMode, onMode: (DriveMode) -> Unit, onPower: () -> Unit, modifier: Modifier = Modifier) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { now = System.currentTimeMillis(); delay(15_000) } }
     var powerArmed by remember { mutableStateOf(false) }
     LaunchedEffect(powerArmed) { if (powerArmed) { delay(3000); powerArmed = false } }
     val clock = remember(now) { SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(now)) }
     Row(
-        modifier.fillMaxWidth().height(56.dp)
+        modifier.fillMaxWidth().height(52.dp)
             .drawBehind { drawLine(Sx.Border, Offset(0f, size.height), Offset(size.width, size.height), 1.dp.toPx()) }
-            .padding(horizontal = 20.dp),
+            .padding(horizontal = 24.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Box(Modifier.size(10.dp).clip(CircleShape).background(Sx.Primary))
-        Column(Modifier.padding(start = 12.dp)) {
-            Text("SUZUKI", color = Sx.Foreground, fontSize = 15.sp, fontWeight = FontWeight.Black, letterSpacing = 3.sp)
-            Text("SX4 • SCAN PRO", color = Sx.MutedForeground, fontSize = 10.sp, letterSpacing = 2.sp)
+        Row(Modifier.semantics { contentDescription = "Suzuki SX4 ZDi cockpit" }, verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("POWERED BY", color = Sx.MutedForeground, fontSize = 8.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.5.sp)
+            Text(
+                buildAnnotatedString {
+                    withStyle(SpanStyle(color = Sx.Primary)) { append("S") }
+                    append("UZUKI")
+                },
+                color = Sx.Foreground, fontSize = 24.sp, fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic, letterSpacing = 2.sp
+            )
         }
         Box(Modifier.weight(1f))
-        val link = if (connected) Sx.Primary else Sx.MutedForeground
-        Icon(Icons.Outlined.Bluetooth, contentDescription = "Bluetooth adapter", tint = link, modifier = Modifier.size(20.dp))
-        Text(
-            if (connected) "OBD CONNECTED" else "OBD OFFLINE", color = link, fontSize = 12.sp,
-            fontWeight = FontWeight.Bold, letterSpacing = 1.5.sp, modifier = Modifier.padding(start = 8.dp)
-        )
-        Text(clock, color = Sx.Foreground, fontSize = 15.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(start = 24.dp))
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(15.dp)) {
+            Box(Modifier.size(5.dp).clip(CircleShape).background(if (connected) Sx.Primary else Sx.MutedForeground))
+            Text(if (connected) "OBD connected" else "OBD offline", color = Sx.MutedForeground, fontSize = 11.sp)
+            Icon(Icons.Outlined.Bluetooth, contentDescription = "Bluetooth adapter", tint = if (connected) Sx.Primary else Sx.MutedForeground, modifier = Modifier.size(15.dp))
+        }
+        Box(Modifier.weight(1f))
+        Row(Modifier.clip(RoundedCornerShape(50)).border(1.dp, Sx.Border, RoundedCornerShape(50)).padding(2.dp)) {
+            DriveMode.values().forEach { m ->
+                val on = m == mode
+                Text(
+                    m.name, color = if (on) Sx.Background else Sx.MutedForeground, fontSize = 10.sp, fontWeight = FontWeight.Medium, letterSpacing = 1.5.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(50)).background(if (on) Sx.Primary else Color.Transparent)
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onMode(m) }
+                        .semantics { contentDescription = "Drive mode " + m.name }
+                        .padding(horizontal = 12.dp, vertical = 5.dp)
+                )
+            }
+        }
+        Box(Modifier.weight(1f))
+        Text(clock, color = Sx.Foreground, fontSize = 20.sp, fontWeight = FontWeight.Medium)
         Icon(
             Icons.Outlined.PowerSettingsNew, contentDescription = if (powerArmed) "Tap again to exit" else "Exit",
             tint = if (powerArmed) Sx.Destructive else Sx.MutedForeground,
-            modifier = Modifier.padding(start = 20.dp).size(36.dp).clip(CircleShape)
+            modifier = Modifier.padding(start = 15.dp).size(32.dp).clip(CircleShape)
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {
                     if (powerArmed) onPower() else powerArmed = true
                 }
@@ -91,47 +115,50 @@ internal fun SxTopBar(connected: Boolean, onPower: () -> Unit, modifier: Modifie
     }
 }
 
-/** 76 dp bottom navigation: active item gets a red top rule; the SX4 / ZDI signature sits at the right. */
+/**
+ * Bottom navigation like the prototype: icon beside label, red top rule and red text on the active item,
+ * a small amber dot on Diagnostics while fault codes are stored, and the "SX4 / ZDI" signature at the right.
+ */
 @Composable
 internal fun SxBottomNav(selectedTab: Int, onSelect: (Int) -> Unit, faultCount: Int, modifier: Modifier = Modifier) {
     val tabs = listOf<Triple<String, ImageVector, Int>>(
         Triple("Cockpit", Icons.Outlined.Speed, 0),
-        Triple("Diagnostics", Icons.Outlined.Build, 1),
-        Triple("Head Unit", Icons.Outlined.DirectionsCar, 2),
-        Triple("Settings", Icons.Outlined.Settings, 3)
+        Triple("Diagnostics", Icons.AutoMirrored.Outlined.ShowChart, 1),
+        Triple("Head unit", Icons.Outlined.DirectionsCar, 2),
+        Triple("Settings", Icons.Outlined.Tune, 3)
     )
     Row(
-        modifier.fillMaxWidth().height(76.dp).background(Sx.Card)
-            .drawBehind { drawLine(Sx.Border, Offset(0f, 0f), Offset(size.width, 0f), 1.dp.toPx()) },
+        modifier.fillMaxWidth().height(64.dp).background(Sx.Background)
+            .drawBehind { drawLine(Sx.Border, Offset(0f, 0f), Offset(size.width, 0f), 1.dp.toPx()) }
+            .padding(horizontal = 24.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        tabs.forEach { (label, icon, index) ->
-            val active = selectedTab == index
-            val tint by animateColorAsState(if (active) Sx.Primary else Sx.MutedForeground, tween(240), label = "nav-tint")
-            Box(
-                Modifier.weight(1f).fillMaxHeight()
-                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onSelect(index) }
-                    .drawBehind { if (active) drawLine(Sx.Primary, Offset(0f, 0f), Offset(size.width, 0f), 3.dp.toPx()) }
-                    .semantics { contentDescription = label },
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Box {
-                        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(26.dp))
-                        if (index == 1 && faultCount > 0) {
-                            Box(Modifier.align(Alignment.TopEnd).size(9.dp).clip(CircleShape).background(Sx.Primary))
-                        }
-                    }
-                    Text(
-                        label.uppercase(), color = tint, fontSize = 11.sp, letterSpacing = 1.5.sp,
-                        fontWeight = if (active) FontWeight.Black else FontWeight.Medium
-                    )
+        Row(Modifier.fillMaxHeight(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            tabs.forEach { (label, icon, index) ->
+                val active = selectedTab == index
+                val tint by animateColorAsState(if (active) Sx.Primary else Sx.MutedForeground, tween(240), label = "nav-tint")
+                Row(
+                    Modifier.fillMaxHeight()
+                        .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onSelect(index) }
+                        .drawBehind { if (active) drawLine(Sx.Primary, Offset(0f, 0f), Offset(size.width, 0f), 2.dp.toPx()) }
+                        .padding(horizontal = 12.dp)
+                        .semantics { contentDescription = label },
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(22.dp))
+                    Text(label, color = tint, fontSize = 11.sp)
+                    if (index == 1 && faultCount > 0) Box(Modifier.padding(start = 2.dp).size(4.dp).clip(CircleShape).background(Sx.Warning))
                 }
             }
         }
-        Column(Modifier.padding(horizontal = 24.dp), horizontalAlignment = Alignment.End) {
-            Text("SX4 / ZDI", color = Sx.Foreground, fontSize = 13.sp, fontWeight = FontWeight.Black, letterSpacing = 2.sp)
-            Text("1.3 MULTIJET", color = Sx.MutedForeground, fontSize = 10.sp, letterSpacing = 2.sp)
-        }
+        Box(Modifier.weight(1f))
+        Text(
+            buildAnnotatedString {
+                append("SX4 ")
+                withStyle(SpanStyle(color = Sx.Primary)) { append("/") }
+                append(" ZDI")
+            },
+            color = Sx.MutedForeground, fontSize = 10.sp, letterSpacing = 1.sp
+        )
     }
 }
