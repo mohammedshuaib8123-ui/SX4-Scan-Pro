@@ -23,8 +23,8 @@ Implementing `docs/OBD_TEST_RESULTS_AND_REQUIRED_CHANGES.md` (Section 12 order).
 | Stage | Scope | Status |
 |---|---|---|
 | S1 | `ElmReply`, `SessionLog` (3 × ~700 KB rolling file), BT ACL events, `ATI/ATRV/ATDP` capture, "Share full session log" button, `logs/` FileProvider path, APK artifact in CI | **Done, CI green** |
-| S2 | `LinkMonitor`, `PidCapabilities`, `PollScheduler` (earliest-deadline-first), `LivePoller`, fake-port JVM tests | Next |
-| S3 | Wire poller into `connect()` loop; ECU recovery (probe `0100` → light re-init → full re-init); link-state UI; per-label stale thresholds; cached baro; rename "EGR duty" → "EGR commanded" | Pending |
+| S2 | `LinkMonitor`, `PidCapabilities`, `PollScheduler` (earliest-deadline-first), `LivePoller`, fake-port JVM tests | **Done (pure logic, not yet wired in), CI pending** |
+| S3 | Wire poller into `connect()` loop; ECU recovery (probe `0100` → light re-init → full re-init); link-state UI; per-label stale thresholds; cached baro; rename "EGR duty" → "EGR commanded" | Next |
 | S4 | `Mode09Decoder`, `EcuScan`, `EcuProfile` (+JSON), `ProfileDiff`, DTC decoder for K-line and CAN framing | Pending |
 | S5 | ECU Information screen, top-bar chip, profile storage, JSON/CSV/PDF export | Pending |
 
