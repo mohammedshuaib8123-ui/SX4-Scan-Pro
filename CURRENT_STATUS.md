@@ -24,9 +24,9 @@ Implementing `docs/OBD_TEST_RESULTS_AND_REQUIRED_CHANGES.md` (Section 12 order).
 |---|---|---|
 | S1 | `ElmReply`, `SessionLog` (3 × ~700 KB rolling file), BT ACL events, `ATI/ATRV/ATDP` capture, "Share full session log" button, `logs/` FileProvider path, APK artifact in CI | **Done, CI green** |
 | S2 | `LinkMonitor`, `PidCapabilities`, `PollScheduler`, `LivePoller`, fake-port tests | **Done, CI green (ac44f34)** |
-| S3 | Live polling wired into `connect()` (`LiveGauges.kt` plan + assembler, timeout resync, ECU recovery on the existing socket, link state in cockpit/health, "EGR commanded" rename, cached baro) | **Code written, CI pending** |
-| S4 | `Mode09Decoder`, `EcuScan`, `EcuProfile` (+JSON), `ProfileDiff`, DTC decoder for K-line and CAN framing | Pending |
-| S5 | ECU Information screen, top-bar chip, profile storage, JSON/CSV/PDF export | Pending |
+| S3 | Live polling loop, ECU recovery on existing socket, link-state UI | **Done, CI green (b1beb92)** |
+| S4 | `Mode09Decoder`, `FrameAssembler`/`Framing` (from ATDP), `EcuScan`, `EcuProfile` + `MiniJson`, `ProfileDiff`, CAN DTC framing | **Code written, CI pending** |
+| S5 | ECU Information screen, top-bar "ECU INFO" chip, profile storage, JSON/CSV/PDF export | Next |
 
 ## Verification
 - JVM tests: all pure-Kotlin suites pass locally via `/home/claude/kc.sh` (139+ tests, plus new `ElmReplyTest`/`SessionLogTest`).
@@ -52,3 +52,8 @@ Cause of the earlier `socket closed`; the real protocol (`ATDP` was never logged
 - Recovery on silence: probe `0100`, then `ATPC`, then `ATZ` + init. The Bluetooth socket is not reopened. A real socket failure still ends the session as before.
 - Unchanged: `sendCommand` default behaviour, `EcuNegotiation`, DTC reading, Gauge Wall.
 - `readDashboard()` is now unused (kept for one stage, to be removed once the car test confirms the new loop).
+
+## S4 notes
+- Protocol (`ATDP`) is now asked after the ECU first answers and stored; DTC and Mode 09 decoding use it to choose K-line or CAN framing. If the adapter reports nothing, K-line rules apply and the profile says so.
+- `EcuScan` sends only `0900` and the `09xx` items the ECU advertised; `NO DATA`, `?` and `7F` replies are recorded as such, never replaced by values.
+- 181 JVM tests pass locally. None of this has met a real ECU yet.

@@ -236,6 +236,9 @@ class MainActivity : ComponentActivity() {
     }
     private var socket: BluetoothSocket? = null
     private var supportedPids: Set<Int> = emptySet()
+    @Volatile private var protocolText: String = ""
+    @Volatile private var adapterIdText: String = ""
+    @Volatile private var adapterVoltageText: String = ""
     private var linkState by mutableStateOf(LinkState.COMMUNICATING)
     private val engineStartDetector = EngineStartDetector()
     // Empty until verified SX4-specific rules are approved; pipeline is wired but inactive.
@@ -1245,7 +1248,8 @@ class MainActivity : ComponentActivity() {
         config.initCommands().forEach { sendCommand(it) }
         // Facts for the session log only; a failed query here never blocks connecting.
         sessionLog.append("EVT", "connect: adapter=" + chosen.name + " " + chosen.address)
-        listOf("ATI", "ATRV", "ATDP").forEach { q -> runCatching { sendCommand(q, 3000) } }
+        adapterIdText = runCatching { sendCommand("ATI", 3000) }.getOrDefault("")
+        adapterVoltageText = runCatching { sendCommand("ATRV", 3000) }.getOrDefault("")
         // "Connected" must mean the ECU answered, not just that the adapter did.
         val negotiation = EcuNegotiation { command, timeoutMs -> sendCommand(command, timeoutMs) }
             .apply { preferredProtocol = config.protocol.elmNumber }.run()
@@ -1254,6 +1258,9 @@ class MainActivity : ComponentActivity() {
             throw IOException(negotiation.failure)
         }
         supportedPids = negotiation.supportedPids
+        // The protocol is only known once the ECU has answered, so ATDP is asked now, not before negotiation.
+        protocolText = runCatching { sendCommand("ATDP", 3000) }.getOrDefault("")
+        sessionLog.append("EVT", "protocol=" + protocolText + " framing=" + Framing.fromProtocolText(protocolText))
         return (device.name ?: "Bluetooth OBD adapter") to Unit
     }
 
@@ -1364,6 +1371,12 @@ class MainActivity : ComponentActivity() {
             val raw = sendCommand(command, timeoutMs, timedOut = flag)
             return ElmResult(command, raw, ElmReply.classify(raw), android.os.SystemClock.elapsedRealtime() - t0, flag.hit)
         }
+        override fun sendLines(command: String, timeoutMs: Long): ElmResult {
+            val t0 = android.os.SystemClock.elapsedRealtime()
+            val flag = TimeoutFlag()
+            val raw = sendCommand(command, timeoutMs, keepLines = true, timedOut = flag)
+            return ElmResult(command, raw, ElmReply.classify(raw), android.os.SystemClock.elapsedRealtime() - t0, flag.hit)
+        }
     }
 
     /** One bounded slice of polling (about 0.4 s): one command at a time, then control returns so the UI can refresh. */
@@ -1455,7 +1468,7 @@ class MainActivity : ComponentActivity() {
             }
             // Line-aware: more than three codes arrive as several frames, and each is checked
             // with the same strict rules as before. Unreadable lines are counted, never dropped.
-            val read = ObdTroubleCodeDecoder.decodeResponse(raw, mode)
+            val read = ObdTroubleCodeDecoder.decodeResponse(raw, mode, Framing.fromProtocolText(protocolText))
             when {
                 read.validFrames > 0 -> {
                     supported++

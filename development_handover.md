@@ -40,3 +40,8 @@ Update `CURRENT_STATUS.md` and `docs/DEVELOPER_REQUIREMENTS.md`, then report mod
 - `LiveGauges.kt`: `PollPlan` (what is polled and how often), `GaugeAssembler` (readings to dashboard gauges, freshness rule, boost = MAP minus cached baro).
 - `MainActivity`: `elmPort` (adapter for `LivePoller`), `sendCommand(..., timedOut = TimeoutFlag())` opt-in resync on timeout (sends one CR, waits for `>`), `runPollSlice`, `buildPoller`, `linkState`; cockpit and health read `ecuOnline`.
 - Default `sendCommand` behaviour (close socket on any failure) is deliberately unchanged for negotiation and DTC reads.
+
+## S4 implementation map
+- `ObdFraming.kt` (`Framing`, `FrameAssembler`), `Mode09Decoder.kt`, `EcuScan.kt` (needs an `ElmPort`; `sendLines` keeps one line per frame), `EcuProfile.kt` (profile, CSV, `ProfileDiff`), `MiniJson.kt`.
+- `ObdTroubleCodeDecoder.decodeResponse(raw, mode, framing)`: CAN branch added; the two-argument form is unchanged K-line behaviour.
+- S5 must pause the live poller while a scan runs is not required (commands are atomic and sequential) but the scan button should be disabled unless connected and ECU online.

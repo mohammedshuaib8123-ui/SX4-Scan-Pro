@@ -1,7 +1,11 @@
 package com.sx4scanpro
 
 /** The single-command-at-a-time view of the adapter that the poller needs. */
-internal interface ElmPort { fun send(command: String, timeoutMs: Long): ElmResult }
+internal interface ElmPort {
+    fun send(command: String, timeoutMs: Long): ElmResult
+    /** Same, but the reply keeps one line per frame (needed for multi-frame Mode 03/09 answers). */
+    fun sendLines(command: String, timeoutMs: Long): ElmResult = send(command, timeoutMs)
+}
 
 internal data class Reading(val value: Double, val atMs: Long)
 
