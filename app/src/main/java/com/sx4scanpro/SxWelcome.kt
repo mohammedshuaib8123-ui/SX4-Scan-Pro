@@ -77,25 +77,15 @@ internal fun SxWelcome(durationMs: Long, onEnter: () -> Unit, modifier: Modifier
             )
         )
         Text("SUZUKI / SX4 ZDi", color = Sx.MutedForeground, fontSize = 10.sp, modifier = Modifier.align(Alignment.TopStart).padding(start = 24.dp, top = 28.dp))
-        Column(
-            Modifier.align(Alignment.BottomCenter).padding(bottom = h * 0.17f + 24.dp).graphicsLayer { alpha = identity; translationY = 12f * (1f - identity) },
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text("PRECISION IN EVERY DRIVE", color = Sx.MutedForeground, fontSize = 10.sp, letterSpacing = 1.sp, modifier = Modifier.padding(bottom = 13.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                Text(
-                    "SX4", color = Sx.Primary, fontSize = 46.sp, fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic, letterSpacing = 2.sp,
-                    modifier = Modifier.graphicsLayer { alpha = word1; translationX = -40f * (1f - word1); scaleX = 1f + 0.25f * (1f - word1) }
-                )
-                Text(
-                    "ZDi", color = Sx.Foreground, fontSize = 46.sp, fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic, letterSpacing = 2.sp,
-                    modifier = Modifier.graphicsLayer { alpha = word2; translationX = -40f * (1f - word2); scaleX = 1f + 0.25f * (1f - word2) }
-                )
-            }
-            Box(Modifier.padding(vertical = 20.dp).width(64.dp).height(2.dp).graphicsLayer { scaleX = rule }.background(Sx.Primary))
-            Text("WELCOME ABOARD", color = Sx.MutedForeground, fontSize = 10.sp, letterSpacing = 1.sp)
-            Text("SX4 AIRLINES 2874", color = Sx.MutedForeground, fontSize = 10.sp, letterSpacing = 1.sp, modifier = Modifier.padding(top = 4.dp))
-        }
+        SX4WelcomeBadge(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = h * 0.17f + 24.dp)
+                .graphicsLayer {
+                    alpha = identity
+                    translationY = 12f * (1f - identity)
+                }
+        )
         Column(Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(start = 24.dp, end = 24.dp, bottom = 24.dp)) {
             Box(Modifier.fillMaxWidth().height(1.dp).background(Sx.Border)) {
                 Box(Modifier.fillMaxHeight().fillMaxWidth(t).background(Sx.Primary))
