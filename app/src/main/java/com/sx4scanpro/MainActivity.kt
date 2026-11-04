@@ -596,7 +596,10 @@ class MainActivity : ComponentActivity() {
                                     egr = g("EGR commanded"), fuel = g("Fuel level"), battery = g("Control module voltage"),
                                     tripKm = if (connected && trip.dataMs > 0) trip.distanceKm else null,
                                     faultCount = if (dtcScanned) dtcCodes.size else null,
-                                    headUnit = huSession, alertSensors = alertSensors, nowMs = nowMs,
+                                    headUnit = huSession, alertSensors = alertSensors,
+                                    hotRpm = alertLimits.rpmMax?.let { it / DialScale.forLabel("Engine RPM").max },
+                                    hotBoost = alertLimits.boostMaxKpa?.let { (GaugeUnits.boost(it.toDouble(), boostUnit) / GaugeUnits.boostScale(boostUnit).max).toFloat() },
+                                    nowMs = nowMs,
                                     onOpenDiagnostics = { selectedTab = 1 }, onOpenHeadUnit = { selectedTab = 2 },
                                     onReplayWelcome = { playEngineWelcome() },
                                     modifier = Modifier.weight(1f).fillMaxWidth()

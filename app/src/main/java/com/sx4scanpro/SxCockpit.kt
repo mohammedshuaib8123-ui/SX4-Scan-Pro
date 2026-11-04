@@ -1,24 +1,18 @@
 package com.sx4scanpro
 
 import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -34,84 +28,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlin.math.cos
-import kotlin.math.min
-import kotlin.math.sin
-
-private val TN = TextStyle(fontFeatureSettings = "tnum")
-private const val STALE_MS = 5_000L
-
-private fun readingOf(g: GaugeValue): Double? = if (g.available) g.value.toDoubleOrNull() else null
-private fun isStale(g: GaugeValue, nowMs: Long): Boolean = readingOf(g) != null && nowMs - g.capturedAtMs > STALE_MS
-
-/** Dial with 41 ticks over a 270 degree arc. Missing data shows NO SIGNAL; old data shows STALE. */
-@Composable
-internal fun SxDial(
-    title: String,
-    gauge: GaugeValue,
-    scale: DialScale,
-    caption: String,
-    nowMs: Long,
-    alert: Boolean,
-    modifier: Modifier = Modifier,
-    shiftLights: Boolean = false,
-    footer: String = ""
-) {
-    val number = readingOf(gauge)
-    val stale = isStale(gauge, nowMs)
-    val fraction by animateFloatAsState(scale.fraction(number), spring(Spring.DampingRatioLowBouncy, Spring.StiffnessLow), label = "sx-dial")
-    val hot = if (alert) Sx.Destructive else Sx.Primary
-    val description = if (number == null) "$title: no signal" else "$title: ${gauge.value} ${gauge.unit}" + if (stale) ", stale" else ""
-    Column(
-        modifier.alertPulse(alert).sxPanel(18.dp).padding(14.dp).semantics(mergeDescendants = true) { contentDescription = description },
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Text(title, color = Sx.MutedForeground, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
-        if (shiftLights) SxShiftLights(if (stale) null else number, Modifier.padding(top = 8.dp))
-        Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Canvas(Modifier.fillMaxSize()) {
-                val side = min(size.width, size.height)
-                val c = Offset(size.width / 2f, size.height / 2f)
-                val r = side / 2f - 8.dp.toPx()
-                for (i in 0..40) {
-                    val f = i / 40f
-                    val ang = Math.toRadians((135f + 270f * f).toDouble())
-                    val major = i % 5 == 0
-                    val len = if (major) 16.dp.toPx() else 9.dp.toPx()
-                    val lit = number != null && f <= fraction + 0.0001f
-                    val col = if (lit) hot else Sx.Muted
-                    val a = Offset(c.x + (r * cos(ang)).toFloat(), c.y + (r * sin(ang)).toFloat())
-                    val b = Offset(c.x + ((r - len) * cos(ang)).toFloat(), c.y + ((r - len) * sin(ang)).toFloat())
-                    drawLine(col, a, b, strokeWidth = if (major) 3.dp.toPx() else 2.dp.toPx(), cap = StrokeCap.Round)
-                }
-            }
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    if (number == null) "—" else gauge.value,
-                    color = if (number != null && !stale) Sx.Foreground else Sx.MutedForeground,
-                    style = TN, fontSize = 40.sp, fontWeight = FontWeight.Black
-                )
-                Text(
-                    if (number == null) "NO SIGNAL" else if (stale) "STALE" else caption,
-                    color = if (stale) Sx.Warning else Sx.MutedForeground, fontSize = 11.sp, letterSpacing = 1.5.sp, fontWeight = FontWeight.Bold
-                )
-            }
-        }
-        if (footer.isNotBlank()) Text(footer, color = Sx.MutedForeground, fontSize = 11.sp, letterSpacing = 1.sp)
-    }
-}
 
 /** Eight shift LEDs: three green, three amber, two accent-red; all eight flash at the upshift point. */
 @Composable
@@ -233,6 +153,8 @@ internal fun SxCockpit(
     faultCount: Int?,
     headUnit: HeadUnitSession,
     alertSensors: Set<String>,
+    hotRpm: Float?,
+    hotBoost: Float?,
     nowMs: Long,
     onOpenDiagnostics: () -> Unit,
     onOpenHeadUnit: () -> Unit,
@@ -253,20 +175,16 @@ internal fun SxCockpit(
                 fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp, modifier = Modifier.padding(start = 8.dp)
             )
         }
-        Row(Modifier.fillMaxWidth().height(300.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            SxDial("ENGINE SPEED", rpm, DialScale.forLabel("Engine RPM"), "×1000 r/min", nowMs, "rpm" in alertSensors, Modifier.weight(1f).fillMaxSize(), shiftLights = true, footer = "Diesel · 1,248 cc")
-            VehicleStage(fuel, battery, nowMs, Modifier.weight(1.3f).fillMaxSize().alpha(hudDim))
-            if (mode == DriveMode.ECO) SxDial("FUEL ECONOMY", economy, DialScale(40f, 10f), "KM/L", nowMs, false, Modifier.weight(1f).fillMaxSize(), footer = "From ECU fuel rate and road speed")
-            else SxDial("VGT BOOST", boost, boostScale, boostCaption, nowMs, "boost" in alertSensors, Modifier.weight(1f).fillMaxSize(), footer = "Variable geometry turbo")
+        Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).clusterBand()) {
+            SxInstrument(
+                "ENGINE SPEED", rpm, DialScale.forLabel("Engine RPM"), "RPM", "Engine speed", nowMs, "rpm" in alertSensors,
+                "Diesel · 1,248 cc", Modifier.weight(1f), shiftLights = true, hotFrom = hotRpm
+            )
+            SxVehicleStage(fuel, battery, nowMs, Modifier.weight(1.4f).alpha(hudDim))
+            if (mode == DriveMode.ECO) SxInstrument("FUEL ECONOMY", economy, DialScale(40f, 10f), "KM/L", "From ECU fuel rate and speed", nowMs, false, "Instant economy", Modifier.weight(1f))
+            else SxInstrument("VGT BOOST", boost, boostScale, boostCaption, "Boost pressure", nowMs, "boost" in alertSensors, "Variable geometry turbo", Modifier.weight(1f), hotFrom = hotBoost)
         }
-        Row(Modifier.fillMaxWidth().alpha(hudDim), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            val coolantAlert = "coolant" in alertSensors
-            Box(Modifier.weight(1f).alertPulse(coolantAlert, 12.dp)) { SxStat("Coolant", coolant, nowMs, Modifier.fillMaxWidth()) }
-            SxStat("Intake air", intake, nowMs, Modifier.weight(1f))
-            SxStat("EGR duty", egr, nowMs, Modifier.weight(1f))
-            SxStat("Rail pressure", rail, nowMs, Modifier.weight(1f))
-            SxStatText("Trip distance", tripKm?.let { String.format(java.util.Locale.US, "%.1f", it) }, "km", Modifier.weight(1f))
-        }
+        Box(Modifier.alpha(hudDim)) { SxTelemetry(coolant, intake, egr, rail, tripKm, "coolant" in alertSensors, nowMs) }
         Row(Modifier.fillMaxWidth().alpha(hudDim), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             Column(Modifier.weight(1f).sxPanel(16.dp).padding(16.dp)) {
                 Text("VEHICLE HEALTH", color = Sx.MutedForeground, fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
