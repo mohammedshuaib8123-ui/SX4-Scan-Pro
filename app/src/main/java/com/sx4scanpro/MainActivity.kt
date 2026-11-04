@@ -220,6 +220,12 @@ class MainActivity : ComponentActivity() {
                     adapterNote = if (foundDevices.isEmpty()) "Scan finished: no devices found. Check the adapter is plugged in and the ignition is on."
                     else "Scan finished. Tap PAIR next to your adapter."
                 }
+                BluetoothDevice.ACTION_ACL_CONNECTED, BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
+                    val d = IntentCompat.getParcelableExtra(intent, BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                    val n = try { d?.name } catch (_: SecurityException) { null }
+                    sessionLog.append("EVT", (if (intent.action == BluetoothDevice.ACTION_ACL_CONNECTED) "bluetooth link up: " else "bluetooth link down: ") + (n ?: d?.address ?: "unknown"))
+                }
+                BluetoothAdapter.ACTION_STATE_CHANGED -> sessionLog.append("EVT", "bluetooth adapter state " + intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1))
                 BluetoothDevice.ACTION_BOND_STATE_CHANGED -> {
                     refreshPairedDevices()
                     foundDevices.removeAll { f -> pairedDevices.any { it.address == f.address } }
@@ -239,6 +245,9 @@ class MainActivity : ComponentActivity() {
     private var welcomeOverlayVisible by mutableStateOf(false)
     @Volatile private var userInitiatedDisconnect = false
     private val traffic = TrafficLog()
+    private val sessionLog by lazy { SessionLog(java.io.File(filesDir, "logs")) }
+    /** One place for adapter traffic: the on-screen preview and the persistent, shareable file. */
+    private fun logTraffic(tag: String, text: String) { traffic.add(tag, text); sessionLog.append(tag, text) }
     private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -278,7 +287,11 @@ class MainActivity : ComponentActivity() {
             addAction(BluetoothDevice.ACTION_FOUND)
             addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
             addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
+            addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
+            addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
+            addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
         }
+        sessionLog.append("EVT", "app started")
         ContextCompat.registerReceiver(this, btReceiver, btFilter, ContextCompat.RECEIVER_NOT_EXPORTED)
         // Open Headunit is another app, so its status broadcast needs an exported receiver.
         ContextCompat.registerReceiver(this, sessionReceiver, IntentFilter(HeadUnitProtocol.SESSION_STATE_ACTION), ContextCompat.RECEIVER_EXPORTED)
@@ -1109,6 +1122,20 @@ class MainActivity : ComponentActivity() {
                                                 startActivity(Intent.createChooser(send, "Share adapter log"))
                                             }, modifier = Modifier.weight(1f)) { Text("SHARE LOG") }
                                         }
+                                        Button(onClick = {
+                                            val header = "SX4 Scan Pro session log\n" + "v0.8.0 • PRE-RELEASE • BUILD 26" + "\nStatus: " + status + "\nAdapter: " + adapterName + "\nStandard PIDs advertised: " + supportedPids.size
+                                            val file = sessionLog.export(header)
+                                            if (file == null) logPreview = listOf("Could not write the session log file.") else {
+                                                val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.files", file)
+                                                val send = Intent(Intent.ACTION_SEND).apply {
+                                                    type = "text/plain"
+                                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                                    putExtra(Intent.EXTRA_SUBJECT, "SX4 Scan Pro session log")
+                                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                }
+                                                startActivity(Intent.createChooser(send, "Share session log"))
+                                            }
+                                        }, modifier = Modifier.fillMaxWidth()) { Text("SHARE FULL SESSION LOG (FILE)") }
                                         Text(if (logPreview.isEmpty()) "Tap REFRESH to show the latest adapter traffic." else logPreview.joinToString("\n"), color = Color.White, fontSize = 13.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
                                     }
                                 }
@@ -1198,6 +1225,9 @@ class MainActivity : ComponentActivity() {
         val config = connConfig
         sendCommand("ATZ", 5000)
         config.initCommands().forEach { sendCommand(it) }
+        // Facts for the session log only; a failed query here never blocks connecting.
+        sessionLog.append("EVT", "connect: adapter=" + chosen.name + " " + chosen.address)
+        listOf("ATI", "ATRV", "ATDP").forEach { q -> runCatching { sendCommand(q, 3000) } }
         // "Connected" must mean the ECU answered, not just that the adapter did.
         val negotiation = EcuNegotiation { command, timeoutMs -> sendCommand(command, timeoutMs) }
             .apply { preferredProtocol = config.protocol.elmNumber }.run()
@@ -1247,7 +1277,7 @@ class MainActivity : ComponentActivity() {
 
             s.outputStream.write((command + "\r").toByteArray(Charsets.US_ASCII))
             s.outputStream.flush()
-            traffic.add("TX", command)
+            logTraffic("TX", command)
             val out = StringBuilder()
             val deadline = System.currentTimeMillis() + timeoutMs
             var promptReceived = false
@@ -1266,7 +1296,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
             if (!promptReceived) throw IOException("Timed out waiting for OBD response to $command")
-            traffic.add("RX", out.toString().trim().replace("\r", " ⏎ "))
+            logTraffic("RX", out.toString().trim().replace("\r", " ⏎ "))
             // DTC replies keep one line per ECU frame so multi-frame answers can be decoded;
             // everything else is compacted as before.
             val response = if (keepLines) {
@@ -1282,7 +1312,7 @@ class MainActivity : ComponentActivity() {
             // not abort the remaining read-only mode checks.
             return response
         } catch (e: Exception) {
-            traffic.add("ERR", "$command: ${e.message ?: e.javaClass.simpleName}")
+            logTraffic("ERR", "$command: ${e.message ?: e.javaClass.simpleName}")
             closeSocket()
             throw if (e is IOException) e else IOException("OBD transaction failed for $command", e)
         }
@@ -1697,6 +1727,7 @@ class MainActivity : ComponentActivity() {
         if (sendReceiverCommand(name)) done else "Could not reach Open Headunit. Is it installed and up to date?"
 
     private fun closeSocket() {
+        if (socket != null) sessionLog.append("EVT", "socket closed")
         try { socket?.close() } catch (_: Exception) { }
         socket = null
     }
