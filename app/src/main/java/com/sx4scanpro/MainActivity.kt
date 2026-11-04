@@ -738,7 +738,7 @@ class MainActivity : ComponentActivity() {
                                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text("HEALTH REPORT", color = cyan, style = MaterialTheme.typography.titleMedium)
                                         Text("A one-page PDF of the current readings, the last fault scan, distance and maintenance status. Anything not read is marked as such.", color = muted)
-                                        Button(onClick = { shareHealthReport(dtcScanned, dtcCodes) }) { Text("SHARE HEALTH REPORT (PDF)") }
+                                        Button(onClick = { shareHealthReport(dtcScanned, dtcCodes, gauges, connected, adapterName) }) { Text("SHARE HEALTH REPORT (PDF)") }
                                         if (reportNote.isNotBlank()) Text(reportNote, color = muted, fontSize = 13.sp)
                                     }
                                 }
@@ -1574,7 +1574,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun shareHealthReport(scanned: Boolean, codes: List<TroubleCodeResult>) {
+    private fun shareHealthReport(scanned: Boolean, codes: List<TroubleCodeResult>, gauges: List<GaugeValue>, isConnected: Boolean, adapterName: String) {
         try {
             val now = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).format(java.util.Date())
             val readings = gauges.filter { it.available && it.label != "Manifold pressure" }.map { Triple(it.label, it.value, it.unit) }
@@ -1583,9 +1583,9 @@ class MainActivity : ComponentActivity() {
                 n to Maintenance.describe(Maintenance.status(interval, trackedKm, prefs.getFloat(Maintenance.key(n, "done"), 0f).toDouble()))
             }.filter { it.second != "No interval set" }
             val lines = HealthReport.lines(HealthReport.Input(
-                now, status == "Connected", adapterName, readings,
+                now, isConnected, adapterName, readings,
                 if (scanned) codes.map { it.code to it.category } else null,
-                if (status == "Connected" && trip.dataMs > 0) trip.distanceKm else null, trackedKm, maint
+                if (isConnected && trip.dataMs > 0) trip.distanceKm else null, trackedKm, maint
             ))
             val doc = android.graphics.pdf.PdfDocument()
             val page = doc.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(595, 842, 1).create())
