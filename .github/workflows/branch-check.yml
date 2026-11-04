@@ -27,6 +27,14 @@ jobs:
           set -o pipefail
           { gradle testDebugUnitTest assembleDebug --console=plain 2>&1 | tee build.log; } || echo "FAILED" > build.failed
           test ! -f build.failed
+      - name: Upload debug APK
+        if: steps.build.outcome == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: SX4-Scan-Pro-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
       - name: Publish log to ci-log branch
         if: always()
         run: |
