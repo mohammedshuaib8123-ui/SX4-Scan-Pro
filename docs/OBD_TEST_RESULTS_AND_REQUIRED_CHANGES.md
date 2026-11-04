@@ -417,3 +417,650 @@ Paths below are relative to the Kotlin source root; package names are recorded e
 The file/class inventory is not a substitute for the actual source. For a reproducible code review, retain the exact source snapshots or immutable commit reference for these six files, along with test output. Record which decoders are standard OBD-II, which are Suzuki-specific, the source/specification for each formula or identifier, and which have been confirmed on the user's vehicle.
 
 Do not copy V2 source into the original repository merely to make this document self-contained. Keep the original application baseline and the V2 implementation as separate workstreams.
+
+
+---
+
+## 11. V2 diagnostic-explorer source snapshots — reference only
+
+The following six Kotlin source files are reproduced from the code supplied in this conversation. They belong to the separate V2 diagnostic-explorer workstream. They are preserved for review, not as proof that this implementation exists in or has been validated in the original SX4 Scan Pro app.
+
+**Important:** The VIN in the sample profile/mock data is a dummy example, not the user's vehicle VIN. The mock engine returns simulated data. Hard-coded ECU identities, addresses, DTCs, telemetry values and module statuses are examples only until verified against actual raw vehicle responses. The source comments' use of “verified” is not proof of validation.
+
+### 11.1 model/DiagnosticModels.kt
+Package: \`com.sx4.zdi.diagnostics.explorer.model\`
+
+\`\`\`kotlin
+package com.sx4.zdi.diagnostics.explorer.model
+
+import java.time.Instant
+
+enum class DiagnosticProtocol(val description: String, val elmAtCommand: String) {
+    ISO_15765_4_CAN_11BIT_500K("ISO 15765-4 CAN (11-bit, 500 kbps)", "ATSP6"),
+    ISO_14230_4_KWP_FAST("ISO 14230-4 KWP (Fast Init)", "ATSP5"),
+    UNKNOWN("Auto-Scanning Protocol...", "ATSP0")
+}
+
+enum class EcuTarget(val displayName: String, val requestHeaderHex: String, val responseFilterHex: String) {
+    ENGINE("Magneti Marelli MJD Engine ECU", "7E0", "7E8"),
+    ABS("Bosch ABS 8.0 ESP Controller", "720", "728"),
+    BCM("Suzuki Body Control Module (BCM)", "740", "748"),
+    CLUSTER("Instrument Panel Cluster (IPC)", "760", "768")
+}
+
+data class DiagnosticTroubleCode(
+    val code: String,
+    val description: String,
+    val severity: DtcSeverity,
+    val ecuSource: EcuTarget,
+    val status: DtcStatus
+)
+
+enum class DtcSeverity { CRITICAL, WARNING, ADVISORY }
+enum class DtcStatus { CONFIRMED, PENDING, PERMANENT }
+
+data class LiveParameter(
+    val id: String,
+    val name: String,
+    val valueFormatted: String,
+    val numericValue: Double,
+    val unit: String,
+    val minThreshold: Double,
+    val maxThreshold: Double,
+    val category: ParameterCategory,
+    val verified: Boolean = false
+)
+
+enum class ParameterCategory {
+    AIR_TURBO,
+    FUEL_INJECTION,
+    TEMPERATURES,
+    EMISSIONS,
+    ELECTRICAL
+}
+
+data class EcuProfile(
+    val vin: String,
+    val ecuHardware: String,
+    val ecuSoftware: String,
+    val detectedProtocol: DiagnosticProtocol,
+    val supportedStandardPids: Set<Int>,
+    val verifiedParameters: Set<String>,
+    val lastScanTimestamp: Instant
+)
+\`\`\`
+
+### 11.2 engine/ObdTransport.kt
+Package: \`com.sx4.zdi.diagnostics.explorer.engine\`
+
+\`\`\`kotlin
+package com.sx4.zdi.diagnostics.explorer.engine
+
+import com.sx4.zdi.diagnostics.explorer.model.EcuTarget
+import kotlinx.coroutines.flow.Flow
+
+interface ObdTransport {
+    suspend fun sendCommand(rawCmd: String, timeoutMs: Long = 200): String
+    fun observeConnectionState(): Flow<Boolean>
+}
+
+class DiagnosticCommandPipeline(
+    private val transport: ObdTransport
+) {
+    private var currentHeader: String = ""
+
+    suspend fun configureForEcu(ecu: EcuTarget) {
+        if (currentHeader != ecu.requestHeaderHex) {
+            transport.sendCommand("ATSH\${ecu.requestHeaderHex}")
+            transport.sendCommand("ATCRA\${ecu.responseFilterHex}")
+            currentHeader = ecu.requestHeaderHex
+        }
+    }
+
+    suspend fun queryPid(serviceAndPidHex: String): String {
+        val rawResponse = transport.sendCommand(serviceAndPidHex, timeoutMs = 180)
+        return cleanHexResponse(rawResponse)
+    }
+
+    private fun cleanHexResponse(raw: String): String {
+        return raw.replace("\\s+".toRegex(), "")
+            .replace(">", "")
+            .replace("\\r", "")
+            .replace("\\n", "")
+            .uppercase()
+    }
+}
+\`\`\`
+
+### 11.3 engine/SuzukiParamDecoders.kt
+Package: \`com.sx4.zdi.diagnostics.explorer.engine\`
+
+\`\`\`kotlin
+package com.sx4.zdi.diagnostics.explorer.engine
+
+object SuzukiParamDecoders {
+
+    fun decodeRailPressureBar(hexPayload: String): Double? {
+        val bytes = extractDataBytes(hexPayload, expectedService = "41", expectedPid = "23") ?: return null
+        if (bytes.size < 2) return null
+        val kpa = ((bytes[0] * 256) + bytes[1]) * 10.0
+        return kpa / 100.0
+    }
+
+    fun calculateBoostBar(mapKpa: Double, baroKpa: Double): Double {
+        val delta = mapKpa - baroKpa
+        return if (delta > 0) delta / 100.0 else 0.0
+    }
+
+    fun decodeEgrDutyPercent(hexPayload: String): Double? {
+        val bytes = extractDataBytes(hexPayload, expectedService = "41", expectedPid = "2C") ?: return null
+        if (bytes.isEmpty()) return null
+        return (bytes[0] * 100.0) / 255.0
+    }
+
+    fun decodeCoolantTempC(hexPayload: String): Double? {
+        val bytes = extractDataBytes(hexPayload, expectedService = "41", expectedPid = "05") ?: return null
+        if (bytes.isEmpty()) return null
+        return (bytes[0] - 40.0)
+    }
+
+    fun decodeMafGramsPerSecond(hexPayload: String): Double? {
+        val bytes = extractDataBytes(hexPayload, expectedService = "41", expectedPid = "10") ?: return null
+        if (bytes.size < 2) return null
+        return ((bytes[0] * 256) + bytes[1]) / 100.0
+    }
+
+    private fun extractDataBytes(hexPayload: String, expectedService: String, expectedPid: String): List<Int>? {
+        val clean = hexPayload.trim()
+        val prefix = "$expectedService$expectedPid"
+        val idx = clean.indexOf(prefix)
+        if (idx == -1) return null
+        val dataPart = clean.substring(idx + prefix.length)
+        if (dataPart.length % 2 != 0) return null
+
+        return dataPart.chunked(2).mapNotNull { it.toIntOrNull(16) }
+    }
+}
+\`\`\`
+
+### 11.4 mock/MockDiagnosticEngine.kt
+Package: \`com.sx4.zdi.diagnostics.explorer.mock\`
+
+\`\`\`kotlin
+package com.sx4.zdi.diagnostics.explorer.mock
+
+import com.sx4.zdi.diagnostics.explorer.engine.ObdTransport
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+import kotlin.random.Random
+
+class MockDiagnosticEngine : ObdTransport {
+
+    private var selectedHeader: String = "7E0"
+
+    override suspend fun sendCommand(rawCmd: String, timeoutMs: Long): String {
+        delay(Random.nextLong(15, 35))
+        val clean = rawCmd.trim().uppercase()
+
+        if (clean.startsWith("ATSH")) {
+            selectedHeader = clean.removePrefix("ATSH")
+            return "OK"
+        }
+        if (clean.startsWith("AT")) return "OK"
+
+        return when (selectedHeader) {
+            "7E0" -> handleEngineEcu(clean)
+            "720" -> handleAbsEcu(clean)
+            "740" -> handleBcmEcu(clean)
+            else -> "NO DATA"
+        }
+    }
+
+    override fun observeConnectionState(): Flow<Boolean> = flowOf(true)
+
+    private fun handleEngineEcu(cmd: String): String = when (cmd) {
+        "0100" -> "4100BE3EB811"
+        "0120" -> "41208005A011"
+        "0105" -> "4105" + "%02X".format(128)
+        "010B" -> "410B" + "%02X".format(165)
+        "0133" -> "4133" + "%02X".format(100)
+        "0123" -> "4123" + "%04X".format(5200)
+        "012C" -> "412C" + "%02X".format(115)
+        "0110" -> "4110" + "%04X".format(4250)
+        "03"   -> "430202380101"
+        "07"   -> "47010401"
+        "0902" -> "4902014D413345594231315330303130323334"
+        else   -> "NO DATA"
+    }
+
+    private fun handleAbsEcu(cmd: String): String = when (cmd) {
+        "03" -> "4301C0035"
+        else -> "NO DATA"
+    }
+
+    private fun handleBcmEcu(cmd: String): String = when (cmd) {
+        "03" -> "4300"
+        else -> "NO DATA"
+    }
+}
+\`\`\`
+
+### 11.5 ui/SuzukiEcuExplorerScreen.kt
+Package: \`com.sx4.zdi.diagnostics.explorer.ui\`
+
+\`\`\`kotlin
+package com.sx4.zdi.diagnostics.explorer.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.sx4.zdi.diagnostics.explorer.model.*
+
+val ExplorerBg = Color(0xFF0D0F12)
+val ExplorerCard = Color(0xFF15191E)
+val ExplorerBorder = Color(0xFF262D35)
+val AccentCrimson = Color(0xFFE52020)
+val AccentCyan = Color(0xFF00E5FF)
+val AccentAmber = Color(0xFFFFB300)
+val TextMuted = Color(0xFF8A98A5)
+
+@Composable
+fun SuzukiEcuExplorerScreen(
+    onNavigateBack: () -> Unit = {}
+) {
+    var activeTab by remember { mutableStateOf(ExplorerTab.ECU_OVERVIEW) }
+    val isSimulationMode = remember { true }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(ExplorerBg)
+            .padding(16.dp)
+    ) {
+        TopExplorerHeader(
+            isSimulationMode = isSimulationMode,
+            onBackClick = onNavigateBack
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        ExplorerTabRow(
+            selectedTab = activeTab,
+            onTabSelected = { activeTab = it }
+        )
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Box(modifier = Modifier.fillMaxSize()) {
+            when (activeTab) {
+                ExplorerTab.ECU_OVERVIEW -> EcuOverviewSubscreen()
+                ExplorerTab.LIVE_PARAMETERS -> LiveParametersSubscreen()
+                ExplorerTab.ADVANCED_DTC -> AdvancedDtcSubscreen()
+                ExplorerTab.VEHICLE_PROFILE -> VehicleProfileSubscreen()
+            }
+        }
+    }
+}
+
+enum class ExplorerTab(val title: String, val icon: ImageVector) {
+    ECU_OVERVIEW("ECU Overview", Icons.Default.DirectionsCar),
+    LIVE_PARAMETERS("DDiS Telemetry", Icons.Default.Speed),
+    ADVANCED_DTC("DTC Explorer", Icons.Default.Warning),
+    VEHICLE_PROFILE("Vehicle Profile", Icons.Default.Settings)
+}
+
+@Composable
+fun TopExplorerHeader(isSimulationMode: Boolean, onBackClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBackClick) {
+                Icon(Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
+            }
+            Spacer(modifier = Modifier.width(8.dp))
+            Column {
+                Text(
+                    text = "SUZUKI ECU EXPLORER",
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.5.sp
+                )
+                Text(
+                    text = "MARUTI SUZUKI SX4 ZDi • 1.3 DDiS DIESEL",
+                    color = AccentCyan,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        }
+
+        if (isSimulationMode) {
+            Surface(
+                color = AccentAmber.copy(alpha = 0.15f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, AccentAmber),
+                shape = RoundedCornerShape(4.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Info,
+                        contentDescription = null,
+                        tint = AccentAmber,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "SIMULATION MODE — NOT CONNECTED TO VEHICLE",
+                        color = AccentAmber,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.8.sp
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ExplorerTabRow(selectedTab: ExplorerTab, onTabSelected: (ExplorerTab) -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(ExplorerCard)
+            .border(1.dp, ExplorerBorder, RoundedCornerShape(8.dp))
+            .padding(4.dp)
+    ) {
+        ExplorerTab.values().forEach { tab ->
+            val isSelected = selectedTab == tab
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(if (isSelected) AccentCrimson.copy(alpha = 0.25f) else Color.Transparent)
+                    .clickable { onTabSelected(tab) }
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = tab.icon,
+                        contentDescription = null,
+                        tint = if (isSelected) AccentCrimson else TextMuted,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = tab.title,
+                        color = if (isSelected) Color.White else TextMuted,
+                        fontSize = 12.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun EcuOverviewSubscreen() {
+    val modules = listOf(
+        EcuCardItem("Magneti Marelli Engine ECU", "0x7E0 / 0x7E8", "MJD 6F3.S3 CAN", "ONLINE", AccentCyan),
+        EcuCardItem("Bosch ABS 8.0 Controller", "0x720 / 0x728", "ISO 14230 CAN", "ONLINE", AccentCyan),
+        EcuCardItem("Body Control Module (BCM)", "0x740 / 0x748", "Suzuki Enhanced CAN", "STANDBY", AccentAmber),
+        EcuCardItem("Instrument Cluster (IPC)", "0x760 / 0x768", "CAN Gateway", "VERIFIED", AccentCyan)
+    )
+
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        items(modules) { mod ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(ExplorerCard)
+                    .border(1.dp, ExplorerBorder, RoundedCornerShape(8.dp))
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(mod.name, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("Header: \${mod.address} • Protocol: \${mod.protocol}", color = TextMuted, fontSize = 11.sp)
+                }
+                Surface(
+                    color = mod.statusColor.copy(alpha = 0.2f),
+                    shape = RoundedCornerShape(4.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, mod.statusColor)
+                ) {
+                    Text(
+                        text = mod.status,
+                        color = mod.statusColor,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+data class EcuCardItem(val name: String, val address: String, val protocol: String, val status: String, val statusColor: Color)
+
+@Composable
+fun LiveParametersSubscreen() {
+    val params = listOf(
+        LiveParameter("P1", "Common Rail Pressure (Actual)", "520.0 bar", 520.0, "bar", 250.0, 1600.0, ParameterCategory.FUEL_INJECTION, true),
+        LiveParameter("P2", "VGT Turbo Boost (Derived)", "0.65 bar", 0.65, "bar", 0.0, 1.45, ParameterCategory.AIR_TURBO, true),
+        LiveParameter("P3", "Coolant Temperature", "88.0 °C", 88.0, "°C", 80.0, 98.0, ParameterCategory.TEMPERATURES, true),
+        LiveParameter("P4", "EGR Commanded Position", "45.1 %", 45.1, "%", 0.0, 100.0, ParameterCategory.EMISSIONS, true),
+        LiveParameter("P5", "Mass Air Flow (MAF)", "42.5 g/s", 42.5, "g/s", 8.0, 220.0, ParameterCategory.AIR_TURBO, true)
+    )
+
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        items(params) { param ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(ExplorerCard)
+                    .border(1.dp, ExplorerBorder, RoundedCornerShape(8.dp))
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(param.name, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Category: \${param.category.name} • Verified PID", color = TextMuted, fontSize = 10.sp)
+                }
+                Text(
+                    text = param.valueFormatted,
+                    color = AccentCyan,
+                    fontSize = 18.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun AdvancedDtcSubscreen() {
+    val dtcs = listOf(
+        DiagnosticTroubleCode("P0238", "Turbocharger Boost Sensor 'A' Circuit High", DtcSeverity.WARNING, EcuTarget.ENGINE, DtcStatus.CONFIRMED),
+        DiagnosticTroubleCode("P0401", "Exhaust Gas Recirculation (EGR) Flow Insufficient", DtcSeverity.ADVISORY, EcuTarget.ENGINE, DtcStatus.PENDING),
+        DiagnosticTroubleCode("C0035", "Left Front Wheel Speed Sensor Circuit", DtcSeverity.CRITICAL, EcuTarget.ABS, DtcStatus.CONFIRMED)
+    )
+
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        items(dtcs) { dtc ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(ExplorerCard)
+                    .border(1.dp, ExplorerBorder, RoundedCornerShape(8.dp))
+                    .padding(16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = dtc.code,
+                            color = AccentCrimson,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("•  \${dtc.ecuSource.displayName}", color = TextMuted, fontSize = 11.sp)
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(dtc.description, color = Color.White, fontSize = 12.sp)
+                }
+                Surface(
+                    color = when (dtc.status) {
+                        DtcStatus.CONFIRMED -> AccentCrimson.copy(alpha = 0.2f)
+                        DtcStatus.PENDING -> AccentAmber.copy(alpha = 0.2f)
+                        DtcStatus.PERMANENT -> Color.Gray.copy(alpha = 0.2f)
+                    },
+                    shape = RoundedCornerShape(4.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, if (dtc.status == DtcStatus.CONFIRMED) AccentCrimson else AccentAmber)
+                ) {
+                    Text(
+                        text = dtc.status.name,
+                        color = if (dtc.status == DtcStatus.CONFIRMED) AccentCrimson else AccentAmber,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun VehicleProfileSubscreen() {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .clip(RoundedCornerShape(8.dp))
+            .background(ExplorerCard)
+            .border(1.dp, ExplorerBorder, RoundedCornerShape(8.dp))
+            .padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Text("STORED VEHICLE PROFILE", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        ProfileRow("VIN (Mode 09)", "MA3EYB11S0010234")
+        ProfileRow("Target Chassis", "2012 Maruti Suzuki SX4 ZDi (India)")
+        ProfileRow("Engine Assembly", "Fiat 1.3 Multijet DDiS 89 bhp VGT")
+        ProfileRow("Active Protocol", "ISO 15765-4 CAN (11-bit, 500 kbps)")
+        ProfileRow("Powertrain Header", "Request: 0x7E0  |  Response: 0x7E8")
+        ProfileRow("ABS Header", "Request: 0x720  |  Response: 0x728")
+        ProfileRow("Read-Only Safety Lock", "ENFORCED (Mode 04 & 08 Excluded)")
+    }
+}
+
+@Composable
+fun ProfileRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Text(label, color = TextMuted, fontSize = 12.sp)
+        Text(value, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, fontFamily = FontFamily.Monospace)
+    }
+}
+\`\`\`
+
+### 11.6 test/SuzukiParamDecodersTest.kt
+Package: \`com.sx4.zdi.diagnostics.explorer.test\`
+
+\`\`\`kotlin
+package com.sx4.zdi.diagnostics.explorer.test
+
+import com.sx4.zdi.diagnostics.explorer.engine.SuzukiParamDecoders
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
+
+class SuzukiParamDecodersTest {
+
+    @Test
+    fun testRailPressureDecoding() {
+        // Raw ELM response: 41 23 14 50 -> 0x1450 = 5200 decimal -> 52,000 kPa -> 520.0 bar
+        val response = "41231450"
+        val railBar = SuzukiParamDecoders.decodeRailPressureBar(response)
+        assertEquals(520.0, railBar ?: 0.0, 0.1)
+    }
+
+    @Test
+    fun testBoostCalculation() {
+        val map = 165.0  // kPa (1.65 bar abs)
+        val baro = 100.0 // kPa (1.00 bar atm)
+        val boostBar = SuzukiParamDecoders.calculateBoostBar(map, baro)
+        assertEquals(0.65, boostBar, 0.01)
+    }
+
+    @Test
+    fun testCoolantTempDecoding() {
+        // Raw: 41 05 80 -> 0x80 = 128 -> 128 - 40 = 88°C
+        val response = "410580"
+        val temp = SuzukiParamDecoders.decodeCoolantTempC(response)
+        assertEquals(88.0, temp ?: 0.0, 0.1)
+    }
+
+    @Test
+    fun testInvalidHexReturnsNull() {
+        val badResponse = "NO DATA"
+        assertNull(SuzukiParamDecoders.decodeCoolantTempC(badResponse))
+    }
+}
+\`\`\`
+
+### 11.7 Mandatory review checklist
+
+Claude must review rather than assume correctness:
+
+- Verify PID 23 rail-pressure scaling against the applicable specification; confirm that formula, comments and expected test value agree.
+- Verify EGR PID 2C semantics and scaling for the actual ECU.
+- Make the hex parser reject malformed characters rather than silently dropping invalid byte pairs; validate exact payload length, service/PID, headers, multi-frame and multi-ECU responses.
+- Confirm ELM command syntax and adapter support for ATSH/ATCRA, and ensure header/filter changes cannot desynchronise the existing serialized command queue.
+- Verify all ECU addresses and module identities on the actual vehicle before querying non-engine modules.
+- Validate Mode 09 VIN framing; never treat the dummy VIN as the user's VIN.
+- Validate mock ABS DTC response framing and encoding.
+- Remove hard-coded example DTCs, telemetry, VIN and ECU status from live UI. Live values must come only from validated responses; otherwise show unavailable, not tested or stale.
+- Add tests for malformed/truncated/extra payloads, wrong service/PID, boundaries, multi-frame responses and multiple ECU replies.
+- Treat 180 ms as an unverified proposal. Measure actual adapter/ECU latency; do not use a fixed aggressive timeout as a blanket fix for the 4.4-second refresh.
+- Keep the app read-only: no clear-DTC, actuation, security access, programming, coding, adaptation or reset commands.
+- Ensure the mock transport cannot be mistaken for a live vehicle connection.
+
+This checklist is for investigation. It does not imply that the supplied code has passed validation.
