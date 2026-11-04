@@ -93,11 +93,13 @@ internal fun SxInstrument(
     footer: String,
     modifier: Modifier = Modifier,
     shiftLights: Boolean = false,
-    hotFrom: Float? = null
+    hotFrom: Float? = null,
+    ignite: Float = 1f
 ) {
     val number = readingOf(gauge)
     val stale = isStale(gauge, nowMs)
-    val fraction by animateFloatAsState(scale.fraction(number), spring(Spring.DampingRatioLowBouncy, Spring.StiffnessLow), label = "sx-instrument")
+    val animated by animateFloatAsState(scale.fraction(number), spring(Spring.DampingRatioLowBouncy, Spring.StiffnessLow), label = "sx-instrument")
+    val fraction = animated * ignite
     val description = if (number == null) "$title: no signal" else "$title: ${gauge.value} $unit" + if (stale) ", stale" else ""
     Column(
         modifier.alertPulse(alert, 10.dp).padding(start = 12.dp, end = 12.dp, top = 12.dp).semantics(mergeDescendants = true) { contentDescription = description }

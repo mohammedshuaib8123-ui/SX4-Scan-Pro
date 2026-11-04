@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -83,11 +84,12 @@ internal fun SxCockpit(
     onConnect: () -> Unit,
     onDisconnect: () -> Unit,
     onToggleWall: () -> Unit,
+    arrive: Float = 1f,
     modifier: Modifier = Modifier
 ) {
     val rpmSignal = readingOf(rpm) != null && !isStale(rpm, nowMs)
     val hudDim = if (mode == DriveMode.HUD) 0.45f else 1f
-    Column(modifier.verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(modifier.graphicsLayer { alpha = arrive; translationY = 5.dp.toPx() * (1f - arrive) }.verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text("YOUR DRIVE, AT A GLANCE", color = Sx.MutedForeground, fontSize = 9.sp, fontWeight = FontWeight.SemiBold)
@@ -105,11 +107,11 @@ internal fun SxCockpit(
         Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).clusterBand()) {
             SxInstrument(
                 "ENGINE SPEED", rpm, DialScale.forLabel("Engine RPM"), "RPM", "Engine speed", nowMs, "rpm" in alertSensors,
-                "Diesel · 1,248 cc", Modifier.weight(1f), shiftLights = true, hotFrom = hotRpm
+                "Diesel · 1,248 cc", Modifier.weight(1f), shiftLights = true, hotFrom = hotRpm, ignite = arrive
             )
             SxVehicleStage(fuel, battery, nowMs, Modifier.weight(1.4f).alpha(hudDim))
             if (mode == DriveMode.ECO) SxInstrument("FUEL ECONOMY", economy, DialScale(40f, 10f), "KM/L", "From ECU fuel rate and speed", nowMs, false, "Instant economy", Modifier.weight(1f))
-            else SxInstrument("VGT BOOST", boost, boostScale, boostCaption, "Boost pressure", nowMs, "boost" in alertSensors, "Variable geometry turbo", Modifier.weight(1f), hotFrom = hotBoost)
+            else SxInstrument("VGT BOOST", boost, boostScale, boostCaption, "Boost pressure", nowMs, "boost" in alertSensors, "Variable geometry turbo", Modifier.weight(1f), hotFrom = hotBoost, ignite = arrive)
         }
         Box(Modifier.alpha(hudDim)) { SxTelemetry(coolant, intake, egr, rail, tripKm, "coolant" in alertSensors, nowMs) }
         Row(Modifier.fillMaxWidth().alpha(hudDim), horizontalArrangement = Arrangement.spacedBy(20.dp)) {

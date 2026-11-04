@@ -575,7 +575,9 @@ class MainActivity : ComponentActivity() {
                                 val spdShown = spd.value.toDoubleOrNull()?.takeIf { spd.available }?.let { spd.copy(value = GaugeUnits.speedText(it, speedUnit), unit = speedUnit.label) } ?: spd.copy(unit = speedUnit.label)
                                 val bst = g("Turbo boost")
                                 val bstShown = bst.value.toDoubleOrNull()?.takeIf { bst.available }?.let { bst.copy(value = GaugeUnits.boostText(it, boostUnit), unit = boostUnit.label) } ?: bst.copy(unit = boostUnit.label)
+                                val arrive by animateFloatAsState(if (welcomeOverlayVisible) 0f else 1f, tween(if (welcomeOverlayVisible) 1 else 1200), label = "cockpit-arrive")
                                 SxCockpit(
+                                    arrive = arrive,
                                     connected = connected,
                                     rpm = g("Engine RPM"), boost = bstShown, boostScale = GaugeUnits.boostScale(boostUnit),
                                     boostCaption = boostUnit.label.uppercase(),
