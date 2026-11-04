@@ -388,9 +388,9 @@ Do not claim a root cause until the relevant code and evidence support it.
 
 ## 10. Related V2 diagnostic-explorer code inventory
 
-The following six Kotlin files were supplied as part of the separate SX4 Scan Pro V2 diagnostic-explorer implementation work. They are recorded here as a cross-reference for future review and handover.
+The following six Kotlin files were supplied as a diagnostic-explorer reference implementation for review. They are recorded here as a cross-reference for future review and handover.
 
-**Important:** This inventory is implementation context, not evidence from the real-vehicle test. It does not establish that these classes are present in, integrated into, or validated against the original SX4 Scan Pro application. Keep the original-version vehicle observations and V2 implementation work clearly separated.
+**Important:** This inventory is implementation context, not evidence from the real-vehicle test. It does not establish that these classes are present in, integrated into, or validated against the original SX4 Scan Pro application. Treat these listings as reference material only; inspect the actual source in this repository and do not access or modify any other repository or project.
 
 Paths below are relative to the Kotlin source root; package names are recorded exactly as supplied.
 
@@ -1064,3 +1064,153 @@ Claude must review rather than assume correctness:
 - Ensure the mock transport cannot be mistaken for a live vehicle connection.
 
 This checklist is for investigation. It does not imply that the supplied code has passed validation.
+
+
+---
+
+## 12. Consolidated implementation brief — observations first, then code fixes
+
+**Target:** Original SX4 Scan Pro repository only.
+
+**Repository boundary:** Work only in the repository containing this document. Do not access, clone, inspect, modify, or otherwise interact with any other repository or project. Do not transfer changes to another project.
+
+**Scope exclusions:** Ignore the Gauge Wall / gauge-wall implementation completely for this task. Do not inspect, redesign, refactor, or modify its UI or components. This task concerns OBD transport, ECU communication, ECU information discovery, diagnostic data correctness, logging, and the dedicated ECU Information capability only.
+
+### 12.1 Required execution order
+
+Claude must follow this order:
+
+1. Read Sections 1–9 and understand the real-vehicle observations and test evidence.
+2. Read Sections 10–11 as diagnostic-explorer reference material, not proof that those classes exist in this repository.
+3. Inspect the actual source code in this repository. Locate the real Bluetooth/ELM327 transport, command queue, PID discovery, polling scheduler, response parser, decoders, diagnostic models, logging, persistence and export code. Do not assume the reference file paths are present here.
+4. Map every relevant observation to the actual source file, class and function.
+5. Produce a findings table with evidence, classification, likely root cause and proposed correction.
+6. Present the audit and implementation plan before making code changes.
+7. Wait for explicit owner approval before coding.
+8. After approval, implement only justified changes on an isolated feature branch, run tests and build the debug APK.
+9. Report modified files, tests, build outcome and vehicle validations still outstanding.
+10. Do not merge into the default/main branch without explicit approval.
+
+### 12.2 Start with real-vehicle observations
+
+Use the measured results in Sections 2–3 as the starting point:
+
+- Torque Pro refreshed at approximately 1 second; SX4 Scan Pro's recorded RPM interval was approximately 4.4 seconds.
+- Successful command/response durations were approximately 250–270 ms.
+- Some PIDs returned NO DATA.
+- Polling continued for approximately 83 seconds before a socket-closed error.
+- With ignition OFF and key in ACC, the adapter/Bluetooth connection could remain alive while ECU readings stopped.
+- Turning ignition ON did not reliably resume readings automatically.
+- The recorded session advertised 19 PIDs, but advertised PIDs must not be assumed to be consistently readable.
+- The shared PDF is a single diagnostic snapshot, not a time-series test.
+- A zero boost reading at idle is not proof of a fault.
+- A no-DTC result is not proof that all vehicle modules are fault-free.
+
+Do not assume a root cause. Correlate each observation with actual code and logs.
+
+### 12.3 ECU information capture — mandatory feature
+
+The app must be able to run a user-initiated, read-only ECU information and capability scan and preserve everything the vehicle actually exposes.
+
+For every responding ECU/module, where supported, investigate and capture:
+
+- ECU response address/header and detected protocol.
+- ECU identity or reported description.
+- VIN through supported Mode 09 services.
+- Calibration IDs and CVNs, where available.
+- Supported diagnostic services.
+- Advertised standard OBD-II PIDs.
+- PIDs that have actually returned valid, correctly framed data.
+- Readiness monitor information, where available.
+- DTC information returned by the queried ECU/service.
+- Adapter identification and connection details, where available.
+
+Do not assume that an ECU address, module, calibration field, PID or service exists. Do not label a module as present/online until a valid response has been received and correctly attributed.
+
+For each request, preserve:
+
+- Timestamp.
+- ECU address/header, if known.
+- Service/PID/request bytes sent.
+- Exact raw hexadecimal response.
+- Decoded value, only if the decoder is validated.
+- Request/response duration.
+- Outcome: success, NO DATA, timeout, malformed response, transport error, unsupported, or not tested.
+- Relevant connection state and error detail.
+
+Keep raw responses as the evidence source so future decoder corrections can be made without repeating every vehicle test.
+
+### 12.4 ECU profile, repeat scan and exports
+
+Create a persistent ECU profile from actual scan results. Store available vehicle/ECU identity, protocol, calibration information, discovered modules, advertised and verified PIDs, supported services, raw response references, timestamps, scan status and errors.
+
+Allow the owner to:
+- Run a fresh scan on demand.
+- Save the scan as a dated session.
+- Compare a new scan with the previous scan.
+- Identify newly discovered, changed, previously responsive and currently unavailable capabilities.
+- Export the results as structured JSON and CSV, plus a readable PDF report if the existing app architecture supports it.
+
+A timeout or temporary NO DATA response must not permanently classify a capability as unsupported. Distinguish confirmed-supported, advertised-but-not-verified, unsupported, not tested and temporarily unavailable.
+
+### 12.5 Diagnostic capture and performance logging
+
+Capture timestamped ELM commands, raw replies, response duration, PID, polling priority, success/failure, NO DATA, timeout and malformed-response counts, Bluetooth state, ECU communication state, socket errors, recovery attempts, and time from ignition ON to first valid ECU response.
+
+Logging must not create excessive polling delays or storage growth. Provide an exportable session report so the owner can share the evidence for further analysis.
+
+### 12.6 Implementation audit — inspect the actual original-app code
+
+Inspect the actual implementation in this repository and locate equivalents of the following responsibilities. The six files in Sections 10–11 are reference examples only; do not assume their paths or packages exist here.
+
+- Diagnostic data models and ECU profile models.
+- Bluetooth Classic SPP connection and lifecycle.
+- ELM327 initialisation and protocol negotiation.
+- Serialized command pipeline and response framing.
+- Supported-PID bitmap discovery.
+- PID scheduler, prioritisation and polling intervals.
+- PID decoders and unit conversions.
+- DTC and Mode 09 response parsing.
+- ECU identity/capability scan.
+- Mock/simulation data isolation.
+- Diagnostic logging, persistence and exports.
+- Existing UI entry point for a separate ECU Information screen.
+
+Investigate the specific risks described in Section 11.7, including rail-pressure scaling, EGR PID semantics, strict hexadecimal parsing, MAP/barometric boost derivation, ELM header/filter behaviour, ECU address assumptions, VIN framing, DTC framing, and mock/live separation. Verify each against the actual code and applicable protocol documentation before changing it.
+
+### 12.7 Gauge Wall exclusion
+
+The Gauge Wall is explicitly outside this task. Do not inspect or change its design, gauge components, animations, layout, styling, or behaviour. Do not use Gauge Wall changes as a delivery criterion. Preserve it untouched.
+
+### 12.8 Safety and data integrity
+
+- All ECU discovery and diagnostic operations must remain read-only.
+- No DTC clearing, actuator tests, security access, ECU writes, coding, programming, adaptations or resets.
+- Do not invent ECU identities, VINs, calibration IDs, PIDs, DTCs or telemetry.
+- Never silently substitute mock values for missing live values.
+- Never display stale readings as live.
+- Do not send parallel ELM commands; preserve serialized request/response handling.
+- Do not change working Bluetooth behaviour without evidence and regression tests.
+- Do not treat a successful unit test as proof of real-vehicle compatibility.
+
+### 12.9 Findings and approval gate
+
+Before coding, return this table:
+
+| Real-vehicle observation / requirement | Actual repository file and symbol | Evidence | Finding classification | Root cause or uncertainty | Proposed fix |
+|---|---|---|---|---|---|
+
+Classify each item as confirmed defect, potential defect requiring vehicle validation, unsupported assumption, improvement opportunity, or no issue found.
+
+Then provide:
+1. Root-cause analysis for the slow refresh.
+2. Root-cause analysis or evidence gaps for NO DATA and socket closure.
+3. Ignition OFF/ACC/ON recovery analysis.
+4. Current ECU discovery and data-capture capability.
+5. Missing ECU information, raw logging, persistence and export capabilities.
+6. Exact files/classes/functions proposed for modification.
+7. Mandatory fixes versus optional improvements.
+8. Regression tests and risks to existing Bluetooth functionality.
+9. A staged implementation plan.
+
+**Do not modify, commit, push or merge code until the owner explicitly approves the findings and plan.** After approval, work only in this repository on an isolated branch. Do not merge without explicit approval.
