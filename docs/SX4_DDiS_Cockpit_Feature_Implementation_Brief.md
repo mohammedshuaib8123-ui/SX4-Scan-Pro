@@ -1338,3 +1338,491 @@ fun getCockpitColors(mode: DriveMode): CockpitColors {
     )
 }
 ```
+
+
+---
+
+# Appendix C — Welcome Identity Badge and Sport Gauge Wall (Owner-Supplied Reference)
+
+The following additions were supplied for the SX4 welcome identity and the cockpit gauge wall. The snippets below are preserved as the implementation reference. This documentation addition does not mean the code has been integrated into the Android app.
+
+## 1. SX4WelcomeBadge.kt
+
+**Purpose:** Renders a smoked-glass dark halo plate with metallic candy-crimson "SX4" and brushed-chrome "ZDi" text gradients so the title remains 100% legible over bright silver car bodywork.
+
+\`\`\`kotlin
+package com.sx4.zdi.cockpit
+
+import androidx.compose.animation.core.*
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+
+@Composable
+fun SX4WelcomeBadge(modifier: Modifier = Modifier) {
+    // Candy crimson metallic gradient for SX4
+    val crimsonGradient = Brush.linearGradient(
+        colors = listOf(Color(0xFFFF2A32), Color(0xFFD60010), Color(0xFF8A000A)),
+        start = Offset(0f, 0f),
+        end = Offset(0f, 120f)
+    )
+
+    // Brushed titanium chrome gradient for ZDi
+    val chromeGradient = Brush.linearGradient(
+        colors = listOf(Color(0xFFFFFFFF), Color(0xFFE2E8F0), Color(0xFF94A3B8)),
+        start = Offset(0f, 0f),
+        end = Offset(0f, 120f)
+    )
+
+    // Redline horizontal gradient rule
+    val redlineRule = Brush.horizontalGradient(
+        colors = listOf(Color.Transparent, Color(0xFFE11D2A), Color(0xFFFFA2A2), Color(0xFFE11D2A), Color.Transparent)
+    )
+
+    Box(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(horizontal = 24.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        // Smoked glass halo shield plate
+        Column(
+            modifier = Modifier
+                .shadow(elevation = 28.dp, shape = RoundedCornerShape(22.dp), ambientColor = Color.Black, spotColor = Color(0xFFE11D2A))
+                .clip(RoundedCornerShape(22.dp))
+                .background(Color(0xE00A0A0E))
+                .border(1.dp, Color(0x40E11D2A), RoundedCornerShape(22.dp))
+                .padding(horizontal = 32.dp, vertical = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Sporty micro kicker
+            Text(
+                text = "PRECISION IN EVERY DRIVE",
+                style = TextStyle(
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 4.sp,
+                    color = Color(0xFFFF4D4D)
+                )
+            )
+
+            Spacer(modifier = Modifier.height(6.dp))
+
+            // Main SX4 ZDi title with individual gradient fills
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Text(
+                    text = "SX4",
+                    style = TextStyle(
+                        fontSize = 46.sp,
+                        fontWeight = FontWeight.Black,
+                        fontStyle = FontStyle.Italic,
+                        letterSpacing = 2.sp,
+                        brush = crimsonGradient
+                    )
+                )
+                Text(
+                    text = "ZDi",
+                    style = TextStyle(
+                        fontSize = 46.sp,
+                        fontWeight = FontWeight.Black,
+                        fontStyle = FontStyle.Italic,
+                        letterSpacing = 2.sp,
+                        brush = chromeGradient
+                    )
+                )
+            }
+
+            // Tapered illuminated redline rule
+            Box(
+                modifier = Modifier
+                    .padding(vertical = 10.dp)
+                    .width(220.dp)
+                    .height(2.dp)
+                    .background(redlineRule)
+            )
+
+            // Subtitle caption
+            Text(
+                text = "WELCOME ABOARD  •  DDiS 1.3 TURBO",
+                style = TextStyle(
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    letterSpacing = 3.sp,
+                    color = Color(0xFFCBD5E1)
+                )
+            )
+        }
+    }
+}
+\`\`\`
+
+## 2. DDiSSportGaugesScreen.kt
+
+**Purpose:** Replaces the 7 cluttered blue circle cards with an enthusiast Nissan GT-R MFD layout featuring a dominant 0–5,000 RPM tachometer, 8-LED progressive shift lights, and 4 dark telemetry cards for Boost, Rail Pressure, Coolant, and EGR.
+
+**Placement:** Use this for the cockpit gauge-wall gauges.
+
+\`\`\`kotlin
+package com.sx4.zdi.cockpit
+
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlin.math.cos
+import kotlin.math.sin
+
+@Composable
+fun DDiSSportGaugesScreen(
+    modifier: Modifier = Modifier,
+    rpm: Int = 2240,
+    boostBar: Float = 1.05f,
+    railPressureBar: Int = 1350,
+    coolantC: Int = 88,
+    egrDutyPercent: Int = 18,
+    onRevChanged: (Int) -> Unit = {}
+) {
+    var isRevving by remember { mutableStateOf(false) }
+    val displayRpm = if (isRevving) 4250 else rpm
+
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color(0xFF090A0E))
+            .padding(16.dp)
+    ) {
+        // Top Horizon Status Header
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "SX4 ZDi  •  DDiS 1.3 TURBO TELEMETRY",
+                style = TextStyle(color = Color(0xFFEF4444), fontSize = 12.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+            )
+            Text(
+                text = "MULTIJET CRDi SYSTEM  |  ACTIVE",
+                style = TextStyle(color = Color(0xFF10B981), fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            )
+        }
+
+        // Main Cluster Grid: Left Hero Tachometer + Right 2x2 Telemetry Matrix
+        Row(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // LEFT: Hero Diesel Tachometer (0 - 5,000 RPM)
+            Column(
+                modifier = Modifier
+                    .weight(1.1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0xFF12141A))
+                    .border(1.dp, Color(0xFF222734), RoundedCornerShape(16.dp))
+                    .pointerInput(Unit) {
+                        detectTapGestures(
+                            onPress = {
+                                isRevving = true
+                                onRevChanged(4250)
+                                tryAwaitRelease()
+                                isRevving = false
+                                onRevChanged(rpm)
+                            }
+                        )
+                    }
+                    .padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                // 8-LED Shift Bar on top of Tachometer
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    val activeLeds = when {
+                        displayRpm >= 4200 -> 8
+                        displayRpm >= 3800 -> 7
+                        displayRpm >= 3400 -> 6
+                        displayRpm >= 3000 -> 5
+                        displayRpm >= 2600 -> 4
+                        displayRpm >= 2200 -> 3
+                        displayRpm >= 1800 -> 2
+                        displayRpm >= 1400 -> 1
+                        else -> 0
+                    }
+
+                    for (i in 1..8) {
+                        val color = when {
+                            i <= 3 -> if (i <= activeLeds) Color(0xFF10B981) else Color(0xFF133224)
+                            i <= 6 -> if (i <= activeLeds) Color(0xFFF59E0B) else Color(0xFF382A12)
+                            else -> if (i <= activeLeds) Color(0xFFEF4444) else Color(0xFF3B1518)
+                        }
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(8.dp)
+                                .padding(horizontal = 2.dp)
+                                .clip(RoundedCornerShape(2.dp))
+                                .background(color)
+                        )
+                    }
+                }
+
+                // Gauge Dial Canvas
+                Box(
+                    modifier = Modifier.size(230.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val stroke = 18.dp.toPx()
+                        val arcRadius = (size.minDimension - stroke) / 2
+                        val center = Offset(size.width / 2, size.height / 2)
+
+                        // Outer track
+                        drawArc(
+                            color = Color(0xFF1E222D),
+                            startAngle = 135f,
+                            sweepAngle = 270f,
+                            useCenter = false,
+                            topLeft = Offset(center.x - arcRadius, center.y - arcRadius),
+                            size = Size(arcRadius * 2, arcRadius * 2),
+                            style = Stroke(stroke, cap = StrokeCap.Round)
+                        )
+
+                        // Active sweep up to 5,000 rpm
+                        val sweep = ((displayRpm.coerceIn(0, 5000) / 5000f) * 270f)
+                        drawArc(
+                            brush = Brush.sweepGradient(listOf(Color(0xFF10B981), Color(0xFFF59E0B), Color(0xFFEF4444))),
+                            startAngle = 135f,
+                            sweepAngle = sweep,
+                            useCenter = false,
+                            topLeft = Offset(center.x - arcRadius, center.y - arcRadius),
+                            size = Size(arcRadius * 2, arcRadius * 2),
+                            style = Stroke(stroke, cap = StrokeCap.Round)
+                        )
+                    }
+
+                    // Digital Readout inside dial
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = "$displayRpm",
+                            style = TextStyle(color = Color.White, fontSize = 42.sp, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic)
+                        )
+                        Text(
+                            text = "RPM  •  x1000",
+                            style = TextStyle(color = Color(0xFF94A3B8), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 2.sp)
+                        )
+                        Text(
+                            text = if (displayRpm >= 4200) "SHIFT UP" else "HOLD TO REV",
+                            style = TextStyle(
+                                color = if (displayRpm >= 4200) Color(0xFFEF4444) else Color(0xFF10B981),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        )
+                    }
+                }
+
+                Text(
+                    text = "DDiS MULTIJET  •  PEAK TORQUE 1,750 - 3,200 RPM",
+                    style = TextStyle(color = Color(0xFF64748B), fontSize = 9.sp, letterSpacing = 1.sp)
+                )
+            }
+
+            // RIGHT: 2x2 Dark Carbon Telemetry Grid
+            Column(
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(modifier = Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TelemetryPod(
+                        title = "VGT BOOST",
+                        value = "\${String.format("%.2f", boostBar)} BAR",
+                        subtext = "Peak: 1.15 Bar (16.7 PSI)",
+                        statusColor = Color(0xFFEF4444),
+                        modifier = Modifier.weight(1f)
+                    )
+                    TelemetryPod(
+                        title = "COMMON RAIL P.",
+                        value = "$railPressureBar BAR",
+                        subtext = "High-Pressure CRDi",
+                        statusColor = Color(0xFF38BDF8),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                Row(modifier = Modifier.weight(1f).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    TelemetryPod(
+                        title = "COOLANT TEMP",
+                        value = "$coolantC °C",
+                        subtext = "Target: 86-90 °C (Optimal)",
+                        statusColor = Color(0xFF10B981),
+                        modifier = Modifier.weight(1f)
+                    )
+                    TelemetryPod(
+                        title = "EGR DUTY",
+                        value = "$egrDutyPercent %",
+                        subtext = "Part Throttle Flow",
+                        statusColor = Color(0xFFF59E0B),
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+
+        // Bottom Telemetry Rail
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(Color(0xFF12141A))
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text("0-100 KM/H: 11.2s", color = Color(0xFFE2E8F0), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("G-METER: +0.28 G", color = Color(0xFFE2E8F0), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            Text("BATTERY: 14.2V (CHARGING OK)", color = Color(0xFF10B981), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+@Composable
+fun TelemetryPod(
+    title: String,
+    value: String,
+    subtext: String,
+    statusColor: Color,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .fillMaxHeight()
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color(0xFF12141A))
+            .border(1.dp, Color(0xFF1F2430), RoundedCornerShape(12.dp))
+            .padding(14.dp),
+        verticalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(title, color = Color(0xFF94A3B8), fontSize = 11.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+            Box(modifier = Modifier.size(8.dp).clip(RoundedCornerShape(4.dp)).background(statusColor))
+        }
+
+        Text(
+            text = value,
+            style = TextStyle(color = Color.White, fontSize = 26.sp, fontWeight = FontWeight.Black, fontStyle = FontStyle.Italic)
+        )
+
+        Text(subtext, color = Color(0xFF64748B), fontSize = 10.sp)
+    }
+}
+\`\`\`
+
+## 3. Web Preview — src/styles.css additions
+
+**Purpose:** Defines the frosted smoked-glass badge halo with candy-crimson and chrome text gradients for the welcome screen, plus dark carbon styling.
+
+\`\`\`css
+/* Smoked Glass Halo Plate for Welcome Title */
+.welcome-identity {
+  position: absolute;
+  inset: auto 5% 15%;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: rgba(10, 10, 14, 0.82);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(225, 29, 42, 0.35);
+  border-radius: 20px;
+  padding: 18px 28px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.8), 0 0 24px rgba(225, 29, 42, 0.2);
+  max-width: 520px;
+  margin: 0 auto;
+}
+
+/* Candy Crimson "SX4" Gradient */
+.welcome-title-word:nth-child(1) {
+  background: linear-gradient(180deg, #ff2a32 0%, #d60010 50%, #8a000a 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 2px 8px rgba(214, 0, 16, 0.5));
+}
+
+/* Brushed Titanium Chrome "ZDi" Gradient */
+.welcome-title-word:nth-child(2) {
+  background: linear-gradient(180deg, #ffffff 0%, #e2e8f0 55%, #94a3b8 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.6));
+}
+
+/* Redline Center Hairline */
+.welcome-rule {
+  width: 180px;
+  height: 2px;
+  margin: 10px auto;
+  background: linear-gradient(90deg, transparent, #e11d2a, #ffa2a2, #e11d2a, transparent);
+}
+\`\`\`
+
+## 4. Web Preview — src/routes/index.tsx welcome markup
+
+**Purpose:** Pairs the kicker, gradient title spans, and subtitle inside the smoked-glass shield.
+
+\`\`\`tsx
+<div className="welcome-identity">
+  <p className="welcome-kicker">PRECISION IN EVERY DRIVE</p>
+  <h1>
+    <span className="welcome-title-word">SX4</span>
+    <span className="welcome-title-word">ZDi</span>
+  </h1>
+  <div className="welcome-rule" />
+  <p className="welcome-subtitle">WELCOME ABOARD • DDiS 1.3 TURBO</p>
+</div>
+\`\`\`
