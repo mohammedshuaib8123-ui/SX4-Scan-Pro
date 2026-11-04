@@ -31,7 +31,7 @@ import androidx.compose.material.icons.outlined.BatteryChargingFull
 import androidx.compose.material.icons.outlined.LocalGasStation
 import androidx.compose.material.icons.outlined.NorthEast
 import androidx.compose.material.icons.outlined.Route
-import androidx.compose.material.icons.outlined.ShowChart
+import androidx.compose.material.icons.automirrored.outlined.ShowChart
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Thermostat
 import androidx.compose.material3.Icon
@@ -104,7 +104,7 @@ internal fun SxInstrument(
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(title, color = Sx.MutedForeground, fontSize = 9.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            Icon(Icons.Outlined.ShowChart, contentDescription = null, tint = Sx.Primary, modifier = Modifier.size(15.dp))
+            Icon(Icons.AutoMirrored.Outlined.ShowChart, contentDescription = null, tint = Sx.Primary, modifier = Modifier.size(15.dp))
         }
         if (shiftLights) SxShiftLights(if (stale) null else number, Modifier.align(Alignment.CenterHorizontally).padding(top = 8.dp))
         BoxWithConstraints(Modifier.padding(top = 8.dp).align(Alignment.CenterHorizontally).widthIn(max = 260.dp).fillMaxWidth().aspectRatio(300f / 245f)) {
