@@ -3,4 +3,5 @@
     <files-path name="trips" path="trips/" />
     <files-path name="reports" path="reports/" />
     <files-path name="logs" path="logs/" />
+    <files-path name="ecu" path="ecu/" />
 </paths>

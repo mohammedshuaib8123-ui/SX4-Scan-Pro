@@ -237,6 +237,10 @@ class MainActivity : ComponentActivity() {
     private var socket: BluetoothSocket? = null
     private var supportedPids: Set<Int> = emptySet()
     @Volatile private var protocolText: String = ""
+    private var ecuProfile by mutableStateOf<EcuProfile?>(null)
+    private var ecuPrevious by mutableStateOf<EcuProfile?>(null)
+    private var ecuScanning by mutableStateOf(false)
+    private var ecuNote by mutableStateOf("")
     @Volatile private var adapterIdText: String = ""
     @Volatile private var adapterVoltageText: String = ""
     private var linkState by mutableStateOf(LinkState.COMMUNICATING)
@@ -297,6 +301,7 @@ class MainActivity : ComponentActivity() {
             addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
         }
         sessionLog.append("EVT", "app started")
+        loadEcuProfiles()
         ContextCompat.registerReceiver(this, btReceiver, btFilter, ContextCompat.RECEIVER_NOT_EXPORTED)
         // Open Headunit is another app, so its status broadcast needs an exported receiver.
         ContextCompat.registerReceiver(this, sessionReceiver, IntentFilter(HeadUnitProtocol.SESSION_STATE_ACTION), ContextCompat.RECEIVER_EXPORTED)
@@ -406,6 +411,7 @@ class MainActivity : ComponentActivity() {
                 try {
                     val result = withContext(Dispatchers.IO) { connectAndRead() }
                     adapterName = result.first
+                    adapterNameForScan = result.first
                     status = "Connected"
                     startTrip()
                     // The greeting plays only once the ECU has really answered (connectAndRead throws otherwise).
@@ -530,7 +536,7 @@ class MainActivity : ComponentActivity() {
         MaterialTheme(colorScheme = darkColorScheme(primary = cyan, secondary = Color(0xFFFFB84D), background = bg, surface = panel, onBackground = Color.White, onSurface = Color.White, onSurfaceVariant = muted)) {
             Scaffold(containerColor = bg) { padding ->
                 Column(Modifier.fillMaxSize().padding(padding).background(Sx.Background)) {
-                SxTopBar(connected = connected, mode = driveMode, onMode = { m -> driveMode = m; prefs.edit().putString("drive_mode", m.name).apply() }, onPower = { disconnect(); finish() })
+                SxTopBar(connected = connected, mode = driveMode, onMode = { m -> driveMode = m; prefs.edit().putString("drive_mode", m.name).apply() }, onPower = { disconnect(); finish() }, onEcuInfo = { selectedTab = 4 })
                 Column(Modifier.weight(1f).fillMaxWidth()) {
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         AnimatedContent(
@@ -925,6 +931,21 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
+                        4 -> SxEcuInfo(
+                            profile = ecuProfile,
+                            diff = ecuProfile?.let { cur -> ecuPrevious?.let { ProfileDiff.compare(it, cur) } },
+                            linkText = EcuReport.linkText(linkState, connected),
+                            liveFacts = AdapterFacts(if (connected) adapterName else "", adapterIdText, adapterVoltageText, protocolText),
+                            mode01Count = supportedPids.size,
+                            scanning = ecuScanning,
+                            canScan = ecuOnline,
+                            note = ecuNote,
+                            onScan = { runEcuScan(scope) },
+                            onExportJson = { exportEcu("json") },
+                            onExportCsv = { exportEcu("csv") },
+                            onExportPdf = { exportEcu("pdf") },
+                            onBack = { selectedTab = 0 }
+                        )
                         else -> LazyColumn(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             item {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
@@ -1389,6 +1410,84 @@ class MainActivity : ComponentActivity() {
                 is PollEvent.Polled -> {}
             }
             if (poller.monitor.state != LinkState.COMMUNICATING) return
+        }
+    }
+
+    private fun ecuDir() = java.io.File(filesDir, "ecu").apply { mkdirs() }
+
+    private fun loadEcuProfiles() {
+        runCatching {
+            ecuProfile = java.io.File(ecuDir(), "profile_latest.json").takeIf { it.exists() }?.let { EcuProfile.fromJson(it.readText()) }
+            ecuPrevious = java.io.File(ecuDir(), "profile_previous.json").takeIf { it.exists() }?.let { EcuProfile.fromJson(it.readText()) }
+        }
+    }
+
+    private fun runEcuScan(scope: kotlinx.coroutines.CoroutineScope) {
+        if (ecuScanning) return
+        scope.launch {
+            ecuScanning = true
+            ecuNote = "Scanning the ECU (read-only)…"
+            try {
+                val facts = AdapterFacts(adapterNameForScan, adapterIdText, adapterVoltageText, protocolText)
+                val profile = withContext(Dispatchers.IO) {
+                    EcuScan.run(elmPort, facts, supportedPids, "v0.8.0 build 26", System.currentTimeMillis()) { sessionLog.append("EVT", "ecu scan: $it") }
+                }
+                val dir = ecuDir()
+                val latest = java.io.File(dir, "profile_latest.json")
+                if (latest.exists()) latest.copyTo(java.io.File(dir, "profile_previous.json"), overwrite = true)
+                latest.writeText(profile.toJson())
+                ecuPrevious = ecuProfile
+                ecuProfile = profile
+                sessionLog.append("EVT", "ecu scan done: vin=" + profile.vin.status + " cal=" + profile.calIds.status + " cvn=" + profile.cvns.status)
+                ecuNote = "Scan finished."
+            } catch (e: Exception) {
+                sessionLog.append("EVT", "ecu scan failed: " + (e.message ?: e.javaClass.simpleName))
+                ecuNote = "Scan failed: " + (e.message ?: "communication error")
+            } finally { ecuScanning = false }
+        }
+    }
+
+    @Volatile private var adapterNameForScan: String = ""
+
+    private fun exportEcu(kind: String) {
+        val p = ecuProfile ?: return
+        try {
+            val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmm", java.util.Locale.US).format(java.util.Date(p.capturedAtMs))
+            val file = java.io.File(ecuDir(), "ecu_profile_$stamp.$kind")
+            val mime: String
+            when (kind) {
+                "json" -> { file.writeText(p.toJson()); mime = "application/json" }
+                "csv" -> { file.writeText(p.toCsv()); mime = "text/csv" }
+                else -> {
+                    val diff = ecuPrevious?.let { ProfileDiff.compare(it, p) }
+                    val lines = EcuReport.lines(p, diff).flatMap { it.chunked(88) }
+                    val doc = android.graphics.pdf.PdfDocument()
+                    val paint = android.graphics.Paint().apply { textSize = 10f; typeface = android.graphics.Typeface.MONOSPACE }
+                    var pageNo = 1
+                    var page = doc.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(595, 842, pageNo).create())
+                    var y = 50f
+                    for (line in lines) {
+                        if (y > 800f) { doc.finishPage(page); pageNo++; page = doc.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(595, 842, pageNo).create()); y = 50f }
+                        page.canvas.drawText(line, 36f, y, paint)
+                        y += 14f
+                    }
+                    doc.finishPage(page)
+                    java.io.FileOutputStream(file).use { doc.writeTo(it) }
+                    doc.close()
+                    mime = "application/pdf"
+                }
+            }
+            val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = mime
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "SX4 Scan Pro ECU information")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(send, "Share ECU information"))
+            ecuNote = "Saved " + file.name
+        } catch (e: Exception) {
+            ecuNote = "Export failed: " + (e.message ?: "storage error")
         }
     }
 
