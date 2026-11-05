@@ -12,7 +12,9 @@ Personal-use Kotlin/Compose tablet cockpit for a 2012 Maruti Suzuki SX4 ZDi (1.3
 | `claude/driving-features` | 5c6546d · PR #7 open · CI green · red/black UI port, drive modes, alerts, DTC explainer, freeze frame, maintenance, health report |
 | `claude/obd-recovery-and-ecu-info` | **active** · S1 pushed (b965f24) · CI green |
 
-## Task in progress
+## Task: all five stages implemented and CI-green; waiting for the vehicle test
+
+(original scope below)
 Implementing `docs/OBD_TEST_RESULTS_AND_REQUIRED_CHANGES.md` (Section 12 order). Owner-approved plan, with these decisions:
 1. Plan approved.
 2. "ECU INFO" entry goes in the empty space of the Cockpit top bar.
@@ -25,8 +27,8 @@ Implementing `docs/OBD_TEST_RESULTS_AND_REQUIRED_CHANGES.md` (Section 12 order).
 | S1 | `ElmReply`, `SessionLog` (3 × ~700 KB rolling file), BT ACL events, `ATI/ATRV/ATDP` capture, "Share full session log" button, `logs/` FileProvider path, APK artifact in CI | **Done, CI green** |
 | S2 | `LinkMonitor`, `PidCapabilities`, `PollScheduler`, `LivePoller`, fake-port tests | **Done, CI green (ac44f34)** |
 | S3 | Live polling loop, ECU recovery on existing socket, link-state UI | **Done, CI green (b1beb92)** |
-| S4 | `Mode09Decoder`, `FrameAssembler`/`Framing` (from ATDP), `EcuScan`, `EcuProfile` + `MiniJson`, `ProfileDiff`, CAN DTC framing | **Code written, CI pending** |
-| S5 | ECU Information screen, top-bar "ECU INFO" chip, profile storage, JSON/CSV/PDF export | Next |
+| S4 | Mode 09 decoder, framing from ATDP, EcuScan, EcuProfile + diff + JSON/CSV, CAN DTC framing | **Done, CI green (7776624)** |
+| S5 | ECU Information page, top-bar "ECU INFO" chip, profile storage, JSON/CSV/PDF export | **Done, CI green (d744188)** |
 
 ## Verification
 - JVM tests: all pure-Kotlin suites pass locally via `/home/claude/kc.sh` (139+ tests, plus new `ElmReplyTest`/`SessionLogTest`).
@@ -57,3 +59,14 @@ Cause of the earlier `socket closed`; the real protocol (`ATDP` was never logged
 - Protocol (`ATDP`) is now asked after the ECU first answers and stored; DTC and Mode 09 decoding use it to choose K-line or CAN framing. If the adapter reports nothing, K-line rules apply and the profile says so.
 - `EcuScan` sends only `0900` and the `09xx` items the ECU advertised; `NO DATA`, `?` and `7F` replies are recorded as such, never replaced by values.
 - 181 JVM tests pass locally. None of this has met a real ECU yet.
+
+## S5 notes
+- Open ECU Information with the "ECU INFO" chip in the cockpit top bar (hidden page 4; Back returns to the cockpit).
+- Profiles are saved in the app (`ecu/profile_latest.json`, previous scan kept as `profile_previous.json`) and compared automatically. Exports (JSON, CSV, PDF) are shared through the system share sheet.
+- SCAN ECU is enabled only while the ECU is responding.
+
+## Next steps
+1. Owner: install the debug APK (CI artifact `sx4-scan-pro-debug-<sha>` on the Actions run for branch `claude/obd-recovery-and-ecu-info`), drive, then Settings -> SHARE FULL SESSION LOG and send the file.
+2. Review the log for real protocol (`protocol=` line), per-command timings, recovery events after ignition on.
+3. Tune `PollPlan` intervals; remove unused `readDashboard()`.
+4. Merge to `main` only after the owner approves.

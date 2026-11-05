@@ -45,3 +45,6 @@ Update `CURRENT_STATUS.md` and `docs/DEVELOPER_REQUIREMENTS.md`, then report mod
 - `ObdFraming.kt` (`Framing`, `FrameAssembler`), `Mode09Decoder.kt`, `EcuScan.kt` (needs an `ElmPort`; `sendLines` keeps one line per frame), `EcuProfile.kt` (profile, CSV, `ProfileDiff`), `MiniJson.kt`.
 - `ObdTroubleCodeDecoder.decodeResponse(raw, mode, framing)`: CAN branch added; the two-argument form is unchanged K-line behaviour.
 - S5 must pause the live poller while a scan runs is not required (commands are atomic and sequential) but the scan button should be disabled unless connected and ECU online.
+
+## Status after S5
+All stages are implemented and CI-green on `claude/obd-recovery-and-ecu-info`. Open work: real-vehicle validation (owner), interval tuning from the session log, removing unused `readDashboard()`, owner-approved merge. S5 map: `SxEcuInfo.kt` (page), `EcuReport.kt` (wording/PDF lines), `SxShell.kt` (`onEcuInfo` chip), `MainActivity` (`runEcuScan`, `exportEcu`, `loadEcuProfiles`, tab index 4).

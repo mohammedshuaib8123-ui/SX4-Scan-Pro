@@ -897,3 +897,12 @@ Differences: the welcome plays after each successful ECU connection (not each ap
 Fidelity pass (second reading of the prototype): the cockpit home now follows its CSS section by section: a continuous cluster band with a red wash, the 240 degree dial arc with 41 ticks (amber ticks appear only above a limit the owner set), the flat five-cell telemetry row, the health / fault row in warning style, the Head Unit section laid out like the player, the footer, the top bar and bottom navigation at the compact tablet sizes, the welcome timings, and the cockpit arrival animation.
 
 CI: `.github/workflows/branch-check.yml` compiles and tests every push to a `claude/*` branch and writes the build log to the `ci-log` branch, so Compose errors are found before merging to `main`. The existing `Android APK` workflow is unchanged.
+
+
+## 24. OBD recovery and ECU information (branch claude/obd-recovery-and-ecu-info)
+- Live data: one command at a time, earliest-deadline scheduler (`PollPlan`), readings stamped with their own time; older than max(4 s, 3x interval) shows `--`.
+- ECU silence: probe `0100`, then `ATPC`, then `ATZ` + init, on the existing Bluetooth socket (no automatic socket reopen).
+- Session log: rolling file in app storage, shared from Settings. Records TX/RX, errors, Bluetooth link events, protocol, recovery and scan events.
+- ECU Information: read-only Mode 09 scan (0900, then advertised 02/04/06/0A only), per-field status, saved profile, comparison with the previous scan, JSON/CSV/PDF export.
+- DTC decoding uses the framing from ATDP (CAN count-byte and multi-frame, or K-line); unknown protocol keeps the K-line behaviour.
+- Not verified on a real vehicle. Gauge Wall untouched.
