@@ -33,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -135,7 +136,7 @@ internal fun InstrumentDial(
                         text = if (number == null) "—" else if (scale.max <= 10f) String.format(java.util.Locale.US, "%.2f", shown) else shown.roundToInt().toString(),
                         color = if (live) Color.White else Fx.Muted,
                         style = TABULAR,
-                        fontSize = (side.value * 0.20f).sp,
+                        fontSize = with(androidx.compose.ui.platform.LocalDensity.current) { (side.value * 0.20f).dp.toSp() },
                         fontWeight = FontWeight.Black
                     )
                     Text(gauge.unit, color = accent, fontSize = 15.sp, fontWeight = FontWeight.Medium)
@@ -162,9 +163,9 @@ private fun DrawScope.drawDial(
 ) {
     val side = size.minDimension
     val stroke = side * 0.065f
-    val labelPx = maxOf(side * 0.05f, 12.sp.toPx())
-    val inset = stroke / 2f + labelPx * 1.9f
-    val ringRadius = side / 2f - inset
+    // Label size scales with the dial (dp based, so the font-size setting cannot shrink the ring) and the ring keeps a minimum share of the slot.
+    val labelPx = DialLayout.labelSize(side, 9.dp.toPx(), 12.dp.toPx())
+    val ringRadius = DialLayout.ringRadius(side, stroke, labelPx)
     if (ringRadius <= 0f) return
     val center = Offset(size.width / 2f, size.height / 2f)
     val topLeft = Offset(center.x - ringRadius, center.y - ringRadius)
@@ -371,24 +372,30 @@ internal fun LinkDot(connected: Boolean, connecting: Boolean, modifier: Modifier
 /** One dial of the gauge wall. [gauge] is already in the display unit. */
 internal data class WallDial(val title: String, val gauge: GaugeValue, val scale: DialScale, val accent: Color)
 
-/** Round-gauge wall: every dial is a real reading, or NO SIGNAL. Scrolls when there are more than eight. */
+/**
+ * Round-gauge wall: every dial is a real reading, or NO SIGNAL. Every row has the same height, taken from the tile width,
+ * so the dials look the same whether there are 7 or 20 of them; the wall scrolls when the rows do not fit.
+ * [onLayout] receives one line whenever the wall's size, density or font scale changes (for the session log).
+ */
 @Composable
-internal fun GaugeWall(dials: List<WallDial>, nowMs: Long, modifier: Modifier = Modifier) {
+internal fun GaugeWall(dials: List<WallDial>, nowMs: Long, modifier: Modifier = Modifier, onLayout: (String) -> Unit = {}) {
     val perRow = 4
-    val scrolls = dials.size > 8
-    Column(
-        if (scrolls) modifier.verticalScroll(rememberScrollState()) else modifier,
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        dials.chunked(perRow).forEach { rowDials ->
-            Row(
-                (if (scrolls) Modifier.height(250.dp) else Modifier.weight(1f)).fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                rowDials.forEach { d ->
-                    InstrumentDial(d.title, d.gauge, d.scale, d.accent, nowMs, Modifier.weight(1f).fillMaxHeight())
+    val gap = 10.dp
+    BoxWithConstraints(modifier) {
+        val tileWidth = (maxWidth - gap * (perRow - 1)) / perRow
+        val rowHeight = DialLayout.rowHeight(tileWidth.value).dp
+        val density = androidx.compose.ui.platform.LocalDensity.current
+        LaunchedEffect(maxWidth, maxHeight, density.density, density.fontScale, dials.size) {
+            onLayout("gauge wall layout: area=${maxWidth.value.toInt()}x${maxHeight.value.toInt()}dp tile=${tileWidth.value.toInt()}dp row=${rowHeight.value.toInt()}dp density=${density.density} fontScale=${density.fontScale} dials=${dials.size}")
+        }
+        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(gap)) {
+            dials.chunked(perRow).forEach { rowDials ->
+                Row(Modifier.height(rowHeight).fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(gap)) {
+                    rowDials.forEach { d ->
+                        InstrumentDial(d.title, d.gauge, d.scale, d.accent, nowMs, Modifier.weight(1f).fillMaxHeight())
+                    }
+                    repeat(perRow - rowDials.size) { Spacer(Modifier.weight(1f)) }
                 }
-                repeat(perRow - rowDials.size) { Spacer(Modifier.weight(1f)) }
             }
         }
     }

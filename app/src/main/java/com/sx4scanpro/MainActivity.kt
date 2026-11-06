@@ -606,7 +606,8 @@ class MainActivity : ComponentActivity() {
                                         WallDial(spec.name.uppercase(), g(spec.name).copy(unit = spec.unit), spec.scale, Color(0xFF42DDF5))
                                     },
                                     nowMs,
-                                    Modifier.weight(1f).fillMaxWidth()
+                                    Modifier.weight(1f).fillMaxWidth(),
+                                    onLayout = { sessionLog.append("EVT", it) }
                                 )
                             } else {
                                 val g = { l: String -> gauges.firstOrNull { it.label == l } ?: GaugeValue(l, "--", "", false) }

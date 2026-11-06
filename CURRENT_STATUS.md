@@ -70,3 +70,6 @@ Cause of the earlier `socket closed`; the real protocol (`ATDP` was never logged
 2. Review the log for real protocol (`protocol=` line), per-command timings, recovery events after ignition on.
 3. Tune `PollPlan` intervals; remove unused `readDashboard()`.
 4. Merge to `main` only after the owner approves.
+
+## Gauge Wall sizing fix (2026-11-06)
+Cause: `GaugeWall` had two layouts: 8 dials or fewer shared the leftover page height (about 185 dp tiles, small rings), more than 8 used fixed 250 dp rows. After a reinstall the extra sensors reset, giving 7 dials and the small layout. Fix (CockpitFx.kt only): same row height at any dial count (0.8 x tile width, scrolls), label size and ring scaled with the dial (`DialLayout`), value text sized from the dial. Each size change is logged to the session log as `gauge wall layout: ...`. Not yet seen on the tablet.
