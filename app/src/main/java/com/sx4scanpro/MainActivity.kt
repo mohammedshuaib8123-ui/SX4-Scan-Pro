@@ -308,6 +308,7 @@ class MainActivity : ComponentActivity() {
         }
         sessionLog.append("EVT", "app started")
         loadEcuProfiles()
+        loadParameterRegistry()
         ContextCompat.registerReceiver(this, btReceiver, btFilter, ContextCompat.RECEIVER_NOT_EXPORTED)
         // Open Headunit is another app, so its status broadcast needs an exported receiver.
         ContextCompat.registerReceiver(this, sessionReceiver, IntentFilter(HeadUnitProtocol.SESSION_STATE_ACTION), ContextCompat.RECEIVER_EXPORTED)
@@ -1431,6 +1432,16 @@ class MainActivity : ComponentActivity() {
             }
             if (poller.monitor.state != LinkState.COMMUNICATING) return
         }
+    }
+
+    private val registryStore by lazy { RegistryStore(java.io.File(filesDir, "registry/parameters.json")) }
+    /** Persisted capability states (P2). Loaded at start; nothing writes to it until the discovery phase. */
+    private var parameterRegistry: ParameterRegistry = ParameterRegistry.withBuiltInDefinitions()
+
+    private fun loadParameterRegistry() {
+        val res = registryStore.load()
+        parameterRegistry = res.registry
+        sessionLog.append("EVT", "parameter registry loaded: ${res.registry.all().size} definitions" + res.issues.joinToString("") { "; $it" })
     }
 
     private fun ecuDir() = java.io.File(filesDir, "ecu").apply { mkdirs() }

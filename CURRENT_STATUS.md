@@ -47,4 +47,4 @@ Personal-use Kotlin/Compose tablet cockpit for a 2012 Maruti Suzuki SX4 ZDi (1.3
 3. Tune poll intervals; remove unused `readDashboard()`; decide on PR #5.
 
 ## ECU Discovery Engine (branch claude/ecu-discovery-engine, from main f5881b4)
-Phases P1-P6 incremental; P7/P8 wait for a real vehicle session log. P1 done: read-only guard in the single send path, sourced extended-read allowlist, lossless raw capture store, build marker BUILD 27. Details: `docs/DEVELOPER_REQUIREMENTS.md` section 25. Not merged to main; not yet run on the vehicle.
+Phases P1-P6 incremental; P7/P8 wait for a real vehicle session log. P1 and P2 done (P2 branch `claude/ecu-p2-parameter-registry`: parameter registry + persistence): read-only guard in the single send path, sourced extended-read allowlist, lossless raw capture store, build marker BUILD 27. Details: `docs/DEVELOPER_REQUIREMENTS.md` section 25. Not merged to main; not yet run on the vehicle.
