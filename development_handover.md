@@ -22,15 +22,15 @@ For anyone (or any later Claude session) continuing this work.
 - `ElmReply` — classifies adapter replies (NO DATA, UNABLE TO CONNECT, …).
 - `SessionLog` — rolling file in `filesDir/logs`, exported through FileProvider (`logs/` in `file_paths.xml`).
 - Decoders: `ObdPidResponseDecoder` (strict, no banner stripping), `ObdPidSupport`, `ObdTroubleCodeDecoder` (K-line framing only so far), `PidCatalog` (40 PIDs).
-- Gauge Wall (`CockpitFx.kt` and related) is out of scope: do not touch. Its 5 s STALE rule means any wall-visible PID must be polled at least every ~4 s.
+- Gauge Wall (`CockpitFx.kt`, `DialLayout.kt`): was out of scope until the owner reported the small-gauge defect on 2026-11-06; it was then investigated and fixed (same row height at any dial count, dial-proportional labels and ring; see "Gauge Wall sizing fix" in `CURRENT_STATUS.md`). Keep further changes there minimal. Its 5 s STALE rule means any wall-visible PID must be polled at least every ~4 s.
 
-## Plan for remaining stages
+## Stage plan (S2-S5 are all implemented; kept as the design record)
 - **S2 (pure, JVM-tested with a fake port):** `LinkMonitor` (COMMUNICATING / ECU_SILENT / RECOVERING / LINK_LOST from consecutive results), `PidCapabilities` (per-PID: unknown / supported / temporarily unavailable after repeated NO DATA / not advertised; never permanently disabled), `PollScheduler` (earliest-deadline-first: RPM/speed fast, others slower, rarely-used slowest), `LivePoller` (one command at a time, never parallel).
 - **S3:** replace `readDashboard()` use in `connect()`; on ECU silence run recovery on the existing socket: probe `0100`, then light re-init (`ATPC`/`ATSP`), then full re-init; keep the socket open (owner rejected automatic Bluetooth reopen). UI: link state in top bar and Health ECU row; "SYSTEM ONLINE" only when COMMUNICATING; per-label stale thresholds; cache baro; rename "EGR duty" → "EGR commanded".
 - **S4:** `Mode09Decoder` (K-line `49 PP NN data` vs CAN length line + indexed `N:` lines), `EcuScan` (read-only: VIN, CAL ID, CVN, ECU name, supported PIDs), `EcuProfile` with hand-written JSON, `ProfileDiff`, DTC decoder for both framings.
 - **S5:** ECU Information screen (hidden page index 4), "ECU INFO" chip in the empty space of `SxTopBar`, profile persisted in app files, JSON/CSV/PDF export.
 
-## Rules that must not be broken
+## Rules that must not be broken (the Gauge Wall exception above applies only to the sizing fix already made)
 Read-only ECU access; no invented values; no stale-as-live; no parallel commands; no changes to working Bluetooth behaviour without evidence and tests; don't copy V2 reference code; no merge to `main` without owner approval.
 
 ## After each stage
@@ -48,3 +48,6 @@ Update `CURRENT_STATUS.md` and `docs/DEVELOPER_REQUIREMENTS.md`, then report mod
 
 ## Status after S5
 All stages are implemented and CI-green on `claude/obd-recovery-and-ecu-info`. Open work: real-vehicle validation (owner), interval tuning from the session log, removing unused `readDashboard()`, owner-approved merge. S5 map: `SxEcuInfo.kt` (page), `EcuReport.kt` (wording/PDF lines), `SxShell.kt` (`onEcuInfo` chip), `MainActivity` (`runEcuScan`, `exportEcu`, `loadEcuProfiles`, tab index 4).
+
+## Final integration (2026-11-06)
+Release candidate: `claude/v1-final-integration` @ fb37ae8 = `main` 4dbff6a + OBD branch cdf5679 (only conflict: duplicate CI APK step, `main`'s version kept). Build evidence and the not-yet-verified list are in `CURRENT_STATUS.md`. PR #5 (alternative cockpit) is deliberately not included. `main` moves only on the owner's approval.
