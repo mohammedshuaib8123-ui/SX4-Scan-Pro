@@ -2,16 +2,21 @@ package com.sx4scanpro
 
 /** Small JSON writer/parser so profiles can be saved and tested without Android's org.json. Supports objects, arrays, strings, numbers, booleans, null. */
 internal object MiniJson {
+    /** Pretty JSON by default; pass [indent] = -1 for compact single-line output (string contents are never altered). */
     fun write(v: Any?, indent: Int = 0): String {
-        val pad = "  ".repeat(indent)
-        val pad2 = "  ".repeat(indent + 1)
+        val compact = indent < 0
+        val pad = if (compact) "" else "  ".repeat(indent)
+        val pad2 = if (compact) "" else "  ".repeat(indent + 1)
+        val nl = if (compact) "" else "\n"
+        val next = if (compact) -1 else indent + 1
+        val sep = if (compact) ":" else ": "
         return when (v) {
             null -> "null"
             is Boolean, is Int, is Long -> v.toString()
             is Double -> if (v.isNaN() || v.isInfinite()) "null" else v.toString()
             is String -> quote(v)
-            is Map<*, *> -> if (v.isEmpty()) "{}" else v.entries.joinToString(",\n", "{\n", "\n$pad}") { "$pad2${quote(it.key.toString())}: ${write(it.value, indent + 1)}" }
-            is List<*> -> if (v.isEmpty()) "[]" else v.joinToString(",\n", "[\n", "\n$pad]") { pad2 + write(it, indent + 1) }
+            is Map<*, *> -> if (v.isEmpty()) "{}" else v.entries.joinToString(",$nl", "{$nl", "$nl$pad}") { "$pad2${quote(it.key.toString())}$sep${write(it.value, next)}" }
+            is List<*> -> if (v.isEmpty()) "[]" else v.joinToString(",$nl", "[$nl", "$nl$pad]") { pad2 + write(it, next) }
             else -> quote(v.toString())
         }
     }

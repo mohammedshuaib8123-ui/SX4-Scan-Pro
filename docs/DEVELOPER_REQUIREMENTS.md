@@ -906,3 +906,9 @@ CI: `.github/workflows/branch-check.yml` compiles and tests every push to a `cla
 - ECU Information: read-only Mode 09 scan (0900, then advertised 02/04/06/0A only), per-field status, saved profile, comparison with the previous scan, JSON/CSV/PDF export.
 - DTC decoding uses the framing from ATDP (CAN count-byte and multi-frame, or K-line); unknown protocol keeps the K-line behaviour.
 - Not verified on a real vehicle. Gauge Wall untouched.
+
+
+## 25. ECU Digital Profile & Discovery Engine (branch claude/ecu-discovery-engine)
+Phased, read-only. Owner decisions: wait for a real vehicle session log before P7/P8; KWP `1A` and UDS `22` only through a sourced allowlist and only when the owner triggers them; UDS `10` and every write/coding/programming/actuator service excluded; module discovery is passive listening or owner-supplied addresses only; main is not touched without approval.
+- **P1 (done):** `ReadOnlyGuard` (default-deny policy checked inside `sendCommand`, so every command is covered; existing init, negotiation, PID, DTC, freeze-frame and Mode 09 commands are tested as allowed), `ExtendedAllowlist` (sourced `1A xx` / `22 xxxx` only), `RawExchange` + `CaptureStore` (lossless JSONL capture of every transaction: command, verbatim reply, status, round-trip time, protocol, session; bounded and rotated), `BuildInfo.LABEL` (marker now BUILD 27). Blocked commands never reach the adapter and leave the link untouched.
+- P2 parameter registry, P3 discovery engine, P4 decoder registry, P5 ECU Explorer, P6 session export: pending.
