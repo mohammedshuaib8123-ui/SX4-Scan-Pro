@@ -60,7 +60,7 @@ import java.util.Locale
  * pill and a clock. Power asks twice (tap, then tap again within three seconds) so it cannot be hit while driving.
  */
 @Composable
-internal fun SxTopBar(connected: Boolean, mode: DriveMode, onMode: (DriveMode) -> Unit, onPower: () -> Unit, modifier: Modifier = Modifier) {
+internal fun SxTopBar(connected: Boolean, mode: DriveMode, onMode: (DriveMode) -> Unit, onPower: () -> Unit, onEcuInfo: () -> Unit = {}, modifier: Modifier = Modifier) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     LaunchedEffect(Unit) { while (true) { now = System.currentTimeMillis(); delay(15_000) } }
     var powerArmed by remember { mutableStateOf(false) }
@@ -88,7 +88,15 @@ internal fun SxTopBar(connected: Boolean, mode: DriveMode, onMode: (DriveMode) -
             Text(if (connected) "OBD connected" else "OBD offline", color = Sx.MutedForeground, fontSize = 11.sp)
             Icon(Icons.Outlined.Bluetooth, contentDescription = "Bluetooth adapter", tint = if (connected) Sx.Primary else Sx.MutedForeground, modifier = Modifier.size(15.dp))
         }
-        Box(Modifier.weight(1f))
+        Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+            Text(
+                "ECU INFO", color = Sx.Primary, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.5.sp,
+                modifier = Modifier.clip(RoundedCornerShape(50)).border(1.dp, Sx.Primary, RoundedCornerShape(50))
+                    .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) { onEcuInfo() }
+                    .semantics { contentDescription = "Open ECU information" }
+                    .padding(horizontal = 12.dp, vertical = 5.dp)
+            )
+        }
         Row(Modifier.clip(RoundedCornerShape(50)).border(1.dp, Sx.Border, RoundedCornerShape(50)).padding(2.dp)) {
             DriveMode.values().forEach { m ->
                 val on = m == mode

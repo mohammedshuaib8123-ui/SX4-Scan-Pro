@@ -67,12 +67,12 @@ private fun HealthItem(label: String, detail: String, ok: Boolean?, modifier: Mo
 
 /** Left half of the lower grid: three health checks and the fault-code row in the prototype's warning style. */
 @Composable
-internal fun SxHealth(connected: Boolean, rpmSignal: Boolean, faultCount: Int?, onOpenDiagnostics: () -> Unit, modifier: Modifier = Modifier) {
+internal fun SxHealth(connected: Boolean, ecuOnline: Boolean, rpmSignal: Boolean, faultCount: Int?, onOpenDiagnostics: () -> Unit, modifier: Modifier = Modifier) {
     Column(modifier.drawBehind { drawLine(Sx.Border, Offset(size.width, 0f), Offset(size.width, size.height), 1.dp.toPx()) }.padding(end = 20.dp)) {
         SectionHeading(Icons.Outlined.VerifiedUser, "Vehicle health", "ECU MONITOR")
         Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.SpaceBetween) {
             HealthItem("Engine", if (!connected) "Not connected" else if (rpmSignal) "Reporting RPM" else "No RPM signal", if (connected) rpmSignal else null)
-            HealthItem("ECU", if (connected) "Responding" else "Not connected", if (connected) true else null)
+            HealthItem("ECU", if (!connected) "Not connected" else if (ecuOnline) "Responding" else "Not responding", if (connected) ecuOnline else null)
             HealthItem("OBD link", if (connected) "Connected" else "Offline", connected)
         }
         val has = (faultCount ?: 0) > 0

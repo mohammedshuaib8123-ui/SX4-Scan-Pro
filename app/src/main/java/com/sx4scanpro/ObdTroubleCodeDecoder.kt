@@ -41,9 +41,17 @@ object ObdTroubleCodeDecoder {
      * exactly the same strict rules as [decode]; anything that fails is listed in
      * [DtcReadResult.unreadable] instead of being dropped, so a scan can never silently look clean.
      */
-    fun decodeResponse(raw: String, mode: String): DtcReadResult {
+    fun decodeResponse(raw: String, mode: String): DtcReadResult = decodeResponse(raw, mode, Framing.KLINE)
+
+    /**
+     * CAN (ISO 15765-4) replies carry a count byte after the mode (`43 02 01 18 02 34`) and may be split into a
+     * length line plus `N:` lines. The framing must come from ATDP; with [Framing.CAN] that shape is decoded here,
+     * otherwise the K-line rules below apply unchanged.
+     */
+    fun decodeResponse(raw: String, mode: String, framing: Framing): DtcReadResult {
         val prefix = prefixFor(mode)
             ?: return DtcReadResult(emptyList(), 0, false, false, listOf("unknown mode $mode"))
+        if (framing == Framing.CAN) return decodeCan(raw, mode, prefix)
         val codes = mutableListOf<String>()
         val unreadable = mutableListOf<String>()
         var valid = 0
@@ -71,6 +79,22 @@ object ObdTroubleCodeDecoder {
             }
         }
         return DtcReadResult(codes.distinct(), valid, noData, unsupported, unreadable)
+    }
+
+    private fun decodeCan(raw: String, mode: String, prefix: String): DtcReadResult {
+        val lines = FrameAssembler.lines(raw)
+        if (lines.any { it == "NODATA" }) return DtcReadResult(emptyList(), 0, true, false, emptyList())
+        if (lines.any { it.startsWith("7F$mode") && it.length >= 6 && !it.startsWith("7F${mode}78") })
+            return DtcReadResult(emptyList(), 0, false, true, emptyList())
+        val payload = FrameAssembler.canPayload(lines)
+        if (payload == null || payload.any { it !in HEX } || !payload.startsWith(prefix) || payload.length < 4)
+            return DtcReadResult(emptyList(), 0, false, false, lines)
+        val count = payload.substring(2, 4).toInt(16)
+        val pairs = payload.substring(4)
+        if (pairs.length < count * 4) return DtcReadResult(emptyList(), 0, false, false, lines)
+        if (count == 0) return DtcReadResult(emptyList(), 1, false, false, emptyList())
+        val codes = parseLine(prefix + pairs.take(count * 4), prefix) ?: return DtcReadResult(emptyList(), 0, false, false, lines)
+        return DtcReadResult(codes.distinct(), 1, false, false, emptyList())
     }
 
     /** Null means the line is not a well-formed positive response for [prefix]. */

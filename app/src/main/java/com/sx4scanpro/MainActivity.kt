@@ -136,6 +136,7 @@ private val CORE_PIDS = setOf(0x04, 0x05, 0x0B, 0x0C, 0x0D, 0x0F, 0x10, 0x11, 0x
 private const val RECEIVER_PACKAGE = "com.andrerinas.headunitrevived"
 private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
+internal class TimeoutFlag { var hit = false }
 data class GaugeValue(val label: String, val value: String, val unit: String = "", val available: Boolean = true, val capturedAtMs: Long = System.currentTimeMillis())
 data class TroubleCodeResult(val category: String, val code: String)
 private data class DtcScanSummary(val codes: List<TroubleCodeResult>, val supportedModes: Int, val noDataModes: Int, val invalidModes: Int, val failedModes: Int, val partialModes: Int = 0)
@@ -220,6 +221,12 @@ class MainActivity : ComponentActivity() {
                     adapterNote = if (foundDevices.isEmpty()) "Scan finished: no devices found. Check the adapter is plugged in and the ignition is on."
                     else "Scan finished. Tap PAIR next to your adapter."
                 }
+                BluetoothDevice.ACTION_ACL_CONNECTED, BluetoothDevice.ACTION_ACL_DISCONNECTED -> {
+                    val d = IntentCompat.getParcelableExtra(intent, BluetoothDevice.EXTRA_DEVICE, BluetoothDevice::class.java)
+                    val n = try { d?.name } catch (_: SecurityException) { null }
+                    sessionLog.append("EVT", (if (intent.action == BluetoothDevice.ACTION_ACL_CONNECTED) "bluetooth link up: " else "bluetooth link down: ") + (n ?: d?.address ?: "unknown"))
+                }
+                BluetoothAdapter.ACTION_STATE_CHANGED -> sessionLog.append("EVT", "bluetooth adapter state " + intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, -1))
                 BluetoothDevice.ACTION_BOND_STATE_CHANGED -> {
                     refreshPairedDevices()
                     foundDevices.removeAll { f -> pairedDevices.any { it.address == f.address } }
@@ -229,6 +236,14 @@ class MainActivity : ComponentActivity() {
     }
     private var socket: BluetoothSocket? = null
     private var supportedPids: Set<Int> = emptySet()
+    @Volatile private var protocolText: String = ""
+    private var ecuProfile by mutableStateOf<EcuProfile?>(null)
+    private var ecuPrevious by mutableStateOf<EcuProfile?>(null)
+    private var ecuScanning by mutableStateOf(false)
+    private var ecuNote by mutableStateOf("")
+    @Volatile private var adapterIdText: String = ""
+    @Volatile private var adapterVoltageText: String = ""
+    private var linkState by mutableStateOf(LinkState.COMMUNICATING)
     private val engineStartDetector = EngineStartDetector()
     // Empty until verified SX4-specific rules are approved; pipeline is wired but inactive.
     @Volatile private var warningEngine = WarningEngine()
@@ -239,6 +254,9 @@ class MainActivity : ComponentActivity() {
     private var welcomeOverlayVisible by mutableStateOf(false)
     @Volatile private var userInitiatedDisconnect = false
     private val traffic = TrafficLog()
+    private val sessionLog by lazy { SessionLog(java.io.File(filesDir, "logs")) }
+    /** One place for adapter traffic: the on-screen preview and the persistent, shareable file. */
+    private fun logTraffic(tag: String, text: String) { traffic.add(tag, text); sessionLog.append(tag, text) }
     private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -278,7 +296,12 @@ class MainActivity : ComponentActivity() {
             addAction(BluetoothDevice.ACTION_FOUND)
             addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
             addAction(BluetoothDevice.ACTION_BOND_STATE_CHANGED)
+            addAction(BluetoothDevice.ACTION_ACL_CONNECTED)
+            addAction(BluetoothDevice.ACTION_ACL_DISCONNECTED)
+            addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
         }
+        sessionLog.append("EVT", "app started")
+        loadEcuProfiles()
         ContextCompat.registerReceiver(this, btReceiver, btFilter, ContextCompat.RECEIVER_NOT_EXPORTED)
         // Open Headunit is another app, so its status broadcast needs an exported receiver.
         ContextCompat.registerReceiver(this, sessionReceiver, IntentFilter(HeadUnitProtocol.SESSION_STATE_ACTION), ContextCompat.RECEIVER_EXPORTED)
@@ -336,6 +359,7 @@ class MainActivity : ComponentActivity() {
         var warningMessage by remember { mutableStateOf("") }
         val scope = rememberCoroutineScope()
         val connected = status == "Connected"
+        val ecuOnline = connected && linkState == LinkState.COMMUNICATING
         val connecting = status == "Connecting…"
         val haptic = LocalHapticFeedback.current
         val history = remember { GaugeHistory() }
@@ -387,16 +411,31 @@ class MainActivity : ComponentActivity() {
                 try {
                     val result = withContext(Dispatchers.IO) { connectAndRead() }
                     adapterName = result.first
+                    adapterNameForScan = result.first
                     status = "Connected"
                     startTrip()
                     // The greeting plays only once the ECU has really answered (connectAndRead throws otherwise).
                     if (welcomeSettings.shouldPlay(welcomePlayedOnce)) playEngineWelcome()
                     welcomePlayedOnce = true
+                    val poller = buildPoller()
+                    linkState = LinkState.COMMUNICATING
+                    var lastRecordMs = 0L
+                    sessionLog.append("EVT", "live polling started: " + poller.scheduler.pids().size + " PIDs scheduled, " + supportedPids.size + " advertised")
                     while (isActive && socket?.isConnected == true) {
-                        gauges = withContext(Dispatchers.IO) { readDashboard() }
-                        gauges.forEach { g -> history.record(g.label, if (g.available) g.value.toDoubleOrNull() else null) }
-                        historyVersion++
-                        recordTrip(gauges)
+                        val before = poller.monitor.state
+                        withContext(Dispatchers.IO) { runPollSlice(poller) }
+                        val nowMs = System.currentTimeMillis()
+                        val after = poller.monitor.state
+                        if (after != before) sessionLog.append("EVT", "ECU link $before -> $after")
+                        linkState = after
+                        gauges = GaugeAssembler.build({ poller.reading(it) }, supportedPids, extraPids, nowMs)
+                            .map { GaugeValue(it.label, it.value, it.unit, it.available, it.capturedAtMs) }
+                        if (nowMs - lastRecordMs >= 1000L) {
+                            lastRecordMs = nowMs
+                            gauges.forEach { g -> history.record(g.label, if (g.available) g.value.toDoubleOrNull() else null) }
+                            historyVersion++
+                            recordTrip(gauges)
+                        }
                         val rpmGauge = gauges.firstOrNull { it.label == "Engine RPM" }
                         val sensorReadings = gauges.mapNotNull { gauge ->
                             val sensor = when (gauge.label) {
@@ -420,7 +459,7 @@ class MainActivity : ComponentActivity() {
                             warningMessage = AlertTargets.bannerText(alertSensors)
                             playAlert(alertSensors)
                         } else if (alertSensors.isEmpty()) warningMessage = ""
-                        delay(1300)
+                        delay(poller.pauseMs(nowMs))
                     }
                     if (status == "Connected") {
                         status = "Disconnected"
@@ -497,7 +536,7 @@ class MainActivity : ComponentActivity() {
         MaterialTheme(colorScheme = darkColorScheme(primary = cyan, secondary = Color(0xFFFFB84D), background = bg, surface = panel, onBackground = Color.White, onSurface = Color.White, onSurfaceVariant = muted)) {
             Scaffold(containerColor = bg) { padding ->
                 Column(Modifier.fillMaxSize().padding(padding).background(Sx.Background)) {
-                SxTopBar(connected = connected, mode = driveMode, onMode = { m -> driveMode = m; prefs.edit().putString("drive_mode", m.name).apply() }, onPower = { disconnect(); finish() })
+                SxTopBar(connected = connected, mode = driveMode, onMode = { m -> driveMode = m; prefs.edit().putString("drive_mode", m.name).apply() }, onPower = { disconnect(); finish() }, onEcuInfo = { selectedTab = 4 })
                 Column(Modifier.weight(1f).fillMaxWidth()) {
                     Box(Modifier.weight(1f).fillMaxWidth()) {
                         AnimatedContent(
@@ -567,7 +606,8 @@ class MainActivity : ComponentActivity() {
                                         WallDial(spec.name.uppercase(), g(spec.name).copy(unit = spec.unit), spec.scale, Color(0xFF42DDF5))
                                     },
                                     nowMs,
-                                    Modifier.weight(1f).fillMaxWidth()
+                                    Modifier.weight(1f).fillMaxWidth(),
+                                    onLayout = { sessionLog.append("EVT", it) }
                                 )
                             } else {
                                 val g = { l: String -> gauges.firstOrNull { it.label == l } ?: GaugeValue(l, "--", "", false) }
@@ -579,6 +619,7 @@ class MainActivity : ComponentActivity() {
                                 SxCockpit(
                                     arrive = arrive,
                                     connected = connected,
+                                    ecuOnline = ecuOnline,
                                     rpm = g("Engine RPM"), boost = bstShown, boostScale = GaugeUnits.boostScale(boostUnit),
                                     boostCaption = boostUnit.label.uppercase(),
                                     mode = driveMode,
@@ -891,6 +932,21 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                         }
+                        4 -> SxEcuInfo(
+                            profile = ecuProfile,
+                            diff = ecuProfile?.let { cur -> ecuPrevious?.let { ProfileDiff.compare(it, cur) } },
+                            linkText = EcuReport.linkText(linkState, connected),
+                            liveFacts = AdapterFacts(if (connected) adapterName else "", adapterIdText, adapterVoltageText, protocolText),
+                            mode01Count = supportedPids.size,
+                            scanning = ecuScanning,
+                            canScan = ecuOnline,
+                            note = ecuNote,
+                            onScan = { runEcuScan(scope) },
+                            onExportJson = { exportEcu("json") },
+                            onExportCsv = { exportEcu("csv") },
+                            onExportPdf = { exportEcu("pdf") },
+                            onBack = { selectedTab = 0 }
+                        )
                         else -> LazyColumn(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             item {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
@@ -1109,6 +1165,20 @@ class MainActivity : ComponentActivity() {
                                                 startActivity(Intent.createChooser(send, "Share adapter log"))
                                             }, modifier = Modifier.weight(1f)) { Text("SHARE LOG") }
                                         }
+                                        Button(onClick = {
+                                            val header = "SX4 Scan Pro session log\n" + "v0.8.0 • PRE-RELEASE • BUILD 26" + "\nStatus: " + status + "\nAdapter: " + adapterName + "\nStandard PIDs advertised: " + supportedPids.size
+                                            val file = sessionLog.export(header)
+                                            if (file == null) logPreview = listOf("Could not write the session log file.") else {
+                                                val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.files", file)
+                                                val send = Intent(Intent.ACTION_SEND).apply {
+                                                    type = "text/plain"
+                                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                                    putExtra(Intent.EXTRA_SUBJECT, "SX4 Scan Pro session log")
+                                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                }
+                                                startActivity(Intent.createChooser(send, "Share session log"))
+                                            }
+                                        }, modifier = Modifier.fillMaxWidth()) { Text("SHARE FULL SESSION LOG (FILE)") }
                                         Text(if (logPreview.isEmpty()) "Tap REFRESH to show the latest adapter traffic." else logPreview.joinToString("\n"), color = Color.White, fontSize = 13.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
                                     }
                                 }
@@ -1198,6 +1268,10 @@ class MainActivity : ComponentActivity() {
         val config = connConfig
         sendCommand("ATZ", 5000)
         config.initCommands().forEach { sendCommand(it) }
+        // Facts for the session log only; a failed query here never blocks connecting.
+        sessionLog.append("EVT", "connect: adapter=" + chosen.name + " " + chosen.address)
+        adapterIdText = runCatching { sendCommand("ATI", 3000) }.getOrDefault("")
+        adapterVoltageText = runCatching { sendCommand("ATRV", 3000) }.getOrDefault("")
         // "Connected" must mean the ECU answered, not just that the adapter did.
         val negotiation = EcuNegotiation { command, timeoutMs -> sendCommand(command, timeoutMs) }
             .apply { preferredProtocol = config.protocol.elmNumber }.run()
@@ -1206,6 +1280,9 @@ class MainActivity : ComponentActivity() {
             throw IOException(negotiation.failure)
         }
         supportedPids = negotiation.supportedPids
+        // The protocol is only known once the ECU has answered, so ATDP is asked now, not before negotiation.
+        protocolText = runCatching { sendCommand("ATDP", 3000) }.getOrDefault("")
+        sessionLog.append("EVT", "protocol=" + protocolText + " framing=" + Framing.fromProtocolText(protocolText))
         return (device.name ?: "Bluetooth OBD adapter") to Unit
     }
 
@@ -1229,7 +1306,7 @@ class MainActivity : ComponentActivity() {
     }
 
     @Synchronized
-    private fun sendCommand(command: String, timeoutMs: Long = 5000, keepLines: Boolean = false): String {
+    private fun sendCommand(command: String, timeoutMs: Long = 5000, keepLines: Boolean = false, timedOut: TimeoutFlag? = null): String {
         val s = socket ?: throw IOException("Not connected")
         if (!s.isConnected) throw IOException("OBD adapter connection is closed")
 
@@ -1247,7 +1324,7 @@ class MainActivity : ComponentActivity() {
 
             s.outputStream.write((command + "\r").toByteArray(Charsets.US_ASCII))
             s.outputStream.flush()
-            traffic.add("TX", command)
+            logTraffic("TX", command)
             val out = StringBuilder()
             val deadline = System.currentTimeMillis() + timeoutMs
             var promptReceived = false
@@ -1265,8 +1342,16 @@ class MainActivity : ComponentActivity() {
                     Thread.sleep(12)
                 }
             }
-            if (!promptReceived) throw IOException("Timed out waiting for OBD response to $command")
-            traffic.add("RX", out.toString().trim().replace("\r", " ⏎ "))
+            if (!promptReceived) {
+                // Opt-in (live polling only): try to bring a late/busy adapter back to its prompt instead of dropping the link.
+                if (timedOut != null && resyncStream(s)) {
+                    timedOut.hit = true
+                    logTraffic("ERR", "$command: timed out after ${timeoutMs} ms, adapter prompt recovered")
+                    return ""
+                }
+                throw IOException("Timed out waiting for OBD response to $command")
+            }
+            logTraffic("RX", out.toString().trim().replace("\r", " ⏎ "))
             // DTC replies keep one line per ECU frame so multi-frame answers can be decoded;
             // everything else is compacted as before.
             val response = if (keepLines) {
@@ -1282,10 +1367,140 @@ class MainActivity : ComponentActivity() {
             // not abort the remaining read-only mode checks.
             return response
         } catch (e: Exception) {
-            traffic.add("ERR", "$command: ${e.message ?: e.javaClass.simpleName}")
+            logTraffic("ERR", "$command: ${e.message ?: e.javaClass.simpleName}")
             closeSocket()
             throw if (e is IOException) e else IOException("OBD transaction failed for $command", e)
         }
+    }
+
+    /** A lone CR interrupts a busy ELM327 (it prints STOPPED) or repeats a read-only command; either way a `>` means the stream is clean again. */
+    private fun resyncStream(s: BluetoothSocket): Boolean {
+        return try {
+            s.outputStream.write("\r".toByteArray(Charsets.US_ASCII)); s.outputStream.flush()
+            val input = s.inputStream
+            val end = System.currentTimeMillis() + 2500
+            while (System.currentTimeMillis() < end) {
+                if (input.available() > 0) { if (input.read().toChar() == '>') return true } else Thread.sleep(12)
+            }
+            false
+        } catch (_: Exception) { false }
+    }
+
+    private val elmPort = object : ElmPort {
+        override fun send(command: String, timeoutMs: Long): ElmResult {
+            val t0 = android.os.SystemClock.elapsedRealtime()
+            val flag = TimeoutFlag()
+            val raw = sendCommand(command, timeoutMs, timedOut = flag)
+            return ElmResult(command, raw, ElmReply.classify(raw), android.os.SystemClock.elapsedRealtime() - t0, flag.hit)
+        }
+        override fun sendLines(command: String, timeoutMs: Long): ElmResult {
+            val t0 = android.os.SystemClock.elapsedRealtime()
+            val flag = TimeoutFlag()
+            val raw = sendCommand(command, timeoutMs, keepLines = true, timedOut = flag)
+            return ElmResult(command, raw, ElmReply.classify(raw), android.os.SystemClock.elapsedRealtime() - t0, flag.hit)
+        }
+    }
+
+    /** One bounded slice of polling (about 0.4 s): one command at a time, then control returns so the UI can refresh. */
+    private fun runPollSlice(poller: LivePoller) {
+        val end = android.os.SystemClock.elapsedRealtime() + 400
+        while (android.os.SystemClock.elapsedRealtime() < end) {
+            when (val ev = poller.step(System.currentTimeMillis())) {
+                is PollEvent.Recovery -> { sessionLog.append("EVT", "ECU recovery " + ev.step + (if (ev.recovered) " succeeded" else " no answer")); return }
+                is PollEvent.Idle -> return
+                is PollEvent.Polled -> {}
+            }
+            if (poller.monitor.state != LinkState.COMMUNICATING) return
+        }
+    }
+
+    private fun ecuDir() = java.io.File(filesDir, "ecu").apply { mkdirs() }
+
+    private fun loadEcuProfiles() {
+        runCatching {
+            ecuProfile = java.io.File(ecuDir(), "profile_latest.json").takeIf { it.exists() }?.let { EcuProfile.fromJson(it.readText()) }
+            ecuPrevious = java.io.File(ecuDir(), "profile_previous.json").takeIf { it.exists() }?.let { EcuProfile.fromJson(it.readText()) }
+        }
+    }
+
+    private fun runEcuScan(scope: kotlinx.coroutines.CoroutineScope) {
+        if (ecuScanning) return
+        scope.launch {
+            ecuScanning = true
+            ecuNote = "Scanning the ECU (read-only)…"
+            try {
+                val facts = AdapterFacts(adapterNameForScan, adapterIdText, adapterVoltageText, protocolText)
+                val profile = withContext(Dispatchers.IO) {
+                    EcuScan.run(elmPort, facts, supportedPids, "v0.8.0 build 26", System.currentTimeMillis()) { sessionLog.append("EVT", "ecu scan: $it") }
+                }
+                val dir = ecuDir()
+                val latest = java.io.File(dir, "profile_latest.json")
+                if (latest.exists()) latest.copyTo(java.io.File(dir, "profile_previous.json"), overwrite = true)
+                latest.writeText(profile.toJson())
+                ecuPrevious = ecuProfile
+                ecuProfile = profile
+                sessionLog.append("EVT", "ecu scan done: vin=" + profile.vin.status + " cal=" + profile.calIds.status + " cvn=" + profile.cvns.status)
+                ecuNote = "Scan finished."
+            } catch (e: Exception) {
+                sessionLog.append("EVT", "ecu scan failed: " + (e.message ?: e.javaClass.simpleName))
+                ecuNote = "Scan failed: " + (e.message ?: "communication error")
+            } finally { ecuScanning = false }
+        }
+    }
+
+    @Volatile private var adapterNameForScan: String = ""
+
+    private fun exportEcu(kind: String) {
+        val p = ecuProfile ?: return
+        try {
+            val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmm", java.util.Locale.US).format(java.util.Date(p.capturedAtMs))
+            val file = java.io.File(ecuDir(), "ecu_profile_$stamp.$kind")
+            val mime: String
+            when (kind) {
+                "json" -> { file.writeText(p.toJson()); mime = "application/json" }
+                "csv" -> { file.writeText(p.toCsv()); mime = "text/csv" }
+                else -> {
+                    val diff = ecuPrevious?.let { ProfileDiff.compare(it, p) }
+                    val lines = EcuReport.lines(p, diff).flatMap { it.chunked(88) }
+                    val doc = android.graphics.pdf.PdfDocument()
+                    val paint = android.graphics.Paint().apply { textSize = 10f; typeface = android.graphics.Typeface.MONOSPACE }
+                    var pageNo = 1
+                    var page = doc.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(595, 842, pageNo).create())
+                    var y = 50f
+                    for (line in lines) {
+                        if (y > 800f) { doc.finishPage(page); pageNo++; page = doc.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(595, 842, pageNo).create()); y = 50f }
+                        page.canvas.drawText(line, 36f, y, paint)
+                        y += 14f
+                    }
+                    doc.finishPage(page)
+                    java.io.FileOutputStream(file).use { doc.writeTo(it) }
+                    doc.close()
+                    mime = "application/pdf"
+                }
+            }
+            val uri = FileProvider.getUriForFile(this, "$packageName.files", file)
+            val send = Intent(Intent.ACTION_SEND).apply {
+                type = mime
+                putExtra(Intent.EXTRA_STREAM, uri)
+                putExtra(Intent.EXTRA_SUBJECT, "SX4 Scan Pro ECU information")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            startActivity(Intent.createChooser(send, "Share ECU information"))
+            ecuNote = "Saved " + file.name
+        } catch (e: Exception) {
+            ecuNote = "Export failed: " + (e.message ?: "storage error")
+        }
+    }
+
+    private fun buildPoller(): LivePoller {
+        val scheduler = PollScheduler().also { PollPlan.configure(it, extraPids + HOME_PIDS) }
+        val caps = PidCapabilities().also { it.setAdvertised(supportedPids) }
+        val cfg = connConfig
+        return LivePoller(
+            port = elmPort, scheduler = scheduler, capabilities = caps,
+            lightReinit = listOf("ATPC"),
+            fullReinit = listOf("ATZ") + cfg.initCommands()
+        )
     }
 
     // Hold the same Activity monitor for the complete PID batch so a DTC scan cannot
@@ -1353,7 +1568,7 @@ class MainActivity : ComponentActivity() {
             }
             // Line-aware: more than three codes arrive as several frames, and each is checked
             // with the same strict rules as before. Unreadable lines are counted, never dropped.
-            val read = ObdTroubleCodeDecoder.decodeResponse(raw, mode)
+            val read = ObdTroubleCodeDecoder.decodeResponse(raw, mode, Framing.fromProtocolText(protocolText))
             when {
                 read.validFrames > 0 -> {
                     supported++
@@ -1697,6 +1912,7 @@ class MainActivity : ComponentActivity() {
         if (sendReceiverCommand(name)) done else "Could not reach Open Headunit. Is it installed and up to date?"
 
     private fun closeSocket() {
+        if (socket != null) sessionLog.append("EVT", "socket closed")
         try { socket?.close() } catch (_: Exception) { }
         socket = null
     }

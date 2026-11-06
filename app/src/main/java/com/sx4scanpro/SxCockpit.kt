@@ -55,6 +55,7 @@ internal fun SxShiftLights(rpm: Double?, modifier: Modifier = Modifier) {
 @Composable
 internal fun SxCockpit(
     connected: Boolean,
+    ecuOnline: Boolean,
     rpm: GaugeValue,
     boost: GaugeValue,
     boostScale: DialScale,
@@ -100,7 +101,7 @@ internal fun SxCockpit(
             }
             Box(Modifier.size(5.dp).clip(CircleShape).background(if (connected) Sx.Primary else Sx.MutedForeground))
             Text(
-                if (connected) "SYSTEM ONLINE" else "SYSTEM STANDBY", color = Sx.MutedForeground,
+                if (connected && ecuOnline) "SYSTEM ONLINE" else if (connected) "ECU NOT RESPONDING" else "SYSTEM STANDBY", color = Sx.MutedForeground,
                 fontSize = 9.sp, modifier = Modifier.padding(start = 8.dp)
             )
         }
@@ -115,7 +116,7 @@ internal fun SxCockpit(
         }
         Box(Modifier.alpha(hudDim)) { SxTelemetry(coolant, intake, egr, rail, tripKm, "coolant" in alertSensors, nowMs) }
         Row(Modifier.fillMaxWidth().alpha(hudDim), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-            SxHealth(connected, rpmSignal, faultCount, onOpenDiagnostics, Modifier.weight(1f))
+            SxHealth(connected, ecuOnline, rpmSignal, faultCount, onOpenDiagnostics, Modifier.weight(1f))
             SxHeadUnit(headUnit, receiverInstalled, onOpenHeadUnit, onShowProjection, Modifier.weight(1f))
         }
         SxFooter(connected, statusText, wallOn, onReplayWelcome, onConnect, onDisconnect, onToggleWall)
