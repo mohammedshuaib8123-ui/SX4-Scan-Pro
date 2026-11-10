@@ -86,7 +86,7 @@ class EcuNegotiationTest {
             when (cmd) {
                 "0100" -> "4100FFFFFFFF"   // advertises 0x20
                 "0120" -> "4120FFFFFFFF"   // advertises 0x40
-                "0140" -> "41400000001F"
+                "0140" -> "41400000001E"   // last bit clear: no 0x60 block
                 else -> "OK"
             }
         }.run()

@@ -55,16 +55,16 @@ internal class EcuNegotiation(private val send: (command: String, timeoutMs: Lon
 
     private var lastReply: String = ""
 
-    /** 0100, then 0120 and 0140 only when the previous block advertises them. */
+    private val walker = Mode01Walker { command, timeoutMs ->
+        val raw = send(command, timeoutMs)
+        ElmResult(command, raw, ElmReply.classify(raw), 0L)
+    }
+
+    /** 0100, then each further support block (0120 ... 01E0) while the previous block advertises it. */
     private fun discover(firstTimeoutMs: Long): Set<Int> {
-        val first = send("0100", firstTimeoutMs)
-        lastReply = first
-        val firstSet = ObdPidSupport.decode(first)
-        if (firstSet.isEmpty()) return emptySet()
-        val second = if (32 in firstSet) send("0120", PID_BLOCK_MS) else ""
-        val through64 = ObdPidSupport.decode(first + second)
-        val third = if (64 in through64) send("0140", PID_BLOCK_MS) else ""
-        return ObdPidSupport.decode(first + second + third)
+        val reads = walker.walk(firstTimeoutMs, PID_BLOCK_MS)
+        lastReply = reads.first().raw
+        return reads.flatMap { it.pids }.toSet()
     }
 
     companion object {

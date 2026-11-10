@@ -428,9 +428,13 @@ class MainActivity : ComponentActivity() {
                     linkState = LinkState.COMMUNICATING
                     var lastRecordMs = 0L
                     sessionLog.append("EVT", "live polling started: " + poller.scheduler.pids().size + " PIDs scheduled, " + supportedPids.size + " advertised")
+                    pollingLive = true
                     while (isActive && socket?.isConnected == true) {
                         val before = poller.monitor.state
-                        withContext(Dispatchers.IO) { runPollSlice(poller) }
+                        val sliced = withContext(Dispatchers.IO) {
+                            if (pollGate.tryEnterSlice()) { try { runPollSlice(poller) } finally { pollGate.exitSlice() }; true } else false
+                        }
+                        if (!sliced) delay(50)   // discovery is using the adapter
                         val nowMs = System.currentTimeMillis()
                         val after = poller.monitor.state
                         if (after != before) sessionLog.append("EVT", "ECU link $before -> $after")
@@ -1291,6 +1295,9 @@ class MainActivity : ComponentActivity() {
         // The protocol is only known once the ECU has answered, so ATDP is asked now, not before negotiation.
         protocolText = runCatching { sendCommand("ATDP", 3000) }.getOrDefault("")
         sessionLog.append("EVT", "protocol=" + protocolText + " framing=" + Framing.fromProtocolText(protocolText))
+        // P3: the same discovery path a later manual request uses. It never decides whether the connection succeeds.
+        pollingLive = false
+        runCatching { requestDiscovery("connect") }
         return (device.name ?: "Bluetooth OBD adapter") to Unit
     }
 
@@ -1444,6 +1451,43 @@ class MainActivity : ComponentActivity() {
         sessionLog.append("EVT", "parameter registry loaded: ${res.registry.all().size} definitions" + res.issues.joinToString("") { "; $it" })
     }
 
+    /** Lets ECU discovery borrow the adapter from the live poll loop (P3). */
+    private val pollGate = PollGate()
+    @Volatile private var pollingLive = false
+
+    private fun discoveryRefusal(): String? = when {
+        socket?.isConnected != true -> "adapter not connected"
+        ecuScanning -> "an ECU scan is running"
+        pollingLive && linkState != LinkState.COMMUNICATING -> "ECU link is not communicating"
+        else -> null
+    }
+
+    private val discoveryController by lazy {
+        DiscoveryController(
+            gate = pollGate,
+            registry = { parameterRegistry },
+            persist = { registryStore.save(it) },
+            clock = { System.currentTimeMillis() },
+            log = { sessionLog.append("EVT", it) },
+            refusal = { discoveryRefusal() },
+            discover = {
+                val cfg = connConfig
+                PidDiscovery(
+                    send = { c, t -> elmPort.send(c, t) },
+                    framing = Framing.fromProtocolText(protocolText),
+                    reinit = { (listOf("ATZ") + cfg.initCommands()).forEach { elmPort.send(it, 5000L) } },
+                    exclusive = { block -> synchronized(this@MainActivity) { block() } }
+                ).run()
+            }
+        )
+    }
+
+    /**
+     * Mode 01 ECU discovery: reads the supported-PID bitmaps, updates and saves the parameter registry. Used at connect time and
+     * for any later request, so both share one implementation. Read-only. Blocking: call from a background thread. No UI yet.
+     */
+    internal fun requestDiscovery(reason: String = "manual"): DiscoveryOutcome = discoveryController.request(reason)
+
     private fun ecuDir() = java.io.File(filesDir, "ecu").apply { mkdirs() }
 
     private fun loadEcuProfiles() {
@@ -1454,7 +1498,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun runEcuScan(scope: kotlinx.coroutines.CoroutineScope) {
-        if (ecuScanning) return
+        if (ecuScanning || discoveryController.isRunning()) return
         scope.launch {
             ecuScanning = true
             ecuNote = "Scanning the ECU (read-only)…"
@@ -1942,6 +1986,7 @@ class MainActivity : ComponentActivity() {
         if (sendReceiverCommand(name)) done else "Could not reach Open Headunit. Is it installed and up to date?"
 
     private fun closeSocket() {
+        pollingLive = false
         if (socket != null) sessionLog.append("EVT", "socket closed")
         try { socket?.close() } catch (_: Exception) { }
         socket = null
