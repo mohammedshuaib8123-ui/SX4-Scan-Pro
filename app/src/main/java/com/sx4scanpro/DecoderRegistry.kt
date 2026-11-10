@@ -115,9 +115,7 @@ internal object DecoderRegistry {
         val def = byPid[pid] ?: return if (payload.isEmpty()) Decoding.Invalid(raw, pid, InvalidReason.WRONG_LENGTH) else Decoding.Raw(raw, pid, payload)
         if (payload.length != def.bytes * 2) return Decoding.Invalid(raw, pid, InvalidReason.WRONG_LENGTH)
         val spec = PidCatalog.forPid(pid) ?: return Decoding.Raw(raw, pid, payload)
-        val a = payload.substring(0, 2).toInt(16)
-        val b = if (def.bytes == 2) payload.substring(2, 4).toInt(16) else 0
-        val value = spec.decode(a, b)
+        val value = spec.decode(payload.substring(0, 2).toInt(16), if (def.bytes == 2) payload.substring(2, 4).toInt(16) else 0)
         return Decoding.Decoded(raw, def, value, PidCatalog.format(spec, value))
     }
 }

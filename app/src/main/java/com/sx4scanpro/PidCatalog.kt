@@ -71,19 +71,11 @@ internal object PidCatalog {
     fun forName(name: String): PidSpec? = byName[name]
 
     /**
-     * Decodes a single-frame reply like "410C1F40" for [spec]. Returns null for any reply that is
-     * not exactly the expected service, PID and payload length: nothing is guessed.
+     * Decodes a single-frame reply like "410C1F40" for [spec], or null for anything that is not exactly that service, PID and payload
+     * length. The parsing lives in [DecoderRegistry]; the arithmetic is [PidSpec.decode], the only copy of each formula.
      */
-    fun decode(spec: PidSpec, response: String): Double? {
-        val r = response.uppercase().filterNot { it.isWhitespace() }
-        val prefix = "41" + String.format("%02X", spec.pid)
-        if (!r.startsWith(prefix)) return null
-        val payload = r.removePrefix(prefix)
-        if (payload.length != spec.bytes * 2 || payload.any { it !in "0123456789ABCDEF" }) return null
-        val a = payload.substring(0, 2).toInt(16)
-        val b = if (spec.bytes == 2) payload.substring(2, 4).toInt(16) else 0
-        return spec.decode(a, b)
-    }
+    fun decode(spec: PidSpec, response: String): Double? =
+        (DecoderRegistry.decode(response, spec.pid) as? Decoding.Decoded)?.value
 
     fun format(spec: PidSpec, value: Double): String =
         String.format(java.util.Locale.US, "%." + spec.decimals + "f", value)

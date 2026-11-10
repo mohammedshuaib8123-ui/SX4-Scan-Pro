@@ -1,8 +1,5 @@
 package com.sx4scanpro
 
-import androidx.compose.animation.core.FastOutSlowInEasing
-import androidx.compose.animation.core.animateIntAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -13,7 +10,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
@@ -36,8 +32,8 @@ private val SpeedDim = Color(0x66FFFFFF)
 
 /**
  * Digital speed readout drawn over the top-right corner of the car image: a large italic monospace number, an orange KM/H label and a
- * thin segmented bar. It shows only [readout], which comes from the ECU's 010D reading; an invalid or stale speed is a dash and an empty bar.
- * The number eases between real readings over 300 ms; it never invents a value between updates.
+ * thin segmented bar. It shows exactly [readout], which comes from the ECU's decoded 010D reading: the number and the bar change only when
+ * the ECU reports a new value, with no easing or interpolation. An invalid or stale speed is a dash and an empty bar.
  */
 @Composable
 internal fun SxDigitalSpeed(readout: SpeedReadout, modifier: Modifier = Modifier) {
@@ -48,18 +44,9 @@ internal fun SxDigitalSpeed(readout: SpeedReadout, modifier: Modifier = Modifier
         val labelSp = with(LocalDensity.current) { (numberDp * 0.22f).coerceAtLeast(9f).dp.toSp() }
         val description = readout.kmh?.let { "Vehicle speed $it kilometres per hour" } ?: "Vehicle speed unavailable"
         Column(Modifier.semantics { contentDescription = description }, horizontalAlignment = Alignment.End) {
-            if (readout.valid) ValidSpeed(readout.kmh!!, numberSp, labelSp, numberDp)
-            else SpeedRow("—", "", numberSp, labelSp, numberDp, 0)
+            SpeedRow(readout.digits, readout.dimPrefix, numberSp, labelSp, numberDp, readout.litSegments())
         }
     }
-}
-
-/** Only in composition while a valid speed exists, so after a dash it starts at the new reading instead of counting up from an old one. */
-@Composable
-private fun ValidSpeed(kmh: Int, numberSp: androidx.compose.ui.unit.TextUnit, labelSp: androidx.compose.ui.unit.TextUnit, numberDp: Float) {
-    val shown by animateIntAsState(kmh, tween(300, easing = FastOutSlowInEasing), label = "speed")
-    val r = SpeedReadout(shown)
-    SpeedRow(r.digits, r.dimPrefix, numberSp, labelSp, numberDp, r.litSegments())
 }
 
 @Composable

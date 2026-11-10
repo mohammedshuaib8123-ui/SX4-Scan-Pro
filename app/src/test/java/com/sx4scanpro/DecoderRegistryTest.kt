@@ -144,17 +144,33 @@ class DecoderRegistryTest {
         assertNotNull(DecoderRegistry.decode("410C1F40") as? Decoding.Decoded)          // without an expectation it decodes as PID 0C
     }
 
-    // ---- same results as the existing PidCatalog path ----
-    @Test fun agreesWithPidCatalogOnEveryCatalogPidAndMalformedVariant() {
+    // ---- one source of truth: the PidCatalog formulas, not a second copy ----
+    @Test fun valuesComeStraightFromThePidCatalogFormulas() {
+        for (spec in PidCatalog.all) for ((a, b) in listOf(0 to 0, 0x12 to 0x34, 0xFF to 0xFF, 0x80 to 0x01)) {
+            val reply = if (spec.bytes == 2) hex(spec.pid, a, b) else hex(spec.pid, a)
+            val fromFormula = spec.decode(a, if (spec.bytes == 2) b else 0)
+            assertEquals(fromFormula, decoded(reply, spec.pid).value, 0.0)
+            assertEquals(fromFormula, PidCatalog.decode(spec, reply)!!, 0.0)       // the dials' entry point is the same implementation
+            assertEquals(PidCatalog.format(spec, fromFormula), decoded(reply, spec.pid).text)
+        }
+    }
+
+    @Test fun pidCatalogAndTheRegistryRejectExactlyTheSameReplies() {
         for (spec in PidCatalog.all) {
             val good = if (spec.bytes == 2) "A1B2" else "A1"
-            val variants = listOf(good, "", good.dropLast(2), good + "00", good.dropLast(1) + "Z", "00".repeat(spec.bytes), "FF".repeat(spec.bytes))
-            for (payload in variants) {
-                val reply = "41%02X".format(spec.pid) + payload
-                val old = PidCatalog.decode(spec, reply)
-                val now = DecoderRegistry.decode(reply, spec.pid)
-                if (old == null) assertFalse("PID %02X $reply".format(spec.pid), now is Decoding.Decoded)
-                else assertEquals("PID %02X $reply".format(spec.pid), old, (now as Decoding.Decoded).value, 0.0)
+            val other = PidCatalog.all.first { it.pid != spec.pid }.pid
+            val bad = listOf(
+                "41%02X".format(spec.pid),                                  // no payload
+                "41%02X".format(spec.pid) + good.dropLast(2),              // incomplete
+                "41%02X".format(spec.pid) + good + "00",                   // too long
+                "41%02X".format(spec.pid) + good.dropLast(1) + "Z",        // not hex
+                "41%02X".format(other) + good,                              // another PID
+                "42%02X".format(spec.pid) + good,                           // another service
+                "7F01%02X".format(spec.pid), "", "NO DATA"
+            )
+            for (reply in bad) {
+                assertNull("PID %02X '$reply'".format(spec.pid), PidCatalog.decode(spec, reply))
+                assertFalse(DecoderRegistry.decode(reply, spec.pid) is Decoding.Decoded)
             }
         }
     }
