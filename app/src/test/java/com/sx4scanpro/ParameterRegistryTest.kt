@@ -172,4 +172,42 @@ class ParameterRegistryTest {
         assertNotNull(PidCatalog.forPid(0x0C))   // catalog API unchanged
         listOf("00", "02", "04", "06", "0A").forEach { assertTrue(r.def("09:$it")!!.hasDecoder) }
     }
+
+    // failure-safe save: the previous registry survives any failed replacement
+    @Test fun aFailedReplacementKeepsTheOldRegistryIntact() {
+        val f = File(tmp(), "registry/parameters.json")
+        val old = reg(); old.onPositiveResponse("01:0C", ev(EvidenceKind.POSITIVE_RESPONSE, 2))
+        assertTrue(RegistryStore(f).save(old, 1))
+        val before = f.readText()
+        val newer = reg(); newer.onUnsupported("01:11", ev(EvidenceKind.BITMAP_NOT_ADVERTISED, 3))
+        // Both the move and any retry fail, as when the second rename also fails.
+        val failing = RegistryStore(f, replace = { _, _ -> throw java.io.IOException("rename failed") })
+        assertFalse(failing.save(newer, 2))
+        assertTrue(f.exists())
+        assertEquals(before, f.readText())
+        val loaded = RegistryStore(f).load()
+        assertEquals(ParamState.VERIFIED, loaded.registry.state("01:0C"))
+        assertEquals(ParamState.UNTESTED, loaded.registry.state("01:11"))
+        assertFalse("temporary file is cleaned up", File(f.path + ".tmp").exists())
+    }
+
+    @Test fun anUnwritableTemporaryFileKeepsTheOldRegistryIntact() {
+        val f = File(tmp(), "p.json")
+        val old = reg(); old.onPositiveResponse("01:0C", ev(EvidenceKind.POSITIVE_RESPONSE, 2))
+        assertTrue(RegistryStore(f).save(old, 1))
+        val before = f.readText()
+        File(f.path + ".tmp").mkdirs()                       // the temporary path is a directory, so it cannot be written
+        assertFalse(RegistryStore(f).save(reg(), 2))
+        assertEquals(before, f.readText())
+    }
+
+    @Test fun theStoredFileIsNeverDeletedBeforeTheReplacement() {
+        val f = File(tmp(), "p.json")
+        assertTrue(RegistryStore(f).save(reg(), 1))
+        var existedAtReplace = false
+        val store = RegistryStore(f, replace = { t, d -> existedAtReplace = d.exists(); RegistryStore.replaceFile(t, d) })
+        assertTrue(store.save(reg(), 2))
+        assertTrue(existedAtReplace)
+        assertTrue(RegistryStore(f).load().issues.isEmpty())
+    }
 }

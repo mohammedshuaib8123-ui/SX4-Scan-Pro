@@ -1,6 +1,10 @@
 package com.sx4scanpro
 
 import java.io.File
+import java.io.FileOutputStream
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 
 internal data class RegistryLoad(val registry: ParameterRegistry, val issues: List<String>)
 
@@ -9,9 +13,22 @@ internal data class RegistryLoad(val registry: ParameterRegistry, val issues: Li
  * Mode 09 decoders); the file holds capability states, evidence and any definitions the app did not ship. Only state and
  * evidence are stored: no sensor readings. Loading never throws and keeps every entry that is still valid.
  */
-internal class RegistryStore(private val file: File) {
+internal class RegistryStore(
+    private val file: File,
+    /** Puts the finished temporary file in place of the stored one. Injectable so tests can make the replacement fail. */
+    private val replace: (tmp: File, dest: File) -> Unit = ::replaceFile
+) {
     companion object {
         const val SCHEMA = 1
+
+        /** Atomic replace of [dest] by [tmp]. [dest] is never deleted first: if this throws, the old file is still there. */
+        fun replaceFile(tmp: File, dest: File) {
+            try {
+                Files.move(tmp.toPath(), dest.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(tmp.toPath(), dest.toPath(), StandardCopyOption.REPLACE_EXISTING)
+            }
+        }
         private val knownStates = ParamState.values().map { it.name }.toSet()
     }
 
@@ -80,12 +97,22 @@ internal class RegistryStore(private val file: File) {
         RegistryLoad(ParameterRegistry.withBuiltInDefinitions(), listOf("could not read stored registry (${e.javaClass.simpleName}); started empty"))
     }
 
-    /** Atomic save: write a temporary file, then rename over the old one. Returns false (and keeps the old file) on failure. */
-    fun save(r: ParameterRegistry, nowMs: Long = System.currentTimeMillis()): Boolean = runCatching {
-        file.parentFile?.mkdirs()
+    /**
+     * Failure-safe save: write and flush a temporary file, check that it reads back as a valid registry, then replace the stored file
+     * in one step. The stored file is never deleted beforehand, so any failure (write, verification or replacement) leaves the previous
+     * registry intact. Returns false on failure; only the temporary file is cleaned up.
+     */
+    fun save(r: ParameterRegistry, nowMs: Long = System.currentTimeMillis()): Boolean {
         val tmp = File(file.path + ".tmp")
-        tmp.writeText(toJson(r, nowMs))
-        if (!tmp.renameTo(file)) { file.delete(); check(tmp.renameTo(file)) }
-        true
-    }.getOrDefault(false)
+        return try {
+            file.parentFile?.mkdirs()
+            FileOutputStream(tmp).use { it.write(toJson(r, nowMs).toByteArray(Charsets.UTF_8)); it.fd.sync() }
+            check(fromJson(tmp.readText()).issues.none { it.startsWith("stored registry") }) { "temporary registry did not verify" }
+            replace(tmp, file)
+            true
+        } catch (_: Exception) {
+            runCatching { tmp.delete() }
+            false
+        }
+    }
 }
