@@ -648,6 +648,7 @@ class MainActivity : ComponentActivity() {
                                     },
                                     coolant = g("Coolant temperature"), intake = g("Intake air temperature"),
                                     egr = g("EGR commanded"), fuel = g("Fuel level"), battery = g("Control module voltage"),
+                                    speed = g("Vehicle speed"),
                                     tripKm = if (connected && trip.dataMs > 0) trip.distanceKm else null,
                                     faultCount = if (dtcScanned) dtcCodes.size else null,
                                     headUnit = huSession, alertSensors = alertSensors,

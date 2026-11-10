@@ -68,6 +68,7 @@ internal fun SxCockpit(
     egr: GaugeValue,
     fuel: GaugeValue,
     battery: GaugeValue,
+    speed: GaugeValue,
     tripKm: Double?,
     faultCount: Int?,
     headUnit: HeadUnitSession,
@@ -110,7 +111,7 @@ internal fun SxCockpit(
                 "ENGINE SPEED", rpm, DialScale.forLabel("Engine RPM"), "RPM", "Engine speed", nowMs, "rpm" in alertSensors,
                 "Diesel · 1,248 cc", Modifier.weight(1f), shiftLights = true, hotFrom = hotRpm, ignite = arrive
             )
-            SxVehicleStage(fuel, battery, nowMs, Modifier.weight(1.4f).alpha(hudDim))
+            SxVehicleStage(fuel, battery, speed, nowMs, Modifier.weight(1.4f).alpha(hudDim))
             if (mode == DriveMode.ECO) SxInstrument("FUEL ECONOMY", economy, DialScale(40f, 10f), "KM/L", "From ECU fuel rate and speed", nowMs, false, "Instant economy", Modifier.weight(1f), ignite = arrive)
             else SxInstrument("VGT BOOST", boost, boostScale, boostCaption, "Boost pressure", nowMs, "boost" in alertSensors, "Variable geometry turbo", Modifier.weight(1f), hotFrom = hotBoost, ignite = arrive)
         }
