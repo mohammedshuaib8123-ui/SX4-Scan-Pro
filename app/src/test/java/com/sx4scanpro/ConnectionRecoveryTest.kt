@@ -236,6 +236,44 @@ class RecoverySupervisorTest {
         assertEquals(0, p.events.count { it == "reconnect" }); assertFalse(p.paused)
     }
 
+    @Test fun pauseFailureDoesNothingToTheAdapterAndReleasesTheLock() {
+        var resumed = 0
+        val fake = FakePorts()
+        var reconnects = 0; var closes = 0
+        val ports = object : RecoveryPorts by fake {
+            override fun pausePolling() = false
+            override fun resumePolling() { resumed++ }
+            override fun reconnect(): Boolean { reconnects++; return true }
+            override fun closeSocket() { closes++ }
+        }
+        val m = readyMachine(); val s = RecoverySupervisor(m, ports)
+        assertFalse(s.recoverBluetooth(FailureKind.BLUETOOTH_DISCONNECTED, ""))
+        assertEquals(0, reconnects); assertEquals(0, closes); assertEquals(0, resumed)
+        assertEquals(ConnectionState.ERROR, m.snapshot.state)
+        assertTrue(m.snapshot.reason.contains("polling"))
+        assertFalse(s.isRecovering())
+        assertTrue(fake.sleeps.isEmpty())
+    }
+
+    @Test fun pauseExceptionDoesNotLeaveTheLockStuck() {
+        var resumed = 0; var reconnects = 0
+        val fake = FakePorts().apply { script = mutableListOf(true) }
+        var throwOnPause = true
+        val ports = object : RecoveryPorts by fake {
+            override fun pausePolling(): Boolean { if (throwOnPause) throw IllegalStateException("gate broken"); return true }
+            override fun resumePolling() { resumed++ }
+            override fun reconnect(): Boolean { reconnects++; return fake.reconnect() }
+        }
+        val m = readyMachine(); val s = RecoverySupervisor(m, ports)
+        assertFalse(s.recoverBluetooth(FailureKind.BLUETOOTH_DISCONNECTED, ""))
+        assertFalse(s.isRecovering()); assertEquals(0, reconnects); assertEquals(0, resumed)
+        // a later attempt (after the user reconnects) is not blocked by the earlier failure
+        throwOnPause = false
+        val m2 = readyMachine(); val s2 = RecoverySupervisor(m2, ports)
+        assertTrue(s2.recoverBluetooth(FailureKind.BLUETOOTH_DISCONNECTED, ""))
+        assertEquals(1, resumed)
+    }
+
     @Test fun abortDuringReconnectClosesTheNewSocket() {
         val p = FakePorts().apply { script = mutableListOf(true); onReconnect = { abortAfterSleeps = 0 } }
         val m = readyMachine()

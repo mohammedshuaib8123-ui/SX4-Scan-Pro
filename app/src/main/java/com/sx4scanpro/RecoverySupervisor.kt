@@ -106,8 +106,15 @@ internal class RecoverySupervisor(
     fun recoverBluetooth(kind: FailureKind, detail: String): Boolean {
         if (!busy.compareAndSet(false, true)) return false
         val reason = (ConnectionPresenter.failureText(kind) + (if (detail.isBlank()) "" else " ($detail)"))
-        val paused = ports.pausePolling()
+        var paused = false
         try {
+            // No close, reconnect or ELM command unless polling is really stopped; an exception counts as "not stopped".
+            paused = try { ports.pausePolling() } catch (e: Exception) { ports.log("recovery: could not pause polling: " + (e.message ?: e.javaClass.simpleName)); false }
+            if (!paused) {
+                ports.log("recovery refused: polling could not be paused, so the adapter is not safe to use")
+                machine.gaveUp(kind, "Recovery could not start: live polling did not stop in time", RecoveryLayer.NONE)
+                return false
+            }
             if (!machine.recoveryStarted(kind, reason, RecoveryLayer.BLUETOOTH, policy.bluetoothAttempts)) return false
             ports.log("recovery: $reason")
             var last = reason
