@@ -86,7 +86,7 @@ internal class LivePoller(
         }
         val probe = port.send("0100", 6000L)
         val ok = probe.kind == ElmKind.DATA && ElmReply.stripBanners(probe.raw).startsWith("4100")
-        if (ok) { monitor.onGood(now); pacer.reset() }
+        if (ok) { monitor.onGood(now); pacer.reset(); capabilities.clearTemporaryState() }
         return PollEvent.Recovery(action.step, ok)
     }
 

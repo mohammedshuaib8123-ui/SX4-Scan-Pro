@@ -343,3 +343,56 @@ class PollMetricsTest {
         assertTrue(p.metrics.summary().any { it.startsWith("perf PID 0C") })
     }
 }
+
+class RecoveryClearsParkedPidsTest {
+    private fun silence(p: LivePoller, port: PerfPort, start: Long): Long {
+        var now = start; var guard = 0
+        port.replies.clear()
+        while (p.monitor.state == LinkState.COMMUNICATING && guard++ < 200) { p.step(now); now += 100 }
+        return now
+    }
+
+    @Test fun parkedAdvertisedPidIsPollableImmediatelyAfterSuccessfulRecovery() {
+        val port = PerfPort().also { answerAll(it) }
+        val p = fullPoller(port)
+        port.replies["0111"] = "41 11"                       // garbage: gets parked
+        var now = 0L
+        repeat(250) { p.step(now); now += 100 }
+        assertFalse(p.capabilities.isPollable(0x11, now))
+        now = silence(p, port, now)
+        assertFalse("still parked while the ECU is down", p.capabilities.isPollable(0x11, now))
+        answerAll(port); port.replies["0100"] = "41 00 BE 3F A8 13"
+        var ok = false; var guard = 0
+        while (!ok && guard++ < 50) { val ev = p.step(now); if (ev is PollEvent.Recovery && ev.recovered) ok = true else now += 1000 }
+        assertTrue(ok)
+        assertTrue(p.capabilities.isPollable(0x11, now))
+        assertEquals(p.scheduler.intervalOf(0x11), p.scheduler.effectiveIntervalOf(0x11))
+    }
+
+    @Test fun neverAdvertisedPidStaysUnpollable() {
+        val c = PidCapabilities().also { it.setAdvertised(setOf(0x0C)) }
+        c.park(0x0C, 0, 60_000)
+        c.clearTemporaryState()
+        assertTrue(c.isPollable(0x0C, 0))
+        assertFalse(c.isPollable(0x42, 0)); assertEquals(PidState.NOT_ADVERTISED, c.stateOf(0x42, 0))
+    }
+
+    @Test fun noDataStreakAndParkingAreBothCleared() {
+        val c = PidCapabilities(3, 30_000).also { it.setAdvertised(setOf(0x0C, 0x05)) }
+        repeat(3) { c.recordNoData(0x0C, 0) }; c.park(0x05, 0, 300_000)
+        assertFalse(c.isPollable(0x0C, 1)); assertFalse(c.isPollable(0x05, 1))
+        c.clearTemporaryState()
+        assertTrue(c.isPollable(0x0C, 1)); assertTrue(c.isPollable(0x05, 1))
+    }
+
+    @Test fun failedRecoveryDoesNotClearParkedState() {
+        val port = PerfPort().also { answerAll(it) }
+        val p = fullPoller(port)
+        port.replies["0111"] = "41 11"
+        var now = 0L
+        repeat(250) { p.step(now); now += 100 }
+        now = silence(p, port, now)
+        repeat(3) { val ev = p.step(now) as PollEvent.Recovery; assertFalse(ev.recovered); now += 1000 }
+        assertFalse(p.capabilities.isPollable(0x11, now))
+    }
+}

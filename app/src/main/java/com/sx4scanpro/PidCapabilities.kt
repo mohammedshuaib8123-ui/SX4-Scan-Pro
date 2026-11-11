@@ -25,6 +25,12 @@ internal class PidCapabilities(private val noDataLimit: Int = 3, private val ret
     /** Stop asking for [pid] until [now] + [ms] (a PID that keeps answering with garbage or "?"); it is retried afterwards, never disabled for good. */
     fun park(pid: Int, now: Long, ms: Long) { retryAt[pid] = now + ms }
 
+    /**
+     * After a confirmed ECU recovery: forget temporary parking and NO DATA streaks, so advertised PIDs are polled again at once.
+     * The advertised set is untouched: a PID the ECU never advertised stays unpollable.
+     */
+    fun clearTemporaryState() { streak.clear(); retryAt.clear() }
+
     fun recordSuccess(pid: Int) { streak[pid] = 0; retryAt.remove(pid) }
 
     /** Call for a NO DATA reply only while other PIDs are answering; ECU-wide silence is not the PID's fault. */
