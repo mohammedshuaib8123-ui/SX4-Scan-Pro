@@ -22,6 +22,9 @@ internal class PidCapabilities(private val noDataLimit: Int = 3, private val ret
 
     fun isPollable(pid: Int, now: Long) = stateOf(pid, now) == PidState.READY
 
+    /** Stop asking for [pid] until [now] + [ms] (a PID that keeps answering with garbage or "?"); it is retried afterwards, never disabled for good. */
+    fun park(pid: Int, now: Long, ms: Long) { retryAt[pid] = now + ms }
+
     fun recordSuccess(pid: Int) { streak[pid] = 0; retryAt.remove(pid) }
 
     /** Call for a NO DATA reply only while other PIDs are answering; ECU-wide silence is not the PID's fault. */

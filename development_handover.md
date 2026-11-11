@@ -51,3 +51,6 @@ All stages are implemented and CI-green on `claude/obd-recovery-and-ecu-info`. O
 
 ## Final integration (2026-11-06)
 Release candidate: `claude/v1-final-integration` @ fb37ae8 = `main` 4dbff6a + OBD branch cdf5679 (only conflict: duplicate CI APK step, `main`'s version kept). Build evidence and the not-yet-verified list are in `CURRENT_STATUS.md`. PR #5 (alternative cockpit) is deliberately not included. `main` moves only on the owner's approval.
+
+## P6 live-data performance (2026-11-11)
+`PollScheduler` (priority, stretch, starvation guard), `PollPlan.priorityOf`, `PidCapabilities.park`, `PollPerformance.kt` (`PollMetrics`, `AdaptivePacer`), `LivePoller` (metrics, pacer, re-entrancy guard), `MainActivity` (60 s `PERF` log block). Tests: `PollPerformanceTest.kt`. Pacing only slows, never below plan. Real-car performance still to be measured. Session export remains a separate outstanding requirement.

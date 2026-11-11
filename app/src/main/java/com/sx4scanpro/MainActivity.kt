@@ -461,6 +461,7 @@ class MainActivity : ComponentActivity() {
                     var poller = buildPoller()
                     linkState = LinkState.COMMUNICATING
                     var lastRecordMs = 0L
+                    var lastPerfLogMs = System.currentTimeMillis()
                     // Backstop for a hung adapter read: closing the socket turns the stall into an ordinary lost-link recovery.
                     watchdog = launch(Dispatchers.IO) {
                         while (isActive) {
@@ -524,6 +525,10 @@ class MainActivity : ComponentActivity() {
                         gauges = if (!connection.snapshot.ecuAvailable) gauges.map { it.copy(value = "--", available = false) }
                         else GaugeAssembler.build({ poller.reading(it) }, supportedPids, extraPids, nowMs)
                             .map { GaugeValue(it.label, it.value, it.unit, it.available, it.capturedAtMs) }
+                        if (nowMs - lastPerfLogMs >= 60_000L) {   // bounded: one short block a minute into the rolling session log
+                            lastPerfLogMs = nowMs
+                            poller.metrics.summary().forEach { sessionLog.append("PERF", it) }
+                        }
                         if (nowMs - lastRecordMs >= 1000L) {
                             lastRecordMs = nowMs
                             gauges.forEach { g -> history.record(g.label, if (g.available) g.value.toDoubleOrNull() else null) }

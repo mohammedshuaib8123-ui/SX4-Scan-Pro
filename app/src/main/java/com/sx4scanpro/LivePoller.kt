@@ -28,20 +28,43 @@ internal class LivePoller(
     val monitor: LinkMonitor = LinkMonitor(),
     private val lightReinit: List<String> = listOf("ATPC"),
     private val fullReinit: List<String> = listOf("ATZ"),
-    private val pidTimeoutMs: Long = 2500L
+    private val pidTimeoutMs: Long = 2500L,
+    val metrics: PollMetrics = PollMetrics(),
+    private val pacer: AdaptivePacer = AdaptivePacer(scheduler, metrics)
 ) {
     private val readings = HashMap<Int, Reading>()
+    private val inStep = java.util.concurrent.atomic.AtomicBoolean(false)
     fun reading(pid: Int): Reading? = readings[pid]
 
+    /** One step at a time: a re-entrant or concurrent call returns Idle instead of sending a second command. */
     fun step(now: Long): PollEvent {
+        if (!inStep.compareAndSet(false, true)) return PollEvent.Idle
+        try { return stepOnce(now) } finally { inStep.set(false) }
+    }
+
+    private fun stepOnce(now: Long): PollEvent {
         if (monitor.state != LinkState.COMMUNICATING) return recover(now)
         val pid = scheduler.next(now) { capabilities.isPollable(it, now) } ?: return PollEvent.Idle
         val spec = PidCatalog.forPid(pid)
         scheduler.markPolled(pid, now)
         if (spec == null) return PollEvent.Polled(pid, null, ElmKind.UNKNOWN_COMMAND)
         val res = port.send(spec.command, pidTimeoutMs)
+        metrics.cycleTick(pid, scheduler.pids().filter { capabilities.isPollable(it, now) }.toSet(), now)
         val value = if (res.kind == ElmKind.DATA) (DecoderRegistry.decode(res.raw, pid) as? Decoding.Decoded)?.value else null
         monitor.onResult(res.kind, res.timedOut)
+        val outcome = when {
+            value != null -> PollOutcome.OK
+            res.timedOut -> PollOutcome.TIMEOUT
+            res.kind == ElmKind.NO_DATA -> PollOutcome.NO_DATA
+            res.kind == ElmKind.DATA -> PollOutcome.MALFORMED
+            else -> PollOutcome.OTHER_ERROR
+        }
+        metrics.record(pid, outcome, res.millis, now)
+        // Per-PID backoff only when this PID fails while the ECU as a whole is still answering.
+        val streak = metrics.consecutiveFailures(pid)
+        if (outcome == PollOutcome.MALFORMED && streak >= 3) capabilities.park(pid, now, 60_000L)
+        if (res.kind == ElmKind.UNKNOWN_COMMAND && streak >= 2) capabilities.park(pid, now, 300_000L)
+        pacer.onResult(pid, outcome, monitor.state == LinkState.COMMUNICATING && now - monitor.lastGoodMs < 3000L)
         return if (value != null) {
             val r = Reading(value, now, res.raw)
             readings[pid] = r
@@ -63,7 +86,7 @@ internal class LivePoller(
         }
         val probe = port.send("0100", 6000L)
         val ok = probe.kind == ElmKind.DATA && ElmReply.stripBanners(probe.raw).startsWith("4100")
-        if (ok) monitor.onGood(now)
+        if (ok) { monitor.onGood(now); pacer.reset() }
         return PollEvent.Recovery(action.step, ok)
     }
 
