@@ -32,6 +32,7 @@ internal fun SxEcuInfo(
     profile: EcuProfile?,
     diff: ProfileDiff?,
     linkText: String,
+    connectionRows: List<Pair<String, String>> = emptyList(),
     liveFacts: AdapterFacts,
     mode01Count: Int,
     scanning: Boolean,
@@ -58,6 +59,7 @@ internal fun SxEcuInfo(
 
         Section("1  CONNECTION") {
             Row2("Link", linkText)
+            connectionRows.forEach { (label, value) -> Row2(label, value) }
             Row2("Adapter", liveFacts.name.ifBlank { "unknown" })
             Row2("Adapter ID", liveFacts.id.ifBlank { "not reported" })
             Row2("Battery voltage (ATRV)", liveFacts.voltage.ifBlank { "not reported" })

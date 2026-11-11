@@ -253,12 +253,39 @@ class MainActivity : ComponentActivity() {
     private var cabinChimeTrack: AudioTrack? = null
     private var welcomeOverlayVisible by mutableStateOf(false)
     @Volatile private var userInitiatedDisconnect = false
+    /** P5: the one connection state machine, its recovery driver and the poll-stall watchdog. */
+    private var connSnapshot by mutableStateOf(ConnectionSnapshot())
+    private val connection = ConnectionMachine { old, new ->
+        connSnapshot = new
+        if (old.state != new.state || old.failure != new.failure) {
+            sessionLog.append("EVT", "connection " + old.state + " -> " + new.state + (if (new.reason.isNotBlank()) ": " + new.reason else ""))
+        }
+    }
+    private val recoveryPolicy = RecoveryPolicy()
+    private val stallWatchdog = StallWatchdog(recoveryPolicy.stallMs)
+    @Volatile private var pollStalled = false
+    private val recoveryPorts = object : RecoveryPorts {
+        override fun closeSocket() { this@MainActivity.closeSocket() }
+        /** The same set-up as the first connection, minus discovery (no new PID requests). Throws when the ECU does not answer. */
+        override fun reconnect(): Boolean { connectAndRead(reconnecting = true); return true }
+        override fun pausePolling(): Boolean = pollGate.pause()
+        override fun resumePolling() = pollGate.resume()
+        override fun sleep(ms: Long) {
+            var left = ms
+            while (left > 0 && !aborted()) { val step = minOf(left, 250L); Thread.sleep(step); left -= step }
+        }
+        override fun aborted(): Boolean = userInitiatedDisconnect
+        override fun now(): Long = System.currentTimeMillis()
+        override fun log(message: String) { sessionLog.append("EVT", message) }
+    }
+    private val recovery by lazy { RecoverySupervisor(connection, recoveryPorts, recoveryPolicy) }
     private val traffic = TrafficLog()
     private val sessionLog by lazy { SessionLog(java.io.File(filesDir, "logs")) }
     private val capture by lazy { CaptureStore(java.io.File(filesDir, "capture")) }
     @Volatile private var captureSession: String = "S0"
     /** Structured, lossless record of one adapter transaction (see RawExchange). Never throws. */
     private fun recordExchange(command: String, raw: String, status: String, t0: Long, error: String? = null) {
+        stallWatchdog.progress(System.currentTimeMillis())
         capture.record(captureSession, System.currentTimeMillis(), command, raw, status, System.currentTimeMillis() - t0, protocolText, error = error)
     }
     /** One place for adapter traffic: the on-screen preview and the persistent, shareable file. */
@@ -400,6 +427,7 @@ class MainActivity : ComponentActivity() {
             endTrip()
             userInitiatedDisconnect = true
             closeSocket()
+            connection.userDisconnected()
             status = "Disconnected"
             gauges = gauges.map { it.copy(value = "--", available = false) }
         }
@@ -410,36 +438,91 @@ class MainActivity : ComponentActivity() {
                 if (btAccess == AccessStatus.NEEDS_REQUEST) requestBluetoothPermissions(forScanning = false)
                 return
             }
+            // One connection or recovery at a time: a second tap must not open a second socket.
+            if (connection.snapshot.busy || recovery.isRecovering()) return
             scope.launch {
                 disconnect()
                 userInitiatedDisconnect = false
+                pollStalled = false
                 history.clear()
                 status = "Connecting…"
+                connection.connectRequested()
+                var watchdog: kotlinx.coroutines.Job? = null
                 try {
                     val result = withContext(Dispatchers.IO) { connectAndRead() }
                     adapterName = result.first
                     adapterNameForScan = result.first
+                    connection.ready(System.currentTimeMillis())
                     status = "Connected"
                     startTrip()
                     // The greeting plays only once the ECU has really answered (connectAndRead throws otherwise).
                     if (welcomeSettings.shouldPlay(welcomePlayedOnce)) playEngineWelcome()
                     welcomePlayedOnce = true
-                    val poller = buildPoller()
+                    var poller = buildPoller()
                     linkState = LinkState.COMMUNICATING
                     var lastRecordMs = 0L
+                    // Backstop for a hung adapter read: closing the socket turns the stall into an ordinary lost-link recovery.
+                    watchdog = launch(Dispatchers.IO) {
+                        while (isActive) {
+                            delay(2000)
+                            if (stallWatchdog.isStalled(System.currentTimeMillis()) && !recovery.isRecovering()) {
+                                pollStalled = true
+                                stallWatchdog.disarm()
+                                sessionLog.append("EVT", "polling stalled: no adapter reply for ${recoveryPolicy.stallMs / 1000} s, closing the socket")
+                                closeSocket()
+                            }
+                        }
+                    }
                     sessionLog.append("EVT", "live polling started: " + poller.scheduler.pids().size + " PIDs scheduled, " + supportedPids.size + " advertised")
                     pollingLive = true
-                    while (isActive && socket?.isConnected == true) {
+                    var recoveryFailed = false
+                    while (isActive && !userInitiatedDisconnect) {
                         val before = poller.monitor.state
+                        var lost: Exception? = null
+                        var recoveryEvent: PollEvent.Recovery? = null
                         val sliced = withContext(Dispatchers.IO) {
-                            if (pollGate.tryEnterSlice()) { try { runPollSlice(poller) } finally { pollGate.exitSlice() }; true } else false
+                            if (pollGate.tryEnterSlice()) {
+                                stallWatchdog.arm(System.currentTimeMillis())
+                                try { recoveryEvent = runPollSlice(poller) } catch (e: IOException) { lost = e }
+                                finally { stallWatchdog.disarm(); pollGate.exitSlice() }
+                                true
+                            } else false
                         }
                         if (!sliced) delay(50)   // discovery is using the adapter
                         val nowMs = System.currentTimeMillis()
                         val after = poller.monitor.state
                         if (after != before) sessionLog.append("EVT", "ECU link $before -> $after")
                         linkState = after
-                        gauges = GaugeAssembler.build({ poller.reading(it) }, supportedPids, extraPids, nowMs)
+                        // A lost socket (or a stalled adapter) is rebuilt; ECU silence alone never touches Bluetooth.
+                        var lossKind: FailureKind? = null
+                        var lossDetail = ""
+                        val ioLoss = lost
+                        if (ioLoss != null) {
+                            lossKind = if (pollStalled) FailureKind.POLLING_STALLED else FailureClassifier.fromException(ioLoss, connection.snapshot.state)
+                            lossDetail = ioLoss.message ?: ""
+                        } else if (userInitiatedDisconnect) break
+                        else {
+                            val ev = recoveryEvent
+                            if (recovery.observeEcu(after, ev != null, ev?.recovered == true, nowMs) == EcuAction.RECONNECT_BLUETOOTH) {
+                                lossKind = FailureKind.ADAPTER_TIMEOUT; lossDetail = "adapter stayed silent"
+                            }
+                        }
+                        val lossNow = lossKind
+                        if (lossNow != null) {
+                            pollStalled = false
+                            status = "Reconnecting…"
+                            gauges = gauges.map { it.copy(value = "--", available = false) }
+                            val ok = withContext(Dispatchers.IO) { recovery.recoverBluetooth(lossNow, lossDetail) }
+                            if (!ok) { recoveryFailed = true; break }
+                            poller = buildPoller()
+                            linkState = LinkState.COMMUNICATING
+                            pollingLive = true
+                            status = "Connected"
+                            continue
+                        }
+                        // Readings are shown only while the ECU is really answering; never stale values as live.
+                        gauges = if (!connection.snapshot.ecuAvailable) gauges.map { it.copy(value = "--", available = false) }
+                        else GaugeAssembler.build({ poller.reading(it) }, supportedPids, extraPids, nowMs)
                             .map { GaugeValue(it.label, it.value, it.unit, it.available, it.capturedAtMs) }
                         if (nowMs - lastRecordMs >= 1000L) {
                             lastRecordMs = nowMs
@@ -470,9 +553,19 @@ class MainActivity : ComponentActivity() {
                             warningMessage = AlertTargets.bannerText(alertSensors)
                             playAlert(alertSensors)
                         } else if (alertSensors.isEmpty()) warningMessage = ""
-                        delay(poller.pauseMs(nowMs))
+                        // While the ECU is down, pace the retries with back-off (then slow standby) instead of a fixed 1 s loop.
+                        val pace = recovery.ecuPauseMs().let { if (it > 0) it else poller.pauseMs(nowMs) }
+                        var waited = 0L
+                        while (waited < pace && isActive && !userInitiatedDisconnect) { val step = minOf(250L, pace - waited); delay(step); waited += step }
                     }
-                    if (status == "Connected") {
+                    if (recoveryFailed) {
+                        endTrip()
+                        closeSocket()
+                        status = connection.snapshot.reason.ifBlank { "Connection lost" }
+                        alertSensors = emptySet()
+                        gauges = gauges.map { it.copy(value = "--", available = false) }
+                    } else if (status == "Connected") {
+                        connection.userDisconnected()
                         status = "Disconnected"
                         alertSensors = emptySet()
                         gauges = gauges.map { it.copy(value = "--", available = false) }
@@ -480,15 +573,22 @@ class MainActivity : ComponentActivity() {
                 } catch (e: SecurityException) {
                     endTrip()
                     closeSocket()
+                    connection.connectFailed(FailureKind.INITIALIZATION_INTERRUPTED, "Bluetooth permission is required")
                     status = "Permission required"
                     alertSensors = emptySet()
                 } catch (e: Exception) {
+                    val kind = FailureClassifier.fromException(e, connection.snapshot.state)
                     endTrip()
                     closeSocket()
                     alertSensors = emptySet()
                     // Tapping DISCONNECT closes the socket mid-read; that is not a failure.
+                    if (userInitiatedDisconnect) connection.userDisconnected()
+                    else connection.connectFailed(kind, e.message ?: "Connection failed")
                     status = if (userInitiatedDisconnect) "Disconnected" else (e.message ?: "Connection failed")
                     if (!userInitiatedDisconnect) gauges = gauges.map { it.copy(value = "--", available = false) }
+                } finally {
+                    watchdog?.cancel()
+                    stallWatchdog.disarm()
                 }
             }
         }
@@ -518,12 +618,8 @@ class MainActivity : ComponentActivity() {
                     }
                 } catch (e: Exception) {
                     dtcStatus = "Scan failed: " + (e.message ?: "communication error")
-                    if (socket?.isConnected != true) {
-                        closeSocket()
-                        supportedPids = emptySet()
-                        status = "Disconnected — adapter communication lost"
-                        gauges = gauges.map { it.copy(value = "--", available = false) }
-                    }
+                    // A lost adapter is picked up by the poll loop, which reconnects; the scan only reports its own failure.
+                    if (socket?.isConnected != true) sessionLog.append("EVT", "DTC scan lost the adapter; connection recovery takes over")
                 } finally { scanningCodes = false }
             }
         }
@@ -575,10 +671,10 @@ class MainActivity : ComponentActivity() {
                                     Text("SX4 / DDiS 1.3", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Black, letterSpacing = 1.8.sp)
                                     Text("DRIVER INFORMATION SYSTEM  •  LIVE ECU TELEMETRY", color = muted, fontSize = 13.sp, letterSpacing = 1.4.sp)
                                 }
-                                Surface(color = if (connected) Color(0xFF0B332F) else Color(0xFF252B35), shape = RoundedCornerShape(50), border = androidx.compose.foundation.BorderStroke(1.dp, if (connected) Color(0xFF26D7B1) else Color(0xFF566274))) {
+                                Surface(color = if (connSnapshot.ecuAvailable) Color(0xFF0B332F) else Color(0xFF252B35), shape = RoundedCornerShape(50), border = androidx.compose.foundation.BorderStroke(1.dp, if (connSnapshot.ecuAvailable) Color(0xFF26D7B1) else Color(0xFF566274))) {
                                     Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        LinkDot(connected = connected, connecting = connecting)
-                                        Text(if (connected) "ECU LINK ACTIVE" else if (connecting) "CONNECTING…" else "ECU DISCONNECTED", color = if (connected) Color(0xFF70F0D2) else muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                                        LinkDot(connected = connSnapshot.ecuAvailable, connecting = connecting || connSnapshot.state == ConnectionState.RECOVERING || connSnapshot.state == ConnectionState.INITIALIZING_ADAPTER || connSnapshot.state == ConnectionState.ECU_INITIALIZING)
+                                        Text(ConnectionPresenter.chip(connSnapshot), color = if (connSnapshot.ecuAvailable) Color(0xFF70F0D2) else muted, fontSize = 13.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
                                     }
                                 }
                             }
@@ -948,6 +1044,7 @@ class MainActivity : ComponentActivity() {
                             profile = ecuProfile,
                             diff = ecuProfile?.let { cur -> ecuPrevious?.let { ProfileDiff.compare(it, cur) } },
                             linkText = EcuReport.linkText(linkState, connected),
+                            connectionRows = ConnectionPresenter.rows(connSnapshot, System.currentTimeMillis()),
                             liveFacts = AdapterFacts(if (connected) adapterName else "", adapterIdText, adapterVoltageText, protocolText),
                             mode01Count = supportedPids.size,
                             scanning = ecuScanning,
@@ -1262,8 +1359,9 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun connectAndRead(): Pair<String, Unit> {
-        captureSession = "S" + System.currentTimeMillis()
+    /** [reconnecting] repeats the same set-up after a lost link: same adapter init and header/protocol restore, no discovery, same capture session. */
+    private fun connectAndRead(reconnecting: Boolean = false): Pair<String, Unit> {
+        if (!reconnecting) captureSession = "S" + System.currentTimeMillis()
         if (android.os.Build.VERSION.SDK_INT >= 31 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
         ) throw SecurityException("Bluetooth permission not granted")
@@ -1278,6 +1376,8 @@ class MainActivity : ComponentActivity() {
         val device: BluetoothDevice = adapter.getRemoteDevice(chosen.address)
         adapter.cancelDiscovery()
         socket = openSocket(device)
+        connection.socketOpened()
+        connection.adapterInitializing()
         val config = connConfig
         sendCommand("ATZ", 5000)
         config.initCommands().forEach { sendCommand(it) }
@@ -1285,6 +1385,7 @@ class MainActivity : ComponentActivity() {
         sessionLog.append("EVT", "connect: adapter=" + chosen.name + " " + chosen.address)
         adapterIdText = runCatching { sendCommand("ATI", 3000) }.getOrDefault("")
         adapterVoltageText = runCatching { sendCommand("ATRV", 3000) }.getOrDefault("")
+        connection.ecuInitializing()
         // "Connected" must mean the ECU answered, not just that the adapter did.
         val negotiation = EcuNegotiation { command, timeoutMs -> sendCommand(command, timeoutMs) }
             .apply { preferredProtocol = config.protocol.elmNumber }.run()
@@ -1297,8 +1398,10 @@ class MainActivity : ComponentActivity() {
         protocolText = runCatching { sendCommand("ATDP", 3000) }.getOrDefault("")
         sessionLog.append("EVT", "protocol=" + protocolText + " framing=" + Framing.fromProtocolText(protocolText))
         // P3: the same discovery path a later manual request uses. It never decides whether the connection succeeds.
-        pollingLive = false
-        runCatching { requestDiscovery("connect") }
+        if (!reconnecting) {
+            pollingLive = false
+            runCatching { requestDiscovery("connect") }
+        }
         return (device.name ?: "Bluetooth OBD adapter") to Unit
     }
 
@@ -1430,16 +1533,17 @@ class MainActivity : ComponentActivity() {
     }
 
     /** One bounded slice of polling (about 0.4 s): one command at a time, then control returns so the UI can refresh. */
-    private fun runPollSlice(poller: LivePoller) {
+    private fun runPollSlice(poller: LivePoller): PollEvent.Recovery? {
         val end = android.os.SystemClock.elapsedRealtime() + 400
         while (android.os.SystemClock.elapsedRealtime() < end) {
             when (val ev = poller.step(System.currentTimeMillis())) {
-                is PollEvent.Recovery -> { sessionLog.append("EVT", "ECU recovery " + ev.step + (if (ev.recovered) " succeeded" else " no answer")); return }
-                is PollEvent.Idle -> return
+                is PollEvent.Recovery -> { sessionLog.append("EVT", "ECU recovery " + ev.step + (if (ev.recovered) " succeeded" else " no answer")); return ev }
+                is PollEvent.Idle -> return null
                 is PollEvent.Polled -> {}
             }
-            if (poller.monitor.state != LinkState.COMMUNICATING) return
+            if (poller.monitor.state != LinkState.COMMUNICATING) return null
         }
+        return null
     }
 
     private val registryStore by lazy { RegistryStore(java.io.File(filesDir, "registry/parameters.json")) }
