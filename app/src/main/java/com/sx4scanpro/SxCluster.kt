@@ -63,7 +63,6 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 private val TN = TextStyle(fontFeatureSettings = "tnum")
-private const val STALE_MS = 5_000L
 
 internal fun readingOf(g: GaugeValue): Double? = if (g.available) g.value.toDoubleOrNull() else null
 internal fun isStale(g: GaugeValue, nowMs: Long): Boolean = readingOf(g) != null && nowMs - g.capturedAtMs > STALE_MS
@@ -183,7 +182,7 @@ private fun StageReading(icon: ImageVector?, value: String, unit: String, label:
 
 /** Middle column: SX4 heading, the car, and the fuel / range / battery row. Range stays a dash: tank size and consumption are unknown. */
 @Composable
-internal fun SxVehicleStage(fuel: GaugeValue, battery: GaugeValue, nowMs: Long, modifier: Modifier = Modifier) {
+internal fun SxVehicleStage(fuel: GaugeValue, battery: GaugeValue, speed: GaugeValue, nowMs: Long, modifier: Modifier = Modifier) {
     Column(modifier.drawBehind {
         drawLine(Sx.Border, Offset(0f, 0f), Offset(0f, size.height), 1.dp.toPx())
         drawLine(Sx.Border, Offset(size.width, 0f), Offset(size.width, size.height), 1.dp.toPx())
@@ -202,6 +201,10 @@ internal fun SxVehicleStage(fuel: GaugeValue, battery: GaugeValue, nowMs: Long, 
             Image(
                 painterResource(R.drawable.sx4_redline), contentDescription = "Suzuki SX4",
                 contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize()
+            )
+            SxDigitalSpeed(
+                SpeedReadout.from(speed.available, speed.value, speed.capturedAtMs, nowMs),
+                Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 12.dp)
             )
         }
         Row(

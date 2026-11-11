@@ -7,7 +7,8 @@ internal interface ElmPort {
     fun sendLines(command: String, timeoutMs: Long): ElmResult = send(command, timeoutMs)
 }
 
-internal data class Reading(val value: Double, val atMs: Long)
+/** A decoded ECU value, with the time it arrived and the verbatim reply it was decoded from (for traceability). */
+internal data class Reading(val value: Double, val atMs: Long, val raw: String = "")
 
 internal sealed class PollEvent {
     data class Polled(val pid: Int, val reading: Reading?, val kind: ElmKind) : PollEvent()
@@ -39,10 +40,10 @@ internal class LivePoller(
         scheduler.markPolled(pid, now)
         if (spec == null) return PollEvent.Polled(pid, null, ElmKind.UNKNOWN_COMMAND)
         val res = port.send(spec.command, pidTimeoutMs)
-        val value = if (res.kind == ElmKind.DATA) PidCatalog.decode(spec, ElmReply.stripBanners(res.raw)) else null
+        val value = if (res.kind == ElmKind.DATA) (DecoderRegistry.decode(res.raw, pid) as? Decoding.Decoded)?.value else null
         monitor.onResult(res.kind, res.timedOut)
         return if (value != null) {
-            val r = Reading(value, now)
+            val r = Reading(value, now, res.raw)
             readings[pid] = r
             capabilities.recordSuccess(pid)
             monitor.onGood(now)

@@ -1,6 +1,6 @@
 # CURRENT STATUS — SX4 Scan Pro V1
 
-Last updated: 2026-11-06 · Release candidate: branch `claude/v1-final-integration` · **`main` has not been moved yet** (awaiting owner approval).
+Last updated: 2026-11-07 · `main` = f5881b4 (V1 integration merged by owner). Active work: branch `claude/ecu-discovery-engine` (ECU Digital Profile & Discovery Engine, phase P1 done).
 
 ## Product
 Personal-use Kotlin/Compose tablet cockpit for a 2012 Maruti Suzuki SX4 ZDi (1.3 DDiS, manual), Vgate iCar Pro (Bluetooth Classic ELM327), Realme Pad 2 (Android 14, landscape). Never commercial, never Play Store.
@@ -45,3 +45,6 @@ Personal-use Kotlin/Compose tablet cockpit for a 2012 Maruti Suzuki SX4 ZDi (1.3
 1. Owner approves moving `main` to fb37ae8 (or the documentation-only commit on top of it, see the branch tip).
 2. Owner installs the APK, drives, and shares the session log.
 3. Tune poll intervals; remove unused `readDashboard()`; decide on PR #5.
+
+## ECU Discovery Engine (branch claude/ecu-discovery-engine, from main f5881b4)
+Phases P1-P6 incremental; P7/P8 wait for a real vehicle session log. P1 and P2 done (P2 branch `claude/ecu-p2-parameter-registry`: parameter registry + persistence): read-only guard in the single send path, sourced extended-read allowlist, lossless raw capture store, build marker BUILD 27. Details: `docs/DEVELOPER_REQUIREMENTS.md` section 25. Not merged to main; not yet run on the vehicle.
