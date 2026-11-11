@@ -345,3 +345,43 @@ class RecoverySupervisorTest {
         assertTrue(m.snapshot.ecuAvailable)
     }
 }
+
+class NoOverlappingCommandsTest {
+    /** A poll thread and a recovery run share one gate; a fake adapter counts commands in flight. */
+    @Test fun recoveryAndPollingNeverSendAtTheSameTime() {
+        val gate = PollGate()
+        val inFlight = java.util.concurrent.atomic.AtomicInteger()
+        val maxInFlight = java.util.concurrent.atomic.AtomicInteger()
+        val polls = java.util.concurrent.atomic.AtomicInteger()
+        fun command() {
+            val n = inFlight.incrementAndGet(); maxInFlight.accumulateAndGet(n) { a, b -> maxOf(a, b) }
+            Thread.sleep(2); inFlight.decrementAndGet()
+        }
+        val ports = object : RecoveryPorts {
+            override fun closeSocket() {}
+            override fun reconnect(): Boolean { repeat(5) { command() }; return true }
+            override fun pausePolling(): Boolean = gate.pause(2_000)
+            override fun resumePolling() = gate.resume()
+            override fun sleep(ms: Long) { Thread.sleep(3) }
+            override fun aborted() = false
+            override fun now() = 0L
+            override fun log(message: String) {}
+        }
+        val stop = java.util.concurrent.atomic.AtomicBoolean(false)
+        val poller = Thread {
+            while (!stop.get()) {
+                if (gate.tryEnterSlice()) { try { command(); polls.incrementAndGet() } finally { gate.exitSlice() } } else Thread.sleep(1)
+            }
+        }
+        poller.start()
+        Thread.sleep(20)
+        val m = readyMachine()
+        assertTrue(RecoverySupervisor(m, ports).recoverBluetooth(FailureKind.BLUETOOTH_DISCONNECTED, ""))
+        val during = polls.get()
+        Thread.sleep(20)
+        stop.set(true); poller.join()
+        assertEquals(1, maxInFlight.get())
+        assertTrue("polling resumed after recovery", polls.get() > during)
+        assertFalse(gate.isPaused())
+    }
+}
