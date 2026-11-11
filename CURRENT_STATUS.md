@@ -50,8 +50,10 @@ Personal-use Kotlin/Compose tablet cockpit for a 2012 Maruti Suzuki SX4 ZDi (1.3
 Phases P1-P6 incremental; P7/P8 wait for a real vehicle session log. P1 and P2 done (P2 branch `claude/ecu-p2-parameter-registry`: parameter registry + persistence): read-only guard in the single send path, sourced extended-read allowlist, lossless raw capture store, build marker BUILD 27. Details: `docs/DEVELOPER_REQUIREMENTS.md` section 25. Not merged to main; not yet run on the vehicle.
 
 ## Phase map (current)
-P1 guard/capture, P2 registry, P3 discovery, P4 decoder + digital speed, P5 connection recovery: merged into `main`. **P6 live-data performance** (priorities, conservative adaptive pacing, bounded metrics, overlap guard): implemented on `claude/v1-p6-live-performance`, 352 pure-JVM tests pass locally; CI result in the PR. **Session export is a separate outstanding requirement** (the older map that called P6 "session export" is superseded). Details: `docs/DEVELOPER_REQUIREMENTS.md` section 25.1.
+P1 guard/capture, P2 registry, P3 discovery, P4 decoder + digital speed, P5 connection recovery: merged into `main`. **P6 live-data performance** (priorities, conservative adaptive pacing, bounded metrics, overlap guard): implemented on `claude/v1-p6-live-performance`, 356 pure-JVM tests pass locally (33 in the P6 test file); CI green on 98f8b2e. Includes the review fix `PidCapabilities.clearTemporaryState()` (parked PIDs are released after a confirmed ECU recovery). **Session export is a separate outstanding requirement** (the older map that called P6 "session export" is superseded). Details: `docs/DEVELOPER_REQUIREMENTS.md` section 25.1.
 
 ## Still outstanding
-- Real-car validation (Saturday): P3 discovery, P4 speed, P5 ignition OFF/ON recovery, P6 performance (read `PERF` lines in the session log). Nothing here is claimed verified on hardware.
-- Session export, ECU Explorer, PR #5 decision, interval tuning from the real `PERF` data, unused `readDashboard()` removal.
+- Real-car validation (Saturday): P5 ignition OFF/ON recovery and P6 performance (read `PERF` lines in the session log), plus P3 discovery and P4 speed. Nothing here is claimed verified on hardware.
+- Session export (separate requirement), ECU Explorer, PR #5 cockpit decision.
+- BCM/EPS feasibility (research only: not verified that the Indian diesel SX4 has these modules or what addresses/protocols they use) and verified multi-module discovery.
+- Interval tuning from real `PERF` data; unused `readDashboard()` removal.

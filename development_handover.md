@@ -54,3 +54,4 @@ Release candidate: `claude/v1-final-integration` @ fb37ae8 = `main` 4dbff6a + OB
 
 ## P6 live-data performance (2026-11-11)
 `PollScheduler` (priority, stretch, starvation guard), `PollPlan.priorityOf`, `PidCapabilities.park`, `PollPerformance.kt` (`PollMetrics`, `AdaptivePacer`), `LivePoller` (metrics, pacer, re-entrancy guard), `MainActivity` (60 s `PERF` log block). Tests: `PollPerformanceTest.kt`. Pacing only slows, never below plan. Real-car performance still to be measured. Session export remains a separate outstanding requirement.
+P6 review fix: `PidCapabilities.clearTemporaryState()` is called with `pacer.reset()` after a successful recovery probe. Verified totals: 356 tests, 33 in `PollPerformanceTest.kt`. Outstanding: real-car validation of P5/P6, session export, ECU Explorer, PR #5 decision, BCM/EPS feasibility and verified multi-module discovery.
