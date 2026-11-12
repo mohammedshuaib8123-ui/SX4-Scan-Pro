@@ -26,10 +26,19 @@ internal object PollPlan {
     /** A reading older than this is shown as unavailable, never as live. */
     fun freshMs(intervalMs: Long): Long = maxOf(4000L, intervalMs * 3)
 
+    /** 0: RPM and speed. 1: coolant and engine load. 2: MAP and MAF (boost and fuelling). 3: everything else the owner enabled, and baro. */
+    fun priorityOf(pid: Int): Int = when (pid) {
+        0x0C, 0x0D -> 0
+        0x05, 0x04 -> 1
+        0x0B, 0x10 -> 2
+        else -> 3
+    }
+
     fun configure(s: PollScheduler, extras: Set<Int>) {
         core.forEach { s.set(it.pid, it.intervalMs) }
         s.set(BARO_PID, BARO_INTERVAL_MS)
         extras.filter { it != BARO_PID && core.none { c -> c.pid == it } }.forEach { s.set(it, EXTRA_INTERVAL_MS) }
+        s.pids().forEach { s.setPriority(it, priorityOf(it)) }
     }
 }
 
