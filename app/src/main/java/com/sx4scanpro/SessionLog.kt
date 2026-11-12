@@ -37,6 +37,10 @@ internal class SessionLog(private val dir: File, private val maxBytes: Long = 70
         files.filter { it.exists() }.joinToString("") { it.readText() }
     }.getOrDefault("")
 
+    /** The kept log files that exist, oldest first (for export; read-only). */
+    @Synchronized
+    fun files(): List<File> = ((keep - 1 downTo 1).map { File(dir, "$name.$it.log") } + File(dir, "$name.log")).filter { it.exists() }
+
     /** One shareable file: [header], then the whole log. Returns null if it could not be written. */
     @Synchronized
     fun export(header: String, nowMs: Long = System.currentTimeMillis()): File? = runCatching {

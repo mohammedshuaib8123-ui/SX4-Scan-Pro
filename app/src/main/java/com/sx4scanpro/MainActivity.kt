@@ -389,6 +389,25 @@ class MainActivity : ComponentActivity() {
         var headUnitStatus by remember { mutableStateOf("Open Headunit runs as a separate receiver app.") }
         var readiness by remember { mutableStateOf(computeHeadUnitReadiness()) }
         var logPreview by remember { mutableStateOf<List<String>>(emptyList()) }
+        var exportChoice by remember { mutableStateOf(false) }
+        if (exportChoice) {
+            AlertDialog(
+                onDismissRequest = { exportChoice = false },
+                title = { Text("Export diagnostic session") },
+                text = {
+                    Text("The export contains the adapter traffic, events, ECU replies and the ECU scan. An unredacted export includes the vehicle's VIN and the adapter's Bluetooth name and can identify your car. A redacted export masks the VIN, removes the VIN reply, and hides the adapter name and Bluetooth addresses. Your stored data is never changed either way.")
+                },
+                confirmButton = {
+                    Button(onClick = { exportChoice = false; exportCompleteSession(true, scope) { logPreview = listOf(it) } }) { Text("EXPORT REDACTED (RECOMMENDED)") }
+                },
+                dismissButton = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(onClick = { exportChoice = false }) { Text("CANCEL") }
+                        OutlinedButton(onClick = { exportChoice = false; exportCompleteSession(false, scope) { logPreview = listOf(it) } }) { Text("UNREDACTED") }
+                    }
+                }
+            )
+        }
         var warningPreview by remember { mutableStateOf(false) }
         var warningMessage by remember { mutableStateOf("") }
         val scope = rememberCoroutineScope()
@@ -1293,6 +1312,7 @@ class MainActivity : ComponentActivity() {
                                                 startActivity(Intent.createChooser(send, "Share session log"))
                                             }
                                         }, modifier = Modifier.fillMaxWidth()) { Text("SHARE FULL SESSION LOG (FILE)") }
+                                        OutlinedButton(onClick = { exportChoice = true }, modifier = Modifier.fillMaxWidth()) { Text("EXPORT COMPLETE DIAGNOSTIC SESSION") }
                                         Text(if (logPreview.isEmpty()) "Tap REFRESH to show the latest adapter traffic." else logPreview.joinToString("\n"), color = Color.White, fontSize = 13.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
                                     }
                                 }
@@ -1673,6 +1693,37 @@ class MainActivity : ComponentActivity() {
             ecuNote = "Saved " + file.name
         } catch (e: Exception) {
             ecuNote = "Export failed: " + (e.message ?: "storage error")
+        }
+    }
+
+    /** P7: one ZIP with manifest, session events, structured capture, registry summary and ECU profile. Stored data is not changed; read-only. */
+    private fun exportCompleteSession(redact: Boolean, scope: kotlinx.coroutines.CoroutineScope, report: (String) -> Unit) {
+        scope.launch {
+            val snap = connSnapshot
+            val live = snap.state != ConnectionState.DISCONNECTED && snap.state != ConnectionState.ERROR
+            val result = withContext(Dispatchers.IO) {
+                val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
+                val dir = java.io.File(filesDir, "logs")
+                dir.listFiles { f -> f.name.startsWith("export-") }?.forEach { it.delete() }
+                SessionExport.build(
+                    java.io.File(dir, "export-$stamp" + (if (redact) "-redacted" else "") + ".zip"),
+                    ExportRequest(BuildInfo.LABEL, adapterNameForScan.ifBlank { adapterName }, protocolText, captureSession, live, redact, System.currentTimeMillis()),
+                    ExportSources(sessionLog.files(), capture.files(), parameterRegistry, ecuProfile)
+                )
+            }
+            val file = result.file
+            if (file == null) { report("Could not write the export: " + (result.error ?: "unknown error")); return@launch }
+            runCatching {
+                val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.files", file)
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = "application/zip"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    putExtra(Intent.EXTRA_SUBJECT, "SX4 Scan Pro diagnostic session")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                startActivity(Intent.createChooser(send, "Share diagnostic session"))
+            }.onFailure { report("Export saved as " + file.name + " but could not be shared: " + (it.message ?: "")); return@launch }
+            report((if (result.complete) "Export ready (" else "Export ready, marked INCOMPLETE: " + (result.manifest["completenessIssues"] as? List<*>)?.joinToString("; ") + " (") + (if (redact) "redacted" else "unredacted") + ")")
         }
     }
 
@@ -2211,6 +2262,7 @@ class MainActivity : ComponentActivity() {
         runCatching { if (BluetoothAdapter.getDefaultAdapter()?.isDiscovering == true) BluetoothAdapter.getDefaultAdapter()?.cancelDiscovery() }
         closeSocket()
         mainHandler.removeCallbacksAndMessages(null)
+        if (isFinishing) sessionLog.append("EVT", "app closed")
         runCatching { siren?.release(); siren = null }
         uiScope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
         textToSpeech?.stop()
