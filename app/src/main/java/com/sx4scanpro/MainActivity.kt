@@ -389,6 +389,9 @@ class MainActivity : ComponentActivity() {
         var headUnitStatus by remember { mutableStateOf("Open Headunit runs as a separate receiver app.") }
         var readiness by remember { mutableStateOf(computeHeadUnitReadiness()) }
         var logPreview by remember { mutableStateOf<List<String>>(emptyList()) }
+        var warningPreview by remember { mutableStateOf(false) }
+        var warningMessage by remember { mutableStateOf("") }
+        val scope = rememberCoroutineScope()
         var exportChoice by remember { mutableStateOf(false) }
         if (exportChoice) {
             AlertDialog(
@@ -408,9 +411,6 @@ class MainActivity : ComponentActivity() {
                 }
             )
         }
-        var warningPreview by remember { mutableStateOf(false) }
-        var warningMessage by remember { mutableStateOf("") }
-        val scope = rememberCoroutineScope()
         val connected = status == "Connected"
         val ecuOnline = connected && linkState == LinkState.COMMUNICATING
         val connecting = status == "Connecting…"
@@ -1707,7 +1707,7 @@ class MainActivity : ComponentActivity() {
                 dir.listFiles { f -> f.name.startsWith("export-") }?.forEach { it.delete() }
                 SessionExport.build(
                     java.io.File(dir, "export-$stamp" + (if (redact) "-redacted" else "") + ".zip"),
-                    ExportRequest(BuildInfo.LABEL, adapterNameForScan.ifBlank { adapterName }, protocolText, captureSession, live, redact, System.currentTimeMillis()),
+                    ExportRequest(BuildInfo.LABEL, adapterNameForScan, protocolText, captureSession, live, redact, System.currentTimeMillis()),
                     ExportSources(sessionLog.files(), capture.files(), parameterRegistry, ecuProfile)
                 )
             }
