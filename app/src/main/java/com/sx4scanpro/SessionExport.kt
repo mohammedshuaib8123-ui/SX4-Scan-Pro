@@ -18,6 +18,9 @@ internal enum class SessionEnding {
             else -> UNKNOWN
         }
 
+        /** A new connection attempt: any earlier ending no longer describes the current session. */
+        fun isStart(line: String): Boolean = line.contains(" EVT connection ") && line.contains("-> CONNECTING")
+
         fun markerOf(line: String): SessionEnding? = when {
             line.contains(" EVT app closed") -> APP_CLOSED
             line.contains(" EVT connection ") && line.contains("-> DISCONNECTED") -> DISCONNECTED
@@ -95,6 +98,7 @@ internal object SessionExport {
         var records = 0L
         var present = false
         var truncated = false
+        var malformed = 0L
         var skippedFiles = 0
         fun write(out: OutputStream, text: String) { val b = text.toByteArray(Charsets.UTF_8); out.write(b); sha.update(b); bytes += b.size }
         fun hex(): String = sha.digest().joinToString("") { "%02x".format(it) }
@@ -145,6 +149,7 @@ internal object SessionExport {
             for (f in files) f.bufferedReader().useLines { lines ->
                 for (line in lines) {
                     if (line.isBlank()) continue
+                    if (SessionEnding.isStart(line)) lastMarker = null
                     SessionEnding.markerOf(line)?.let { lastMarker = it }
                     val out = if (!red.enabled) line else {
                         val parts = line.split(' ', limit = 4)
@@ -168,9 +173,13 @@ internal object SessionExport {
             for (f in files) f.bufferedReader().useLines { lines ->
                 for (line in lines) {
                     if (line.isBlank()) continue
-                    val m = MiniJson.parse(line) as? Map<*, *>
+                    val m = try { MiniJson.parse(line) as? Map<*, *> } catch (_: Exception) { null }
                     var out = line
-                    if (m != null) {
+                    if (m == null) {
+                        // Partially written or corrupt line: kept (scrubbed when redacting), counted, and never allowed to stop the export.
+                        c.malformed++
+                        out = if (!red.enabled) line else if (line.contains("0902")) "{\"corrupt\":true,\"note\":\"malformed capture line removed from the redacted export\",\"length\":" + line.length + "}" else red.text(line)
+                    } else {
                         (m["session"] as? String)?.let { sessions[it] = (sessions[it] ?: 0L) + 1 }
                         (m["tMs"] as? Long)?.let { t ->
                             if (firstT == null) firstT = t; lastT = t
@@ -182,7 +191,7 @@ internal object SessionExport {
                             if (Redactor.isVinRequest(copy["command"] as? String ?: "") && copy.containsKey("raw")) copy["raw"] = Redactor.VIN_REPLY_HIDDEN
                             out = MiniJson.write(red.scrub(copy), -1)
                         }
-                    } else if (red.enabled) out = red.text(line)
+                    }
                     c.write(zip, out + "\n"); c.records++
                 }
             }
@@ -241,6 +250,7 @@ internal object SessionExport {
         if (!capture.present || capture.records == 0L) issues += "no structured capture records"
         if (!registry.present) issues += "parameter registry unavailable"
         if (!profile.present) issues += "no ECU profile (no ECU scan has been run)"
+        if (capture.malformed > 0) issues += "capture.jsonl: " + capture.malformed + " malformed or partially written line(s) kept as found, not parsed"
         parts.filter { it.truncated }.forEach { issues += it.name + ": " + it.skippedFiles + " older file(s) left out to keep the export bounded" }
         if (ending == SessionEnding.INCOMPLETE) issues += "session was still running or ended in an error when exported"
         if (ending == SessionEnding.UNKNOWN) issues += "session ending could not be determined"
@@ -270,7 +280,7 @@ internal object SessionExport {
             "complete" to complete, "completenessIssues" to issues,
             "files" to parts.map { c ->
                 linkedMapOf<String, Any?>("name" to c.name, "present" to c.present, "records" to c.records, "bytes" to c.bytes, "sha256" to c.hex(),
-                    "truncated" to c.truncated, "olderFilesLeftOut" to c.skippedFiles.toLong())
+                    "malformedRecords" to c.malformed, "truncated" to c.truncated, "olderFilesLeftOut" to c.skippedFiles.toLong())
             }
         )
         zip.putNextEntry(ZipEntry("manifest.json").apply { time = req.nowMs })

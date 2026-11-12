@@ -237,4 +237,51 @@ class SessionExportTest {
         fx.populate()
         assertEquals(1, fx.sessionLog.files().size); assertEquals(1, fx.capture.files().size)
     }
+
+    @Test fun malformedCaptureLineDoesNotAbortAndIsFlagged() {
+        val fx = Fixture().also { it.populate() }
+        val cap = fx.capture.files().last()
+        cap.appendText("{\"seq\":9,\"session\":\"S1\",\"tMs\":99\n")          // cut off mid-write
+        cap.appendText("not json at all\n")
+        fx.capture.record("S1", 3_000, "010D", "41 0D 32", "DATA", 5, "p")
+        val r = fx.build(false)
+        assertNull(r.error); assertFalse(r.complete)
+        val lines = entries(r.file!!).getValue("capture.jsonl").trim().lines()
+        assertEquals(5, lines.size)
+        assertTrue(lines.contains("not json at all")); assertTrue(lines.any { it.startsWith("{\"seq\":9") })
+        assertTrue(lines.last().contains("010D"))
+        val cap0 = (r.manifest["files"] as List<*>).first { (it as Map<*, *>)["name"] == "capture.jsonl" } as Map<*, *>
+        assertEquals(2L, cap0["malformedRecords"])
+        assertTrue((r.manifest["completenessIssues"] as List<*>).any { it.toString().contains("malformed") })
+    }
+
+    @Test fun malformedVinLineIsNotLeakedInARedactedExport() {
+        val fx = Fixture().also { it.populate() }
+        fx.capture.files().last().appendText("{\"command\":\"0902\",\"raw\":\"49 02 01 4D 41 33 45 59\n")
+        val body = entries(fx.build(true).file!!).getValue("capture.jsonl")
+        assertFalse(body.contains("49 02 01 4D 41 33 45 59")); assertTrue(body.contains("\"corrupt\":true"))
+    }
+
+    @Test fun anOldEndingDoesNotDescribeANewerConnectionAttempt() {
+        val a = Fixture().also { it.populate(); it.sessionLog.append("EVT", "connection DISCONNECTED -> CONNECTING", 3_000) }.build(false)
+        assertEquals("UNKNOWN", (a.manifest["session"] as Map<*, *>)["ending"]); assertFalse(a.complete)
+        val b = Fixture().also { it.populate(); it.sessionLog.append("EVT", "app closed", 2_500); it.sessionLog.append("EVT", "connection DISCONNECTED -> CONNECTING", 3_000) }.build(false)
+        assertEquals("UNKNOWN", (b.manifest["session"] as Map<*, *>)["ending"])
+        val c = Fixture().also { it.populate(); it.sessionLog.append("EVT", "connection ERROR -> CONNECTING", 3_000) }.build(false, live = true)
+        assertEquals("INCOMPLETE", (c.manifest["session"] as Map<*, *>)["ending"])
+    }
+
+    @Test fun aNewEndingAfterTheNewAttemptIsUsed() {
+        val fx = Fixture().also { it.populate() }
+        fx.sessionLog.append("EVT", "connection DISCONNECTED -> CONNECTING", 3_000)
+        fx.sessionLog.append("EVT", "connection READY -> DISCONNECTED", 4_000)
+        assertEquals("DISCONNECTED", (fx.build(false).manifest["session"] as Map<*, *>)["ending"])
+        fx.sessionLog.append("EVT", "app closed", 5_000)
+        assertEquals("APP_CLOSED", (fx.build(false).manifest["session"] as Map<*, *>)["ending"])
+    }
+
+    @Test fun recoveringDoesNotCountAsANewSessionStart() {
+        assertFalse(SessionEnding.isStart("2026 EVT connection READY -> RECOVERING: x"))
+        assertTrue(SessionEnding.isStart("2026 EVT connection ERROR -> CONNECTING"))
+    }
 }
