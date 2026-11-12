@@ -74,6 +74,10 @@ internal class CaptureStore(private val dir: File, private val maxBytes: Long = 
         files.filter { it.exists() }.flatMap { f -> f.readLines().mapNotNull { (MiniJson.parse(it) as? Map<*, *>)?.let(RawExchange::fromMap) } }
     }.getOrDefault(emptyList())
 
+    /** The kept capture files that exist, oldest first (for export; read-only). */
+    @Synchronized
+    fun files(): List<File> = ((keep - 1 downTo 1).map { File(dir, "$name.$it.jsonl") } + current()).filter { it.exists() }
+
     @Synchronized
     fun clear() { runCatching { dir.listFiles()?.forEach { it.delete() } }; seq = -1L }
 }
