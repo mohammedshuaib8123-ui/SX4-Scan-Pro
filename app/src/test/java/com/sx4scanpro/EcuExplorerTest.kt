@@ -3,19 +3,23 @@ package com.sx4scanpro
 import org.junit.Assert.*
 import org.junit.Test
 
+private const val NOW = 1_700_000_000_000L
+private const val SINCE = NOW - 1_000L   // this connection began just before the evidence
+private const val LATER = NOW + 10_000_000L   // a later connection: the same evidence is now historical
+
 private fun ev(kind: EvidenceKind, t: Long = 1_700_000_000_000L, note: String = "", seq: Long? = null) = Evidence(t, kind, note, seq)
 
 private fun outcome(address: String? = "10", status: DiscoveryStatus = DiscoveryStatus.COMPLETE, advertised: Boolean = false) =
     DiscoveryOutcome(status, "msg", DiscoveryRun(if (advertised) listOf(BlockRead(0x00, BlockKind.OK, 0x00080000L, "4100", ElmKind.DATA)) else emptyList(), "486B10", address, null, status == DiscoveryStatus.COMPLETE))
 
-private fun profile(vin: Boolean = false) = EcuProfile(
-    1L, "v", "a", "id", "12V", "ISO 14230-4", Framing.KLINE, listOf(0x0C),
+private fun profile(vin: Boolean = false, at: Long = NOW) = EcuProfile(
+    at, "v", "a", "id", "12V", "ISO 14230-4", Framing.KLINE, listOf(0x0C),
     ProfileField(ScanStatus.READ, listOf("02")), if (vin) ProfileField(ScanStatus.READ, listOf("MA3EYB81S00123456")) else ProfileField.NOT_ATTEMPTED,
     ProfileField.NOT_ATTEMPTED, ProfileField.NOT_ATTEMPTED, ProfileField.NOT_ATTEMPTED
 )
 
 class ModuleStatusModelTest {
-    private fun status(d: DiscoveryOutcome?, p: EcuProfile?, r: ParameterRegistry?) = ModuleStatusModel.derive(d, p, r).first { it.id == ModuleId.ENGINE }.status
+    private fun status(d: DiscoveryOutcome?, p: EcuProfile?, r: ParameterRegistry?, since: Long? = SINCE) = ModuleStatusModel.derive(d, p, r, since).first { it.id == ModuleId.ENGINE }.status
 
     @Test fun nothingScannedMeansEveryModuleIsNotScanned() {
         val m = ModuleStatusModel.derive(null, null, ParameterRegistry.withBuiltInDefinitions())
@@ -26,7 +30,7 @@ class ModuleStatusModelTest {
     @Test fun otherModulesStayNotScannedWhateverTheEngineDid() {
         val reg = ParameterRegistry.withBuiltInDefinitions(); val d = reg.ensure("01", "0C")
         reg.onAdvertised(d.id, ev(EvidenceKind.BITMAP_ADVERTISED)); reg.onPositiveResponse(d.id, ev(EvidenceKind.POSITIVE_RESPONSE)); reg.onDecoded(d.id, ev(EvidenceKind.DECODED_OK))
-        val m = ModuleStatusModel.derive(outcome(), profile(vin = true), reg)
+        val m = ModuleStatusModel.derive(outcome(), profile(vin = true), reg, SINCE)
         assertEquals(ModuleStatus.VERIFIED, m.first { it.id == ModuleId.ENGINE }.status)
         for (id in listOf(ModuleId.BCM, ModuleId.EPS, ModuleId.ABS, ModuleId.AIRBAG)) {
             val e = m.first { it.id == id }
@@ -38,7 +42,7 @@ class ModuleStatusModelTest {
     @Test fun unavailableIsNeverProduced() {
         val reg = ParameterRegistry.withBuiltInDefinitions(); val d = reg.ensure("01", "0C"); reg.onUnsupported(d.id, ev(EvidenceKind.BITMAP_NOT_ADVERTISED))
         for (disc in listOf(null, outcome(), outcome(status = DiscoveryStatus.FAILED), outcome(status = DiscoveryStatus.REFUSED)))
-            assertTrue(ModuleStatusModel.derive(disc, null, reg).none { it.status == ModuleStatus.UNAVAILABLE })
+            assertTrue(ModuleStatusModel.derive(disc, null, reg, SINCE).none { it.status == ModuleStatus.UNAVAILABLE })
     }
 
     @Test fun engineStatusFollowsTheEvidenceLadder() {
@@ -56,14 +60,67 @@ class ModuleStatusModelTest {
     }
 
     @Test fun addressIsOnlyShownWhenCapturedAndNeverGuessed() {
-        assertEquals("10", ModuleStatusModel.derive(outcome("10"), null, null).first().address)
-        assertNull(ModuleStatusModel.derive(outcome(null), null, null).first().address)
+        assertEquals("10", ModuleStatusModel.derive(outcome("10"), null, null, SINCE).first().address)
+        assertNull(ModuleStatusModel.derive(outcome(null), null, null, SINCE).first().address)
+        assertNull(ModuleStatusModel.derive(outcome("10"), null, null, null).first().address)   // not connected: an old address is not current
         assertNull(ModuleStatusModel.derive(null, null, null).first().address)
     }
 
     @Test fun engineNoteDoesNotClaimTheEcuIsTheEngineEcu() {
         val reg = ParameterRegistry.withBuiltInDefinitions(); reg.onAdvertised(reg.ensure("01", "0C").id, ev(EvidenceKind.BITMAP_ADVERTISED))
-        assertTrue(ModuleStatusModel.derive(null, null, reg).first().note.contains("assumed, not verified"))
+        assertTrue(ModuleStatusModel.derive(null, null, reg, SINCE).first().note.contains("assumed, not verified"))
+    }
+
+    private fun decodedRegistry(): ParameterRegistry {
+        val reg = ParameterRegistry.withBuiltInDefinitions(); val id = reg.ensure("01", "0C").id
+        reg.onAdvertised(id, ev(EvidenceKind.BITMAP_ADVERTISED)); reg.onPositiveResponse(id, ev(EvidenceKind.POSITIVE_RESPONSE)); reg.onDecoded(id, ev(EvidenceKind.DECODED_OK))
+        return reg
+    }
+
+    @Test fun historicalDecodedEvidenceWithAFreshIdentityIsNotVerified() {
+        // decoded in an earlier session (evidence older than SINCE); the VIN was read in this connection
+        val e = ModuleStatusModel.derive(null, profile(vin = true, at = LATER), decodedRegistry(), LATER - 500).first()
+        assertNotEquals(ModuleStatus.VERIFIED, e.status)
+        assertEquals(ModuleStatus.REACHABLE, e.status)      // only the fresh identity read counts
+        assertTrue(e.note.contains("Verification unavailable")); assertTrue(e.note.contains("earlier session"))
+    }
+
+    @Test fun currentDecodedEvidenceWithAnOldIdentityProfileIsNotVerified() {
+        val e = ModuleStatusModel.derive(null, profile(vin = true, at = NOW - 5_000_000L), decodedRegistry(), SINCE).first()
+        assertEquals(ModuleStatus.DECODED, e.status)
+        assertTrue(e.note.contains("Verification unavailable")); assertTrue(e.note.contains("earlier session"))
+    }
+
+    @Test fun currentDecodedEvidenceWithNoIdentityProfileIsNotVerified() {
+        val e = ModuleStatusModel.derive(null, null, decodedRegistry(), SINCE).first()
+        assertEquals(ModuleStatus.DECODED, e.status); assertTrue(e.note.contains("Verification unavailable"))
+    }
+
+    @Test fun profileWithoutAnyReadIdentityDoesNotVerify() {
+        val p = profile(vin = false).copy(mode09Supported = ProfileField.NOT_ATTEMPTED)
+        assertEquals(ModuleStatus.DECODED, status(null, p, decodedRegistry()))
+    }
+
+    @Test fun everythingStoredIsHistoricalWhenNotConnected() {
+        val e = ModuleStatusModel.derive(outcome(), profile(vin = true), decodedRegistry(), null).first()
+        assertEquals(ModuleStatus.NOT_SCANNED, e.status); assertEquals(EvidenceScope.HISTORICAL, e.scope)
+        assertTrue(e.note.contains("earlier session"))
+    }
+
+    @Test fun aNewConnectionDoesNotInheritTheOldSessionsStatus() {
+        val reg = decodedRegistry(); val prof = profile(vin = true)
+        assertEquals(ModuleStatus.VERIFIED, ModuleStatusModel.derive(null, prof, reg, SINCE).first().status)
+        val later = ModuleStatusModel.derive(null, prof, reg, LATER).first()
+        assertEquals(ModuleStatus.NOT_SCANNED, later.status); assertEquals(EvidenceScope.HISTORICAL, later.scope)
+    }
+
+    @Test fun verifiedNeedsBothKindsOfEvidenceFromTheCurrentConnection() {
+        val e = ModuleStatusModel.derive(null, profile(vin = true), decodedRegistry(), SINCE).first()
+        assertEquals(ModuleStatus.VERIFIED, e.status); assertEquals(EvidenceScope.CURRENT, e.scope)
+    }
+
+    @Test fun discoveryFromThisConnectionAloneGivesAdvertisedNotMore() {
+        assertEquals(ModuleStatus.ADVERTISED, status(outcome(advertised = true), null, ParameterRegistry.withBuiltInDefinitions()))
     }
 }
 
@@ -137,5 +194,39 @@ class EcuExplorerViewTest {
         val r = reg(); val before = r.records()
         EcuExplorerView.build(r, outcome(), profile(), "p")
         assertEquals(before, r.records())
+    }
+
+    @Test fun registryRowsAreMarkedHistoricalWhenOlderThanTheConnection() {
+        val v = EcuExplorerView.build(reg(), null, null, "p", LATER)
+        assertTrue(v.params.all { it.scope == EvidenceScope.HISTORICAL })
+        assertEquals(v.params.size, v.historicalCount)
+        assertTrue(v.provenance.contains("earlier session")); assertTrue(v.provenance.startsWith("Connected, but every entry"))
+    }
+
+    @Test fun notConnectedMeansEverythingIsHistorical() {
+        val v = EcuExplorerView.build(reg(), null, null, "", null)
+        assertTrue(v.provenance.startsWith("Not connected")); assertTrue(v.params.all { it.scope == EvidenceScope.HISTORICAL })
+    }
+
+    @Test fun currentConnectionEntriesAreNotMarkedHistorical() {
+        val v = EcuExplorerView.build(reg(), null, null, "p", SINCE)
+        assertTrue(v.params.all { it.scope == EvidenceScope.CURRENT }); assertEquals(0, v.historicalCount)
+        assertEquals("All entries below were recorded in this connection.", v.provenance)
+    }
+
+    @Test fun mixedEvidenceIsCountedAndSaidSo() {
+        val r = reg(); val late = r.ensure("01", "11").id
+        r.onAdvertised(late, Evidence(LATER, EvidenceKind.BITMAP_ADVERTISED))
+        val v = EcuExplorerView.build(r, null, null, "p", LATER - 500)
+        assertEquals(1, v.params.count { it.scope == EvidenceScope.CURRENT }); assertTrue(v.historicalCount > 0)
+        assertTrue(v.provenance.contains("earlier sessions (marked)"))
+    }
+
+    @Test fun oldIdentityScanIsLabelledAsEarlierSession() {
+        val old = EcuExplorerView.build(null, null, profile(at = NOW - 5_000_000L), "p", SINCE).identity.toMap().getValue("Identity scan")
+        assertTrue(old.contains("earlier session")); 
+        val cur = EcuExplorerView.build(null, null, profile(), "p", SINCE).identity.toMap().getValue("Identity scan")
+        assertTrue(cur.contains("this connection"))
+        assertTrue(EcuExplorerView.build(null, null, profile(), "p", null).identity.toMap().getValue("Identity scan").contains("earlier session"))
     }
 }

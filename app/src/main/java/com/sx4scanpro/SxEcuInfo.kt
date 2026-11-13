@@ -144,11 +144,12 @@ private fun ExplorerSections(x: ExplorerView) {
     }
     Section("PARAMETER REGISTRY") {
         Text(ParamState.values().joinToString("  ·  ") { it.name + " " + (x.counts[it] ?: 0) }, color = Sx.Foreground, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+        Text(x.provenance, color = if (x.historicalCount > 0) Sx.Warning else Sx.MutedForeground, fontSize = 11.sp)
         if (x.params.isEmpty()) Text("Nothing has been recorded yet. Connect to the ECU so discovery can run; nothing is shown until the ECU has answered.", color = Sx.MutedForeground, fontSize = 12.sp)
         x.params.forEach { p ->
             Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
                 Row2(p.id + "  " + p.name, p.state.name)
-                Text(p.meaning, color = Sx.MutedForeground, fontSize = 11.sp)
+                Text(p.meaning + (if (p.scope == EvidenceScope.HISTORICAL) "  ·  EARLIER SESSION" else ""), color = if (p.scope == EvidenceScope.HISTORICAL) Sx.Warning else Sx.MutedForeground, fontSize = 11.sp)
                 p.evidence.forEach { Text("· $it", color = Sx.MutedForeground, fontSize = 10.sp, fontFamily = FontFamily.Monospace) }
             }
         }

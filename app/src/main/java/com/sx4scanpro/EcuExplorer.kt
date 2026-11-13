@@ -15,36 +15,62 @@ internal enum class ModuleId(val label: String) {
  */
 internal enum class ModuleStatus { NOT_SCANNED, ATTEMPTED, ADVERTISED, REACHABLE, DECODED, VERIFIED, UNAVAILABLE }
 
-internal data class ModuleEntry(val id: ModuleId, val status: ModuleStatus, val address: String?, val note: String)
+/** Where the evidence behind a status comes from. Stored registry evidence has no session or ECU id, so it is only trusted when it is newer than this connection. */
+internal enum class EvidenceScope { NONE, HISTORICAL, CURRENT }
+
+internal data class ModuleEntry(
+    val id: ModuleId, val status: ModuleStatus, val address: String?, val note: String,
+    val scope: EvidenceScope = EvidenceScope.NONE
+)
 
 internal object ModuleStatusModel {
     /**
-     * ENGINE: ATTEMPTED once a discovery or scan ran; ADVERTISED when the ECU listed parameters; REACHABLE once a request got a positive
-     * answer; DECODED once an answer was decoded; VERIFIED when a decoded answer AND an ECU identity item (VIN, calibration ID or CVN)
-     * were both read from the ECU. Every other module stays NOT_SCANNED: nothing in this app talks to them.
+     * Statuses are built from evidence of the CURRENT connection only ([sinceMs] = when it started; null = not connected, so everything
+     * stored is historical). The registry and the ECU profile are persisted across sessions and carry no session or ECU identity, so
+     * old evidence is never combined with new evidence: VERIFIED needs a decoded answer AND an ECU identity item (VIN, calibration ID or
+     * CVN) that were both recorded in this connection. Earlier-session evidence is reported as such and does not raise the status.
+     * ENGINE ladder: ATTEMPTED (a discovery/scan ran in this connection) < ADVERTISED < REACHABLE (positive answer) < DECODED < VERIFIED.
+     * Every other module stays NOT_SCANNED. UNAVAILABLE is never produced: silence is not proof of absence.
      */
-    fun derive(discovery: DiscoveryOutcome?, profile: EcuProfile?, registry: ParameterRegistry?): List<ModuleEntry> {
-        val states = registry?.all()?.mapNotNull { registry.state(it.id) } ?: emptyList()
-        val attempted = (discovery != null && discovery.status != DiscoveryStatus.REFUSED) || profile != null
-        val decoded = states.any { it == ParamState.DECODED }
-        val identity = profile != null && listOf(profile.vin, profile.calIds, profile.cvns).any { it.status == ScanStatus.READ && it.items.isNotEmpty() }
-        val positive = states.any { it == ParamState.VERIFIED || it == ParamState.DECODED } ||
-            (profile != null && listOf(profile.mode09Supported, profile.vin, profile.calIds, profile.cvns, profile.ecuName).any { it.status == ScanStatus.READ })
-        val advertised = states.any { it == ParamState.ADVERTISED || it == ParamState.VERIFIED || it == ParamState.DECODED } || (discovery?.run?.advertised?.isNotEmpty() == true)
+    fun derive(discovery: DiscoveryOutcome?, profile: EcuProfile?, registry: ParameterRegistry?, sinceMs: Long? = null): List<ModuleEntry> {
+        fun current(t: Long) = sinceMs != null && t >= sinceMs
+        val recs = registry?.all()?.mapNotNull { registry.record(it.id) } ?: emptyList()
+        fun has(r: ParamRecord, vararg kinds: EvidenceKind) = r.evidence.any { it.kind in kinds && current(it.tMs) }
+        val decodedNow = recs.any { it.state == ParamState.DECODED && has(it, EvidenceKind.DECODED_OK) }
+        val positiveNow = recs.any { (it.state == ParamState.VERIFIED || it.state == ParamState.DECODED) && has(it, EvidenceKind.POSITIVE_RESPONSE, EvidenceKind.DECODED_OK) }
+        val advertisedNow = recs.any { it.state != ParamState.UNTESTED && it.state != ParamState.UNSUPPORTED && has(it, EvidenceKind.BITMAP_ADVERTISED) } ||
+            (sinceMs != null && discovery?.run?.advertised?.isNotEmpty() == true)
+        val profileNow = profile != null && current(profile.capturedAtMs)
+        val identityNow = profileNow && listOf(profile!!.vin, profile.calIds, profile.cvns).any { it.status == ScanStatus.READ && it.items.isNotEmpty() }
+        val profilePositiveNow = profileNow && listOf(profile!!.mode09Supported, profile.vin, profile.calIds, profile.cvns, profile.ecuName).any { it.status == ScanStatus.READ }
+        val attemptedNow = sinceMs != null && ((discovery != null && discovery.status != DiscoveryStatus.REFUSED) || profileNow)
+        val anyStored = recs.any { it.state != ParamState.UNTESTED } || profile != null
+        val anyNow = decodedNow || positiveNow || advertisedNow || profileNow || attemptedNow
+
         val status = when {
-            decoded && identity -> ModuleStatus.VERIFIED
-            decoded -> ModuleStatus.DECODED
-            positive -> ModuleStatus.REACHABLE
-            advertised -> ModuleStatus.ADVERTISED
-            attempted -> ModuleStatus.ATTEMPTED
+            decodedNow && identityNow -> ModuleStatus.VERIFIED
+            decodedNow -> ModuleStatus.DECODED
+            positiveNow || profilePositiveNow -> ModuleStatus.REACHABLE
+            advertisedNow -> ModuleStatus.ADVERTISED
+            attemptedNow -> ModuleStatus.ATTEMPTED
             else -> ModuleStatus.NOT_SCANNED
         }
-        val engineNote = when (status) {
-            ModuleStatus.NOT_SCANNED -> "Not scanned in this app yet."
-            ModuleStatus.ATTEMPTED -> "A scan was attempted; no usable answer is recorded. This does not mean the ECU is absent."
-            else -> "From stored evidence. It answers OBD-II Mode 01 requests; that it is the engine ECU is assumed, not verified."
+        val scope = when { anyNow -> EvidenceScope.CURRENT; anyStored -> EvidenceScope.HISTORICAL; else -> EvidenceScope.NONE }
+        val note = buildString {
+            when (status) {
+                ModuleStatus.NOT_SCANNED -> append(if (anyStored) "Nothing recorded in this connection yet." else "Not scanned in this app yet.")
+                ModuleStatus.ATTEMPTED -> append("A scan was attempted in this connection; no usable answer is recorded. This does not mean the ECU is absent.")
+                else -> append("From this connection's evidence. It answers OBD-II Mode 01 requests; that it is the engine ECU is assumed, not verified.")
+            }
+            if (status != ModuleStatus.VERIFIED && decodedNow) append(" Verification unavailable: no ECU identity (VIN, calibration ID or CVN) was read in this connection.")
+            if (status != ModuleStatus.VERIFIED && !decodedNow && identityNow) append(" Verification unavailable: no decoded reply was recorded in this connection.")
+            if (anyStored && !(decodedNow && identityNow)) {
+                val oldDecoded = recs.any { it.state == ParamState.DECODED && !has(it, EvidenceKind.DECODED_OK) }
+                val oldIdentity = profile != null && !profileNow
+                if (oldDecoded || oldIdentity || sinceMs == null) append(" Stored evidence from an earlier session exists and is not combined with this connection.")
+            }
         }
-        val engine = ModuleEntry(ModuleId.ENGINE, status, discovery?.run?.ecuAddress, engineNote)
+        val engine = ModuleEntry(ModuleId.ENGINE, status, if (sinceMs != null) discovery?.run?.ecuAddress else null, note, scope)
         val others = listOf(ModuleId.BCM, ModuleId.EPS, ModuleId.ABS, ModuleId.AIRBAG).map {
             ModuleEntry(it, ModuleStatus.NOT_SCANNED, null, "Not scanned. This version sends no requests to this module; it may or may not exist on this car.")
         }
@@ -54,7 +80,9 @@ internal object ModuleStatusModel {
 
 internal data class ParamRow(
     val id: String, val name: String, val state: ParamState, val meaning: String,
-    val advertised: Boolean, val requested: Boolean, val decoded: Boolean, val unsupported: Boolean, val evidence: List<String>
+    val advertised: Boolean, val requested: Boolean, val decoded: Boolean, val unsupported: Boolean, val evidence: List<String>,
+    /** CURRENT only when its newest evidence is from this connection; otherwise HISTORICAL (an earlier session or app run). */
+    val scope: EvidenceScope = EvidenceScope.HISTORICAL
 )
 
 internal data class ExplorerView(
@@ -63,7 +91,10 @@ internal data class ExplorerView(
     val counts: Map<ParamState, Int>,
     val params: List<ParamRow>,
     /** Parameters with a recorded state that are not listed because of the display cap. */
-    val hidden: Int
+    val hidden: Int,
+    /** Plain statement of where the shown evidence comes from; never blank. */
+    val provenance: String = "",
+    val historicalCount: Int = 0
 )
 
 /** Read-only view of what the existing [ParameterRegistry] and discovery already recorded. Nothing here talks to the adapter. */
@@ -96,7 +127,7 @@ internal object EcuExplorerView {
         }
     }
 
-    fun row(reg: ParameterRegistry, d: ParamDef): ParamRow {
+    fun row(reg: ParameterRegistry, d: ParamDef, sinceMs: Long? = null): ParamRow {
         val r = reg.record(d.id) ?: ParamRecord(d.id)
         val st = r.state
         return ParamRow(
@@ -105,23 +136,32 @@ internal object EcuExplorerView {
             requested = st == ParamState.VERIFIED || st == ParamState.DECODED,
             decoded = st == ParamState.DECODED,
             unsupported = st == ParamState.UNSUPPORTED,
-            evidence = r.evidence.takeLast(3).map(::evidenceText)
+            evidence = r.evidence.takeLast(3).map(::evidenceText),
+            scope = if (sinceMs != null && (r.evidence.maxOfOrNull { it.tMs } ?: -1L) >= sinceMs) EvidenceScope.CURRENT else EvidenceScope.HISTORICAL
         )
     }
 
     private val order = listOf(ParamState.DECODED, ParamState.VERIFIED, ParamState.ADVERTISED, ParamState.UNSUPPORTED)
 
-    fun build(reg: ParameterRegistry?, discovery: DiscoveryOutcome?, profile: EcuProfile?, liveProtocol: String): ExplorerView {
+    fun build(reg: ParameterRegistry?, discovery: DiscoveryOutcome?, profile: EcuProfile?, liveProtocol: String, sinceMs: Long? = null): ExplorerView {
         val counts = ParamState.values().associateWith { s -> reg?.byState(s)?.size ?: 0 }
-        val rows = reg?.all()?.map { row(reg, it) }?.filter { it.state != ParamState.UNTESTED }
+        val rows = reg?.all()?.map { row(reg, it, sinceMs) }?.filter { it.state != ParamState.UNTESTED }
             ?.sortedWith(compareBy({ order.indexOf(it.state) }, { it.id })) ?: emptyList()
         val address = discovery?.run?.ecuAddress
         val identity = listOf(
             "ECU address (as captured)" to (address ?: "not captured yet"),
             "Protocol" to (liveProtocol.ifBlank { profile?.protocol.orEmpty() }.ifBlank { "not reported" }),
             "Mode 01 discovery" to (discovery?.let { it.status.name.lowercase() + ": " + it.message } ?: "not run in this session"),
-            "Identity scan" to (profile?.let { time(it.capturedAtMs) } ?: "not run")
+            "Identity scan" to (profile?.let { time(it.capturedAtMs) + (if (sinceMs != null && it.capturedAtMs >= sinceMs) " (this connection)" else " (earlier session, not this connection)") } ?: "not run")
         )
-        return ExplorerView(identity, ModuleStatusModel.derive(discovery, profile, reg), counts, rows.take(MAX_ROWS), (rows.size - MAX_ROWS).coerceAtLeast(0))
+        val historical = rows.count { it.scope == EvidenceScope.HISTORICAL }
+        val provenance = when {
+            rows.isEmpty() -> "Nothing recorded yet."
+            sinceMs == null -> "Not connected: everything below is stored evidence from earlier sessions."
+            historical == 0 -> "All entries below were recorded in this connection."
+            historical == rows.size -> "Connected, but every entry below is from an earlier session and is not confirmed in this connection yet."
+            else -> "$historical of ${rows.size} entries below are from earlier sessions (marked); the rest were recorded in this connection."
+        }
+        return ExplorerView(identity, ModuleStatusModel.derive(discovery, profile, reg, sinceMs), counts, rows.take(MAX_ROWS), (rows.size - MAX_ROWS).coerceAtLeast(0), provenance, historical)
     }
 }
