@@ -54,9 +54,40 @@ class CapabilityCatalogueTest {
         val r = reg(); r.onInconclusive("01:05", e(EvidenceKind.TIMEOUT))
         assertEquals(ObservedLevel.UNAVAILABLE, cap(r, "01:05").observed)
     }
-    @Test fun previouslyAnsweredStaysTestedDespiteLaterNoData() {
-        val r = reg(); r.onPositiveResponse("01:0C", e(EvidenceKind.POSITIVE_RESPONSE)); r.onInconclusive("01:0C", e(EvidenceKind.NO_DATA, T0 + 1))
-        assertEquals(ObservedLevel.TESTED, cap(r, "01:0C").observed)
+    private fun decoded(r: ParameterRegistry, id: String = "01:0C") { r.onPositiveResponse(id, e(EvidenceKind.POSITIVE_RESPONSE)); r.onDecoded(id, e(EvidenceKind.DECODED_OK)) }
+    @Test fun decodedThenNoDataIsUnavailableButRegistryKeepsDecoded() {
+        val r = reg(); decoded(r); r.onInconclusive("01:0C", e(EvidenceKind.NO_DATA, T0 + 1))
+        assertEquals(ObservedLevel.UNAVAILABLE, cap(r, "01:0C").observed)
+        assertEquals(ParamState.DECODED, r.state("01:0C"))
+        assertTrue(r.record("01:0C")!!.evidence.any { it.kind == EvidenceKind.DECODED_OK })
+        assertNotNull(r.record("01:0C")!!.lastVerifiedMs)
+    }
+    @Test fun decodedThenTimeoutIsUnavailable() {
+        val r = reg(); decoded(r); r.onInconclusive("01:0C", e(EvidenceKind.TIMEOUT, T0 + 1))
+        assertEquals(ObservedLevel.UNAVAILABLE, cap(r, "01:0C").observed); assertEquals(ParamState.DECODED, r.state("01:0C"))
+    }
+    @Test fun verifiedThenNoDataOrTimeoutIsUnavailable() {
+        val r = reg()
+        r.onPositiveResponse("01:0C", e(EvidenceKind.POSITIVE_RESPONSE)); r.onInconclusive("01:0C", e(EvidenceKind.NO_DATA, T0 + 1))
+        r.onPositiveResponse("01:0D", e(EvidenceKind.POSITIVE_RESPONSE)); r.onInconclusive("01:0D", e(EvidenceKind.TIMEOUT, T0 + 1))
+        assertEquals(ObservedLevel.UNAVAILABLE, cap(r, "01:0C").observed); assertEquals(ObservedLevel.UNAVAILABLE, cap(r, "01:0D").observed)
+        assertEquals(ParamState.VERIFIED, r.state("01:0C")); assertEquals(ParamState.VERIFIED, r.state("01:0D"))
+    }
+    @Test fun laterSuccessRestoresDecodedAndTested() {
+        val r = reg(); decoded(r); r.onInconclusive("01:0C", e(EvidenceKind.NO_DATA, T0 + 1))
+        r.onPositiveResponse("01:0C", e(EvidenceKind.POSITIVE_RESPONSE, T0 + 2)); r.onDecoded("01:0C", e(EvidenceKind.DECODED_OK, T0 + 3))
+        assertEquals(ObservedLevel.DECODED, cap(r, "01:0C").observed)
+        r.onPositiveResponse("01:0D", e(EvidenceKind.POSITIVE_RESPONSE)); r.onInconclusive("01:0D", e(EvidenceKind.TIMEOUT, T0 + 1))
+        r.onPositiveResponse("01:0D", e(EvidenceKind.POSITIVE_RESPONSE, T0 + 2))
+        assertEquals(ObservedLevel.TESTED, cap(r, "01:0D").observed)
+    }
+    @Test fun unavailableFromEarlierSessionStaysHistorical() {
+        val r = reg(); decoded(r); r.onInconclusive("01:0C", e(EvidenceKind.NO_DATA, T0 + 1))
+        assertEquals(EvidenceScope.CURRENT, cap(r, "01:0C", SINCE0).scope)
+        assertEquals(EvidenceScope.HISTORICAL, cap(r, "01:0C", T0 + 5_000_000L).scope)
+        assertEquals(EvidenceScope.HISTORICAL, cap(r, "01:0C", null).scope)
+        r.onPositiveResponse("01:0D", e(EvidenceKind.POSITIVE_RESPONSE))   // old success must not look current in a new connection
+        assertEquals(EvidenceScope.HISTORICAL, cap(r, "01:0D", T0 + 5_000_000L).scope)
     }
     @Test fun unsupportedNeedsExplicitEvidence() {
         val r = reg(); r.onUnsupported("01:05", e(EvidenceKind.NO_DATA))

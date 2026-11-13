@@ -47,10 +47,12 @@ internal object CapabilityCatalogue {
     fun classify(state: ParamState, evidence: List<Evidence>): ObservedLevel {
         val newest = evidence.lastOrNull()
         val failedLast = newest != null && newest.kind in inconclusive
+        // The newest evidence decides availability: a later NO DATA/timeout reports UNAVAILABLE even if the registry state is
+        // VERIFIED/DECODED. The registry state and its earlier positive evidence are untouched; a later success restores the level.
         return when (state) {
             ParamState.UNSUPPORTED -> ObservedLevel.UNSUPPORTED
-            ParamState.DECODED -> ObservedLevel.DECODED
-            ParamState.VERIFIED -> ObservedLevel.TESTED
+            ParamState.DECODED -> if (failedLast) ObservedLevel.UNAVAILABLE else ObservedLevel.DECODED
+            ParamState.VERIFIED -> if (failedLast) ObservedLevel.UNAVAILABLE else ObservedLevel.TESTED
             ParamState.ADVERTISED -> if (failedLast) ObservedLevel.UNAVAILABLE else ObservedLevel.ADVERTISED
             ParamState.UNTESTED -> if (failedLast) ObservedLevel.UNAVAILABLE else ObservedLevel.UNVERIFIED
         }
