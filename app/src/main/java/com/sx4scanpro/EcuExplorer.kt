@@ -6,7 +6,7 @@ import java.util.Locale
 
 /** Modules the explorer will eventually cover. Only the Mode 01 responder has ever been talked to; the others are groundwork. */
 internal enum class ModuleId(val label: String) {
-    ENGINE("Engine (OBD-II Mode 01 responder)"), BCM("BCM"), EPS("EPS"), ABS("ABS"), AIRBAG("Airbag")
+    ENGINE("Engine (OBD-II Mode 01 responder)"), BCM("BCM"), EPS("EPS"), ABS("ABS/ESP"), CLUSTER("Instrument cluster"), AIRBAG("SRS / Airbag")
 }
 
 /**
@@ -71,8 +71,8 @@ internal object ModuleStatusModel {
             }
         }
         val engine = ModuleEntry(ModuleId.ENGINE, status, if (sinceMs != null) discovery?.run?.ecuAddress else null, note, scope)
-        val others = listOf(ModuleId.BCM, ModuleId.EPS, ModuleId.ABS, ModuleId.AIRBAG).map {
-            ModuleEntry(it, ModuleStatus.NOT_SCANNED, null, "Not scanned. This version sends no requests to this module; it may or may not exist on this car.")
+        val others = listOf(ModuleId.BCM, ModuleId.EPS, ModuleId.ABS, ModuleId.CLUSTER, ModuleId.AIRBAG).map {
+            ModuleEntry(it, ModuleStatus.NOT_SCANNED, null, "Not scanned. This version sends no requests to this module; it may or may not exist on this car. " + ModuleCatalog.summary(it) + " Needs vehicle confirmation.")
         }
         return listOf(engine) + others
     }
