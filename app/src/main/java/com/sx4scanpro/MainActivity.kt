@@ -463,6 +463,8 @@ class MainActivity : ComponentActivity() {
                 disconnect()
                 userInitiatedDisconnect = false
                 pollStalled = false
+                lastDiscovery = null
+                sessionStartMs = System.currentTimeMillis()
                 history.clear()
                 status = "Connecting…"
                 connection.connectRequested()
@@ -1069,6 +1071,7 @@ class MainActivity : ComponentActivity() {
                             diff = ecuProfile?.let { cur -> ecuPrevious?.let { ProfileDiff.compare(it, cur) } },
                             linkText = EcuReport.linkText(linkState, connected),
                             connectionRows = ConnectionPresenter.rows(connSnapshot, System.currentTimeMillis()),
+                            explorer = EcuExplorerView.build(parameterRegistry, lastDiscovery, ecuProfile, protocolText, if (connected && sessionStartMs > 0L) sessionStartMs else null),
                             liveFacts = AdapterFacts(if (connected) adapterName else "", adapterIdText, adapterVoltageText, protocolText),
                             mode01Count = supportedPids.size,
                             scanning = ecuScanning,
@@ -1616,7 +1619,12 @@ class MainActivity : ComponentActivity() {
      * Mode 01 ECU discovery: reads the supported-PID bitmaps, updates and saves the parameter registry. Used at connect time and
      * for any later request, so both share one implementation. Read-only. Blocking: call from a background thread. No UI yet.
      */
-    internal fun requestDiscovery(reason: String = "manual"): DiscoveryOutcome = discoveryController.request(reason)
+    internal fun requestDiscovery(reason: String = "manual"): DiscoveryOutcome = discoveryController.request(reason).also { lastDiscovery = it }
+
+    /** Latest discovery result of this app run (read-only; shown on the ECU Information screen). */
+    private var lastDiscovery by mutableStateOf<DiscoveryOutcome?>(null)
+    /** When the current connection began; evidence recorded earlier is shown as historical. */
+    private var sessionStartMs by mutableStateOf(0L)
 
     private fun ecuDir() = java.io.File(filesDir, "ecu").apply { mkdirs() }
 

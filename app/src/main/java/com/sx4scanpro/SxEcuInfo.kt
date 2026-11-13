@@ -33,6 +33,7 @@ internal fun SxEcuInfo(
     diff: ProfileDiff?,
     linkText: String,
     connectionRows: List<Pair<String, String>> = emptyList(),
+    explorer: ExplorerView? = null,
     liveFacts: AdapterFacts,
     mode01Count: Int,
     scanning: Boolean,
@@ -65,7 +66,9 @@ internal fun SxEcuInfo(
             Row2("Battery voltage (ATRV)", liveFacts.voltage.ifBlank { "not reported" })
             Row2("Bus protocol", liveFacts.protocol.ifBlank { "not reported" })
             Row2("Mode 01 PIDs advertised", if (mode01Count > 0) mode01Count.toString() else "none yet")
+            explorer?.identity?.forEach { (label, value) -> Row2(label, value) }
         }
+        if (explorer != null) ExplorerSections(explorer)
         if (profile == null) {
             Section("NO SCAN YET") { Text("Tap SCAN ECU while connected. Nothing is shown here until the ECU has actually answered.", color = Sx.MutedForeground, fontSize = 12.sp) }
         } else {
@@ -128,5 +131,28 @@ private fun FieldSection(title: String, f: ProfileField) {
         else Text(EcuReport.statusText(f.status), color = Sx.MutedForeground, fontSize = 13.sp)
         if (f.note.isNotBlank()) Text(f.note, color = Sx.Warning, fontSize = 11.sp)
         if (f.rawHex.isNotBlank()) Text("raw: " + f.rawHex, color = Sx.MutedForeground, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+    }
+}
+
+@Composable
+private fun ExplorerSections(x: ExplorerView) {
+    Section("MODULE STATUS") {
+        x.modules.forEach { m ->
+            Row2(m.id.label, m.status.name)
+            Text(m.note + (m.address?.let { " Address as captured: $it." } ?: ""), color = Sx.MutedForeground, fontSize = 11.sp)
+        }
+    }
+    Section("PARAMETER REGISTRY") {
+        Text(ParamState.values().joinToString("  ·  ") { it.name + " " + (x.counts[it] ?: 0) }, color = Sx.Foreground, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+        Text(x.provenance, color = if (x.historicalCount > 0) Sx.Warning else Sx.MutedForeground, fontSize = 11.sp)
+        if (x.params.isEmpty()) Text("Nothing has been recorded yet. Connect to the ECU so discovery can run; nothing is shown until the ECU has answered.", color = Sx.MutedForeground, fontSize = 12.sp)
+        x.params.forEach { p ->
+            Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+                Row2(p.id + "  " + p.name, p.state.name)
+                Text(p.meaning + (if (p.scope == EvidenceScope.HISTORICAL) "  ·  EARLIER SESSION" else ""), color = if (p.scope == EvidenceScope.HISTORICAL) Sx.Warning else Sx.MutedForeground, fontSize = 11.sp)
+                p.evidence.forEach { Text("· $it", color = Sx.MutedForeground, fontSize = 10.sp, fontFamily = FontFamily.Monospace) }
+            }
+        }
+        if (x.hidden > 0) Text("${x.hidden} more recorded parameters are not shown here; they are included in the session export.", color = Sx.MutedForeground, fontSize = 11.sp)
     }
 }
