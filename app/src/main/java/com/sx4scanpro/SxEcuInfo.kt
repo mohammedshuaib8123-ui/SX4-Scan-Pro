@@ -136,6 +136,7 @@ private fun FieldSection(title: String, f: ProfileField) {
 
 @Composable
 private fun ExplorerSections(x: ExplorerView) {
+    x.capabilities?.let { CapabilitySection(it) }
     Section("MODULE STATUS") {
         x.modules.forEach { m ->
             Row2(m.id.label, m.status.name)
@@ -154,5 +155,23 @@ private fun ExplorerSections(x: ExplorerView) {
             }
         }
         if (x.hidden > 0) Text("${x.hidden} more recorded parameters are not shown here; they are included in the session export.", color = Sx.MutedForeground, fontSize = 11.sp)
+    }
+}
+
+@Composable
+private fun CapabilitySection(c: CapabilitySummary) {
+    Section("CAPABILITY EVIDENCE") {
+        Text("Documentation and vehicle evidence are kept apart. Documented does not mean the car supports it.", color = Sx.MutedForeground, fontSize = 11.sp)
+        Row2("Documented in this app", c.documentedCount.toString())
+        Row2("Documented, not yet verified on the car", c.documentedButUnverified.toString())
+        ObservedLevel.values().filter { it != ObservedLevel.UNVERIFIED }.forEach { Row2(it.name.lowercase().replaceFirstChar { ch -> ch.uppercase() }, (c.counts[it] ?: 0).toString()) }
+        c.identity.forEach { i ->
+            Row2(i.item, if (i.available) "read (${i.valueCount})" else i.status.name.lowercase().replace('_', ' '))
+            Text(
+                when (i.scope) { EvidenceScope.CURRENT -> "this connection"; EvidenceScope.HISTORICAL -> "EARLIER SESSION"; EvidenceScope.NONE -> "no scan" } +
+                    "  ·  raw reply " + (if (i.rawCaptured) "captured" else "not captured"),
+                color = if (i.scope == EvidenceScope.HISTORICAL) Sx.Warning else Sx.MutedForeground, fontSize = 10.sp
+            )
+        }
     }
 }
