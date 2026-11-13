@@ -10,11 +10,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -106,7 +104,7 @@ internal fun SxCockpit(
                 fontSize = 9.sp, modifier = Modifier.padding(start = 8.dp)
             )
         }
-        Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min).clusterBand()) {
+        Row(Modifier.fillMaxWidth().clusterBand()) {
             SxInstrument(
                 "ENGINE SPEED", rpm, DialScale.forLabel("Engine RPM"), "RPM", "Engine speed", nowMs, "rpm" in alertSensors,
                 "Diesel · 1,248 cc", Modifier.weight(1f), shiftLights = true, hotFrom = hotRpm, ignite = arrive
