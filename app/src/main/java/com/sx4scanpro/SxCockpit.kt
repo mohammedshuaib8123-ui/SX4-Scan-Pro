@@ -120,6 +120,7 @@ internal fun SxCockpit(
             SxHealth(connected, ecuOnline, rpmSignal, faultCount, onOpenDiagnostics, Modifier.weight(1f))
             SxHeadUnit(headUnit, receiverInstalled, onOpenHeadUnit, onShowProjection, Modifier.weight(1f))
         }
+        SxDuaButton(Modifier.fillMaxWidth())
         SxFooter(connected, statusText, wallOn, onReplayWelcome, onConnect, onDisconnect, onToggleWall)
     }
 }
