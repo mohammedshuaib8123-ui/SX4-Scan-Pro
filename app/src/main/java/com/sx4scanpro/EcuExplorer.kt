@@ -94,7 +94,8 @@ internal data class ExplorerView(
     val hidden: Int,
     /** Plain statement of where the shown evidence comes from; never blank. */
     val provenance: String = "",
-    val historicalCount: Int = 0
+    val historicalCount: Int = 0,
+    val capabilities: CapabilitySummary? = null
 )
 
 /** Read-only view of what the existing [ParameterRegistry] and discovery already recorded. Nothing here talks to the adapter. */
@@ -162,6 +163,6 @@ internal object EcuExplorerView {
             historical == rows.size -> "Connected, but every entry below is from an earlier session and is not confirmed in this connection yet."
             else -> "$historical of ${rows.size} entries below are from earlier sessions (marked); the rest were recorded in this connection."
         }
-        return ExplorerView(identity, ModuleStatusModel.derive(discovery, profile, reg, sinceMs), counts, rows.take(MAX_ROWS), (rows.size - MAX_ROWS).coerceAtLeast(0), provenance, historical)
+        return ExplorerView(identity, ModuleStatusModel.derive(discovery, profile, reg, sinceMs), counts, rows.take(MAX_ROWS), (rows.size - MAX_ROWS).coerceAtLeast(0), provenance, historical, CapabilityCatalogue.summarize(reg, profile, sinceMs))
     }
 }
