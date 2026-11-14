@@ -137,7 +137,7 @@ private const val RECEIVER_PACKAGE = "com.andrerinas.headunitrevived"
 private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
 internal class TimeoutFlag { var hit = false }
-data class GaugeValue(val label: String, val value: String, val unit: String = "", val available: Boolean = true, val capturedAtMs: Long = System.currentTimeMillis())
+data class GaugeValue(val label: String, val value: String, val unit: String = "", val available: Boolean = true, val capturedAtMs: Long = System.currentTimeMillis(), val staleAfterMs: Long = STALE_MS)
 data class TroubleCodeResult(val category: String, val code: String)
 private data class DtcScanSummary(val codes: List<TroubleCodeResult>, val supportedModes: Int, val noDataModes: Int, val invalidModes: Int, val failedModes: Int, val partialModes: Int = 0)
 
@@ -545,7 +545,7 @@ class MainActivity : ComponentActivity() {
                         // Readings are shown only while the ECU is really answering; never stale values as live.
                         gauges = if (!connection.snapshot.ecuAvailable) gauges.map { it.copy(value = "--", available = false) }
                         else GaugeAssembler.build({ poller.reading(it) }, supportedPids, extraPids, nowMs)
-                            .map { GaugeValue(it.label, it.value, it.unit, it.available, it.capturedAtMs) }
+                            .map { GaugeValue(it.label, it.value, it.unit, it.available, it.capturedAtMs, it.staleAfterMs) }
                         if (nowMs - lastPerfLogMs >= 60_000L) {   // bounded: one short block a minute into the rolling session log
                             lastPerfLogMs = nowMs
                             poller.metrics.summary().forEach { sessionLog.append("PERF", it) }

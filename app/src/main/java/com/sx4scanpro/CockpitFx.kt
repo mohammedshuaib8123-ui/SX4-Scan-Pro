@@ -94,7 +94,7 @@ internal fun InstrumentDial(
     modifier: Modifier = Modifier
 ) {
     val number: Double? = if (gauge.available) gauge.value.toDoubleOrNull() else null
-    val stale = number != null && nowMs - gauge.capturedAtMs > Fx.STALE_AFTER_MS
+    val stale = number != null && nowMs - gauge.capturedAtMs > gauge.staleAfterMs
     val live = number != null && !stale
     val fraction by animateFloatAsState(
         targetValue = scale.fraction(number),
@@ -234,7 +234,7 @@ internal fun MetricTile(
 ) {
     var showTrend by remember { mutableStateOf(false) }
     val number: Double? = if (gauge.available) gauge.value.toDoubleOrNull() else null
-    val stale = number != null && nowMs - gauge.capturedAtMs > Fx.STALE_AFTER_MS
+    val stale = number != null && nowMs - gauge.capturedAtMs > gauge.staleAfterMs
     val fraction by animateFloatAsState(
         targetValue = scale.fraction(number),
         animationSpec = spring(stiffness = Spring.StiffnessLow),

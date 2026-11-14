@@ -16,8 +16,22 @@ class LiveGaugesTest {
         val r = mapOf(0x0C to Reading(1726.0, 1000))
         val live = GaugeAssembler.build({ r[it] }, adv, emptySet(), 1500).first { it.label == "Engine RPM" }
         assertTrue(live.available); assertEquals("1726", live.value)
-        val stale = GaugeAssembler.build({ r[it] }, adv, emptySet(), 1000 + 4000 + 1).first { it.label == "Engine RPM" }
+        val stale = GaugeAssembler.build({ r[it] }, adv, emptySet(), 1000 + 8000 + 1).first { it.label == "Engine RPM" }
         assertFalse(stale.available); assertEquals("--", stale.value)
+    }
+
+    // From the car log: manifold pressure arrives about every 4 s and intake temperature about every 21 s.
+    @Test fun slowSensorsKeepTheirValueBetweenRealUpdates() {
+        val r = mapOf(0x0B to Reading(180.0, 1000), 0x33 to Reading(100.0, 1000), 0x0F to Reading(41.0, 1000))
+        val ex = setOf(0x0F)
+        val a = GaugeAssembler.build({ r[it] }, adv + 0x0F, ex, 1000 + 5000)
+        assertTrue(a.first { it.label == "Turbo boost" }.available)          // 5 s old: still shown, not NO SIGNAL
+        assertEquals("80.0", a.first { it.label == "Turbo boost" }.value)
+        assertEquals(6_000L, a.first { it.label == "Turbo boost" }.staleAfterMs)  // and labelled STALE after 6 s
+        assertTrue(a.first { it.label == "Intake air temperature" }.available)
+        val late = GaugeAssembler.build({ r[it] }, adv + 0x0F, ex, 1000 + 25_000)
+        assertTrue(late.first { it.label == "Intake air temperature" }.available)   // 25 s old: inside its 60 s window
+        assertFalse(late.first { it.label == "Turbo boost" }.available)             // MAP 25 s old: never shown as live
     }
 
     @Test fun boostIsMapMinusCachedBaro() {

@@ -65,7 +65,7 @@ import kotlin.math.sin
 private val TN = TextStyle(fontFeatureSettings = "tnum")
 
 internal fun readingOf(g: GaugeValue): Double? = if (g.available) g.value.toDoubleOrNull() else null
-internal fun isStale(g: GaugeValue, nowMs: Long): Boolean = readingOf(g) != null && nowMs - g.capturedAtMs > STALE_MS
+internal fun isStale(g: GaugeValue, nowMs: Long): Boolean = readingOf(g) != null && nowMs - g.capturedAtMs > g.staleAfterMs
 
 /** The cluster band: one continuous panel with a soft red wash at the top, a tinted top rule and a plain bottom rule. */
 internal fun Modifier.clusterBand(): Modifier = this
