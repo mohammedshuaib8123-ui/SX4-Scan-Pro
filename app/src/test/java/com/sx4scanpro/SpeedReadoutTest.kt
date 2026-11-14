@@ -62,7 +62,7 @@ class SpeedReadoutTest {
     }
 
     @Test fun pipelineStaleOrUnadvertisedReadingBecomesADash() {
-        val old = speedGauge(Reading(42.0, 1000), adv, 1000 + 4001)       // assembler drops it after max(4 s, 3 x interval)
+        val old = speedGauge(Reading(42.0, 1000), adv, 1000 + 8001)       // assembler drops speed after its 8 s blank age (the digital readout itself dashes after 5 s)
         assertFalse(old.available); assertFalse(readoutOf(old, 5001).valid)
         val unadvertised = speedGauge(Reading(42.0, 1000), emptySet(), 1500)
         assertFalse(readoutOf(unadvertised, 1500).valid)
