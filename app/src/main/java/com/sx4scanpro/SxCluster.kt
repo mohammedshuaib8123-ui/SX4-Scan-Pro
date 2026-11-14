@@ -197,7 +197,8 @@ internal fun SxVehicleStage(fuel: GaugeValue, battery: GaugeValue, speed: GaugeV
             }
             Text("S4", color = Sx.MutedForeground, fontSize = 18.sp, fontStyle = FontStyle.Italic)
         }
-        Box(Modifier.weight(1f).fillMaxWidth().heightIn(min = 120.dp, max = 160.dp)) {
+        // Fixed height: the cockpit row no longer uses IntrinsicSize.Min (it crashed), so a weight(1f) here would collapse to 0 and hide the photo and digital speed.
+        Box(Modifier.fillMaxWidth().height(170.dp)) {
             Image(
                 painterResource(R.drawable.sx4_redline), contentDescription = "Suzuki SX4",
                 contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize()
