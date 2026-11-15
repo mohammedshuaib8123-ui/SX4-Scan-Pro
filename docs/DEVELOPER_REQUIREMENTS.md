@@ -1273,3 +1273,33 @@ A phase is complete only when:
 
 **Claude / coding-agent execution instruction:** Read this entire requirements file and inspect the repository before editing. For the first task, perform Phase 1 only. Do not modify source files, do not implement AI, and do not begin a broad refactor. Return a concise audit report with exact paths, classes/functions, tests, current commit, verified versus unverified status, and the single smallest recommended next task. Wait for approval before implementing that task.
 
+### 26.15 Known issue: freeze-frame button returns zero values
+
+**Observed on the user's device:** Pressing the Freeze Frame button returns/displays zero values and provides no useful explanation. Treat this as a known defect requiring investigation, not as evidence that the vehicle's actual freeze-frame values are all zero.
+
+Audit the complete freeze-frame flow before changing code:
+
+- UI button click and loading/error/empty states.
+- Freeze-frame request construction and selected frame number.
+- Mode 02 service handling and supported-PID discovery for the freeze-frame response.
+- ELM command serialization, response framing and timeout handling.
+- Raw ECU response parsing, including multi-line and multi-frame responses where applicable.
+- PID decoder reuse and parameter/unit mapping.
+- Handling of unsupported PIDs, NO DATA, empty responses, malformed responses, timeout and ECU silence.
+- Any default initial values or fallback paths that could turn missing data into numeric zero.
+- Whether the app is accidentally reading live Mode 01 values or a synthetic/default frame instead of actual Mode 02 data.
+- Logging and session evidence for the request and response.
+
+Required behaviour:
+
+1. Never represent missing, unsupported, timed-out or undecodable freeze-frame data as a genuine numeric zero.
+2. Show a clear state such as "No freeze-frame data available", "Unsupported", "Request timed out", or "Unable to decode response", as appropriate.
+3. Display only values decoded from a valid ECU response, with correct units and PID labels.
+4. Preserve raw request/response evidence for troubleshooting.
+5. Distinguish a valid ECU-reported zero from an absent value.
+6. Do not claim freeze-frame support merely because the button or screen exists.
+7. Add tests for a valid non-zero response, a valid zero response, unsupported PID, NO DATA, empty response, timeout, malformed payload and partial frame.
+8. Validate on the target SX4 where possible; if the ECU does not expose Mode 02 data, report that limitation honestly.
+
+**Audit priority:** Include this defect explicitly in Phase 1's feature matrix and recommend a focused freeze-frame fix as a candidate early task. Do not silently expand the scope into unrelated refactoring.
+
