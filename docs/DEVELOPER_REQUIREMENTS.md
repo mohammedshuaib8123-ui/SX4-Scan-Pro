@@ -925,3 +925,351 @@ Implemented (pure logic, no transport change, still read-only, still one command
 - **Recovery fix (P6 review):** `PidCapabilities.clearTemporaryState()` clears NO DATA streaks and park timers (not the advertised set); `LivePoller.recover()` calls it with `pacer.reset()` only after a successful recovery probe. Otherwise PIDs parked for garbage, `?` or NO DATA replies could stay parked after the ECU came back. Tests: parked advertised PID is pollable right after recovery; never-advertised PID stays unpollable; NO DATA streak and manual park both cleared; failed recovery keeps the parking.
 - **Not verified:** no real-vehicle measurement. Unit tests prove the logic, not that the car is faster. Saturday's real-car performance validation (read the `PERF` lines from the session log: median/P95 per PID, RPM and speed update intervals) is outstanding.
 - **Still outstanding elsewhere:** real-car validation of P5 and P6 (and P3, P4); session export; ECU Explorer; PR #5 cockpit decision; BCM/EPS feasibility (research only, nothing verified for the Indian diesel SX4) and verified multi-module discovery.
+
+## 26. Advanced Suzuki vehicle intelligence requirements
+
+**Status:** Approved product direction / development requirements. These are requirements to audit and implement in V1, not claims that every capability already exists or is supported by the vehicle.
+
+### 26.1 Objective and scope
+
+Evolve SX4 Scan Pro into a vehicle-specific diagnostic and health-monitoring application for the Indian-market 2012 Maruti Suzuki SX4 ZDi, 1.3 DDiS diesel, manual transmission.
+
+- Work only in this repository and on SX4 Scan Pro V1.
+- Preserve existing working features and the current cockpit experience.
+- Audit the source before changing code. Do not rebuild features that already exist.
+- Use the Vgate iCar Pro Bluetooth 3.0 adapter (Bluetooth Classic SPP) as the current test adapter.
+- Keep the application useful without internet access.
+- Keep all vehicle communication read-only.
+- Do not assume that generic OBD support means Suzuki enhanced diagnostics or access to every vehicle module.
+- Do not claim a feature is supported until it is evidenced by source, tests, and, where hardware-dependent, a real-vehicle test.
+
+**Explicitly out of scope:** AI features, ChatGPT/OpenAI API, third-party AI APIs, cloud AI backends, AI mechanic/chat screens, and sending telemetry to AI services. Do not add AI-related dependencies, credentials, network calls, settings or UI as part of this requirements set.
+
+### 26.2 Required first step: source-of-truth audit
+
+Before implementation, inspect the current default branch and report the exact current commit SHA. Review the actual source, tests, Gradle configuration, workflows and existing requirements.
+
+Audit at least:
+
+- Bluetooth Classic SPP connection, lifecycle and adapter selection.
+- ELM initialization, protocol detection and command/response framing.
+- Serialized command transport and read-only command guard.
+- Mode 01 PID catalogue, supported-PID bitmap discovery and polling.
+- ParameterRegistry and RegistryStore.
+- DecoderRegistry and all PID/DID decoders.
+- LivePoller, PollScheduler, PollGate, AdaptivePacer and PollMetrics.
+- Connection state machine and recovery, including ignition OFF/ON while the adapter remains powered.
+- Data timestamps, freshness/staleness and invalidation.
+- Mode 02 freeze-frame support.
+- Modes 03, 07 and 0A DTC reading and decoding.
+- Mode 09 VIN, calibration ID, CVN and ECU identification.
+- Raw request/response capture and session logging/export.
+- ECU Explorer and Capability Catalogue, if present.
+- Existing tests and CI workflows.
+
+For every item, classify it as:
+1. Implemented and unit-tested.
+2. Implemented but not tested on the target vehicle.
+3. Partially implemented.
+4. Not implemented.
+5. Unsupported or not yet confirmed.
+
+Include exact file paths, relevant classes/functions, test names, branch/commit and any known gaps. Do not infer implementation from this document alone. Do not modify source during the audit phase.
+
+### 26.3 Vehicle identity and Suzuki-specific profile
+
+Create or complete a structured vehicle profile for the target SX4:
+
+- Make, model, market, model year and variant.
+- Engine family and displacement: 1.3 DDiS diesel.
+- Transmission and fuel type.
+- VIN, when legitimately read from the ECU.
+- ECU identification, protocol and calibration information, where exposed.
+- Discovered modules and their verified identities.
+- Vehicle-specific parameter definitions and evidence.
+
+The profile must distinguish owner-entered vehicle details from ECU-reported details. Do not fabricate VIN, ECU part numbers, calibration IDs, engine codes or module identities.
+
+Keep vehicle knowledge data-driven rather than scattering vehicle-specific constants throughout UI code. Each enhanced parameter/specification must record its source, applicable ECU/vehicle, request identifier, decoder, unit, conversion, validity constraints and verification status.
+
+Do not import specifications from a different SX4 engine, market or model year without proving applicability to this Indian-market 1.3 DDiS.
+
+### 26.4 Parameter registry and evidence model
+
+Retain and extend the existing registry rather than introducing a competing registry.
+
+Every parameter/capability should record, where applicable:
+
+- Stable identifier and human-readable label.
+- ECU/module and diagnostic service.
+- PID/DID/request bytes and protocol/addressing requirements.
+- Decoder and conversion formula.
+- Unit and valid response length.
+- Source/reference and applicability.
+- Capability state and evidence history.
+- Last successful observation and timestamp.
+- Data freshness and quality.
+
+Preserve the existing evidence-state vocabulary if already implemented: UNTESTED, ADVERTISED, VERIFIED, DECODED and UNSUPPORTED. Do not weaken existing transition rules.
+
+Definitions:
+- UNTESTED: no valid support evidence yet.
+- ADVERTISED: the ECU advertised the identifier or capability; this does not prove the value has been decoded.
+- VERIFIED: a valid response has been observed from the identified ECU under recorded conditions.
+- DECODED: the response has a tested, correctly unit-labelled decoder and validated output.
+- UNSUPPORTED: a valid test established that the ECU does not support the capability, or the capability is demonstrably unavailable through the tested interface. Record the evidence; do not mark transient timeouts as permanently unsupported.
+
+Unknown identifiers must remain raw/unnamed until sourced. Never invent names, formulas, limits or units.
+
+### 26.5 Advanced diesel engine data
+
+Prioritise the following data groups. These are investigation targets, not assumptions that the ECU exposes them.
+
+**A. Common-rail fuel system**
+- Actual rail pressure.
+- Desired/target rail pressure.
+- Target-versus-actual deviation, only when both are available and comparable.
+- Rail pressure during cranking, idle and load.
+- Pressure build-up/response behaviour.
+- Injector correction/balance values, if exposed.
+- Related fuel-system DTCs and freeze-frame evidence.
+
+**B. Turbocharger and intake pressure**
+- MAP (manifold absolute pressure).
+- BARO (barometric pressure).
+- Gauge boost derived as MAP minus BARO only when both readings are valid, fresh, correctly converted and time-aligned.
+- Target boost, if exposed.
+- Target-versus-actual deviation only when both values are verified.
+- Boost response against RPM/load and operating conditions.
+
+Never label MAP itself as boost. Do not infer target boost from actual boost.
+
+**C. EGR**
+- Commanded EGR position.
+- Actual EGR position, if exposed.
+- EGR error/response, if exposed.
+- EGR behaviour correlated with MAF, MAP, RPM and load.
+- Related DTCs.
+
+Do not treat commanded position as proof of physical valve movement.
+
+**D. Airflow and engine operating data**
+- MAF, MAP, BARO and intake-air temperature.
+- Coolant temperature.
+- RPM, vehicle speed and calculated engine load.
+- Throttle position where meaningful for this diesel ECU.
+- Cross-sensor consistency and response trends.
+
+**E. DPF and exhaust after-treatment**
+First establish whether this exact vehicle/ECU configuration has the relevant equipment and exposes its data. Only then investigate:
+- DPF presence/status.
+- Differential pressure.
+- Soot/ash loading.
+- Regeneration state and distance/time since regeneration.
+- Exhaust gas temperatures.
+- Related DTCs.
+
+Do not assume DPF fitment or show invented DPF values.
+
+**F. Starting, electrical and charging**
+- Battery/ECU supply voltage.
+- Cranking voltage, if available.
+- Cranking RPM.
+- Rail pressure during cranking.
+- Coolant temperature at start.
+- Charging voltage and related faults.
+- Starting-session timing and repeatability.
+
+Do not claim a starter, battery, injector, pump or sensor is faulty from one reading.
+
+### 26.6 Cross-parameter vehicle health rules
+
+Build a deterministic, offline-capable health analysis layer. It must use verified parameter definitions and valid, fresh observations.
+
+Initial rule families:
+- Actual versus target rail pressure.
+- Cranking rail-pressure build-up, where validated criteria exist.
+- MAP/BARO/boost consistency.
+- Boost response versus RPM and load.
+- EGR command/response and MAF/MAP correlation.
+- MAF/MAP/IAT plausibility and correlation.
+- Coolant warm-up trend.
+- Battery voltage and cranking behaviour.
+- DTC plus freeze-frame plus live-data correlation.
+- Sensor disagreement, missing data and implausible transitions.
+
+Each finding must include:
+- Observation and timestamp.
+- Supporting readings, units and freshness.
+- Applicable operating conditions (RPM, load, coolant state, etc.).
+- Rule/specification source and threshold provenance.
+- Possible explanations, clearly labelled as possibilities.
+- Missing evidence and limitations.
+- Confidence/evidence level.
+- A safe next diagnostic check.
+
+Use neutral states such as NORMAL, ATTENTION and INVESTIGATE only when the rule has a defensible basis. Do not invent OEM thresholds. If no verified limit exists, report a trend or observation without calling it abnormal. Never produce a numerical vehicle-health score until its methodology is validated and documented.
+
+### 26.7 Multi-ECU discovery and module coverage
+
+Investigate whether this exact SX4 and the current adapter expose additional modules, potentially including:
+
+- Engine ECU.
+- ABS.
+- SRS/airbag.
+- BCM/body electronics.
+- EPS, if equipped.
+- Instrument cluster.
+- Immobilizer or other modules only where safe, documented and appropriate.
+
+Requirements:
+- Start with passive observation and documented, read-only discovery.
+- Use known, sourced protocol/address information only.
+- Do not blindly scan arbitrary addresses or broadcast undocumented requests.
+- Record the responding module, address, protocol, request, raw response and timestamp.
+- Identify a module only when its identity is supported by evidence.
+- Keep per-module capabilities separate; a response from the engine ECU is not proof of access to other modules.
+- Clearly display NOT DISCOVERED, UNVERIFIED, UNSUPPORTED or COMMUNICATION FAILED as distinct states.
+- Assess Vgate adapter limitations before concluding that the vehicle lacks a capability.
+
+Do not add write services, security access, coding, adaptations, actuator tests, resets or clearing of DTCs.
+
+### 26.8 Diagnostic protocol expansion
+
+Evaluate additional services only after the actual ECU protocol and support are established.
+
+Potential investigation areas:
+- Standard OBD-II Modes 01, 02, 03, 04, 06, 07, 09 and 0A.
+- ISO-TP multi-frame handling.
+- CAN headers/addressing.
+- UDS read services.
+- KWP2000 read services.
+- K-line communication where applicable.
+
+Rules:
+- Mode 04 (clear emissions-related DTCs) remains excluded from app operation.
+- Do not issue UDS session-control, security-access, write-data, routine-control, reset, coding, programming or actuator commands.
+- Do not send undocumented Mode 22 / UDS DID / KWP identifiers.
+- Any enhanced read identifier must have a traceable source and be added to the existing explicit read-only allowlist before use.
+- Do not weaken or bypass ReadOnlyGuard.
+- Unknown protocols or ambiguous responses must fail safely.
+
+Mode 06 and enhanced services are not complete merely because a screen or menu exists; prove request, response, decoding and vehicle applicability.
+
+### 26.9 Data quality, polling and recovery
+
+Preserve the one-command-in-flight transport design and existing polling safeguards.
+
+Requirements:
+- Never poll identifiers the ECU has not advertised unless a separately approved, sourced discovery operation requires it.
+- Keep high-priority readings responsive without starving enabled lower-priority parameters.
+- Measure request duration, median/P95 latency, update interval, timeouts, NO DATA and malformed responses.
+- Use measured evidence to tune polling; do not claim a speed improvement from unit tests alone.
+- Stamp readings individually and invalidate them when stale.
+- Distinguish adapter connected, ECU responding, live data flowing, no data, stale data and disconnected.
+- Recover from ignition OFF/ON while the Vgate remains powered.
+- Recover from ECU silence, adapter power loss, Bluetooth disconnect, background/foreground transitions and tablet sleep/wake.
+- Do not consume late responses as replies to later commands.
+- Failed or missing readings must never become zero or remain displayed as current.
+- Do not let optional diagnostic scans freeze the cockpit or corrupt the live polling stream.
+
+### 26.10 Session history and reports
+
+Complete a local, privacy-conscious session history system.
+
+Capture, as appropriate:
+- Session start/end and connection events.
+- Vehicle/ECU profile used.
+- Protocol and adapter information.
+- Timestamped decoded readings and freshness.
+- Raw request/response evidence where enabled.
+- DTC and freeze-frame results.
+- Discovery and capability evidence.
+- Polling performance metrics.
+- Local health findings and rule versions.
+
+Provide a user-initiated export (at minimum JSON and CSV; PDF only if an existing supported implementation is practical). Exports must label unavailable/unverified fields and preserve units, timestamps and provenance. Do not silently turn missing data into zero. Avoid storing unnecessary personal information.
+
+### 26.11 UI requirements
+
+Keep the existing cockpit and navigation intact unless a specific approved change is needed. Add or improve these diagnostic areas using the established visual design:
+
+1. **Vehicle Profile:** vehicle details, ECU identity, VIN/calibration data and adapter/protocol status.
+2. **Advanced Live Data:** grouped diesel parameters, actual/target comparison where valid, units and freshness.
+3. **ECU Explorer:** discovered modules, identity, protocol, supported capabilities and module-specific DTC status.
+4. **Vehicle Health:** evidence-backed NORMAL / ATTENTION / INVESTIGATE findings, supporting readings and safe next checks.
+5. **Diagnostic History:** sessions, trends, DTC history and export.
+6. **Capability Catalogue:** what is documented, advertised, tested, decoded, unavailable or still unknown.
+
+UI rules:
+- Preserve landscape-first tablet layout and mobile compatibility.
+- Use real values only.
+- Show dash, NO SIGNAL, STALE, UNSUPPORTED or NOT TESTED accurately.
+- Show units and relevant timestamps.
+- Do not display a green "all clear" or claim the whole vehicle is fault-free when only the engine ECU was scanned.
+- Do not add decorative gauges for parameters that have no verified data source.
+- Do not create unsupported warning thresholds or health scores.
+
+### 26.12 Safety and privacy
+
+- Read-only operation is mandatory.
+- No coding, adaptations, resets, DTC clearing, actuator tests or programming.
+- No undocumented requests or blind module scans.
+- Do not imply that the app replaces factory warning lamps, service procedures or a qualified technician.
+- Do not encourage driver interaction with the tablet while driving.
+- Keep vehicle data local by default.
+- No telemetry upload or AI/cloud processing is in scope.
+- Preserve raw evidence where useful, but provide sensible retention/rotation and user-controlled export.
+
+### 26.13 Implementation phases and deliverables
+
+**Phase 1 — Repository audit (no source changes)**
+- Produce the current feature matrix with exact source/test references.
+- Identify existing implementation and actual gaps.
+- Identify the current main commit and CI status.
+- Recommend the smallest next implementation task.
+
+**Phase 2 — Vehicle profile and parameter evidence**
+- Consolidate the vehicle profile and parameter definitions.
+- Verify registry transitions, persistence and provenance.
+- Add tests for unknown and unsupported identifiers.
+
+**Phase 3 — Diesel data coverage**
+- Audit each requested diesel parameter against sourced documentation and actual ECU responses.
+- Implement only supported request/decoder pairs.
+- Add parser/decoder tests and evidence capture.
+
+**Phase 4 — Local vehicle health engine**
+- Implement small, independently tested rules using verified data.
+- Keep uncertain observations separate from confirmed out-of-range findings.
+- No unsupported OEM thresholds or numerical health score.
+
+**Phase 5 — Multi-ECU research and safe discovery**
+- Establish protocol and adapter feasibility.
+- Implement only documented, controlled, read-only discovery.
+- Report module-by-module evidence and limitations.
+
+**Phase 6 — History, reports and UI integration**
+- Complete session export and diagnostic history.
+- Integrate Vehicle Profile, Advanced Live Data, ECU Explorer, Vehicle Health and Capability Catalogue.
+
+**Phase 7 — Real-car validation**
+- Test with the target SX4 and Vgate adapter.
+- Capture real logs for startup, idle, warm-up, steady RPM/load, acceleration and ignition OFF/ON recovery where safe.
+- Validate decoded values against known references or independent tools.
+- Publish a verified capability matrix.
+
+### 26.14 Acceptance criteria
+
+A phase is complete only when:
+- Existing V1 behaviour is preserved.
+- Build and relevant automated tests pass.
+- New decoders/rules have positive, negative, malformed and missing-data tests.
+- No unsupported values or capabilities are fabricated.
+- Read-only enforcement remains intact and is tested.
+- Data freshness and failure states are visible and correct.
+- Vehicle-dependent claims are labelled unverified until tested on the target SX4.
+- Documentation is updated with exact implementation files, tests, commit and remaining limitations.
+
+**Claude / coding-agent execution instruction:** Read this entire requirements file and inspect the repository before editing. For the first task, perform Phase 1 only. Do not modify source files, do not implement AI, and do not begin a broad refactor. Return a concise audit report with exact paths, classes/functions, tests, current commit, verified versus unverified status, and the single smallest recommended next task. Wait for approval before implementing that task.
+
