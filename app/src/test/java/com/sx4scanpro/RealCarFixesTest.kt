@@ -151,3 +151,22 @@ class RealCarFixesTest {
         assertTrue(fired)
     }
 }
+
+class EcuScanPolicyTest {
+    private fun profile(at: Long) = EcuProfile(
+        capturedAtMs = at, appVersion = "t", adapterName = "", adapterId = "", adapterVoltage = "", protocol = "", framing = Framing.KLINE,
+        mode01Supported = emptyList(), mode09Supported = ProfileField(ScanStatus.NOT_ATTEMPTED), vin = ProfileField(ScanStatus.NOT_ATTEMPTED),
+        calIds = ProfileField(ScanStatus.NOT_ATTEMPTED), cvns = ProfileField(ScanStatus.NOT_ATTEMPTED), ecuName = ProfileField(ScanStatus.NOT_ATTEMPTED), notes = emptyList()
+    )
+
+    @Test fun scansWhenNothingIsSavedOrTheProfileIsOld() {
+        val now = 10L * 24 * 3_600_000
+        assertTrue(EcuScanPolicy.dueAtConnect(null, now))
+        assertTrue(EcuScanPolicy.dueAtConnect(profile(now - 25 * 3_600_000), now))
+        assertFalse(EcuScanPolicy.dueAtConnect(profile(now - 3_600_000), now))
+    }
+
+    @Test fun aProfileFromTheFutureMeansTheClockMovedSoItIsRescanned() {
+        assertTrue(EcuScanPolicy.dueAtConnect(profile(2_000_000L), 1_000_000L))
+    }
+}

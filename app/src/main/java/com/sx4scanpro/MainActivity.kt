@@ -1416,6 +1416,7 @@ class MainActivity : ComponentActivity() {
         config.initCommands().forEach { sendCommand(it) }
         // Facts for the session log only; a failed query here never blocks connecting.
         sessionLog.append("EVT", "connect: adapter=" + chosen.name + " " + chosen.address)
+        adapterNameForScan = chosen.name
         adapterIdText = runCatching { sendCommand("ATI", 3000) }.getOrDefault("")
         adapterVoltageText = runCatching { sendCommand("ATRV", 3000) }.getOrDefault("")
         connection.ecuInitializing()
@@ -1434,6 +1435,8 @@ class MainActivity : ComponentActivity() {
         if (!reconnecting) {
             pollingLive = false
             runCatching { requestDiscovery("connect") }
+            // Mode 09 identity (VIN, calibration IDs, ECU name) once, when none is saved yet or it is old. Polling has not started.
+            autoEcuScanAtConnect()
         }
         return (device.name ?: "Bluetooth OBD adapter") to Unit
     }
@@ -1656,23 +1659,42 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Runs the read-only identity scan and stores the profile (latest + previous). Blocking: call from a background thread. */
+    private fun performEcuScan(): EcuProfile {
+        val facts = AdapterFacts(adapterNameForScan, adapterIdText, adapterVoltageText, protocolText)
+        val profile = EcuScan.run(elmPort, facts, supportedPids, "v0.8.0 build 26", System.currentTimeMillis()) { sessionLog.append("EVT", "ecu scan: $it") }
+        val dir = ecuDir()
+        val latest = java.io.File(dir, "profile_latest.json")
+        if (latest.exists()) latest.copyTo(java.io.File(dir, "profile_previous.json"), overwrite = true)
+        latest.writeText(profile.toJson())
+        ecuPrevious = ecuProfile
+        ecuProfile = profile
+        sessionLog.append("EVT", "ecu scan done: vin=" + profile.vin.status + " cal=" + profile.calIds.status + " cvn=" + profile.cvns.status)
+        return profile
+    }
+
+    /** Once per fresh connection, when there is no saved profile or it is more than a day old (see [EcuScanPolicy]). Never decides whether the connection succeeds. */
+    private fun autoEcuScanAtConnect() {
+        if (ecuScanning || !EcuScanPolicy.dueAtConnect(ecuProfile, System.currentTimeMillis())) return
+        ecuScanning = true
+        try {
+            ecuNote = "Reading ECU identity (read-only)…"
+            performEcuScan()
+            ecuNote = "Scan finished."
+        } catch (e: Exception) {
+            sessionLog.append("EVT", "ecu scan at connect failed: " + (e.message ?: e.javaClass.simpleName))
+            ecuNote = "Scan failed: " + (e.message ?: "communication error")
+            if (socket?.isConnected != true) throw e        // a lost socket must reach the normal connection handling
+        } finally { ecuScanning = false }
+    }
+
     private fun runEcuScan(scope: kotlinx.coroutines.CoroutineScope) {
         if (ecuScanning || discoveryController.isRunning()) return
         scope.launch {
             ecuScanning = true
             ecuNote = "Scanning the ECU (read-only)…"
             try {
-                val facts = AdapterFacts(adapterNameForScan, adapterIdText, adapterVoltageText, protocolText)
-                val profile = withContext(Dispatchers.IO) {
-                    EcuScan.run(elmPort, facts, supportedPids, "v0.8.0 build 26", System.currentTimeMillis()) { sessionLog.append("EVT", "ecu scan: $it") }
-                }
-                val dir = ecuDir()
-                val latest = java.io.File(dir, "profile_latest.json")
-                if (latest.exists()) latest.copyTo(java.io.File(dir, "profile_previous.json"), overwrite = true)
-                latest.writeText(profile.toJson())
-                ecuPrevious = ecuProfile
-                ecuProfile = profile
-                sessionLog.append("EVT", "ecu scan done: vin=" + profile.vin.status + " cal=" + profile.calIds.status + " cvn=" + profile.cvns.status)
+                withContext(Dispatchers.IO) { performEcuScan() }
                 ecuNote = "Scan finished."
             } catch (e: Exception) {
                 sessionLog.append("EVT", "ecu scan failed: " + (e.message ?: e.javaClass.simpleName))
