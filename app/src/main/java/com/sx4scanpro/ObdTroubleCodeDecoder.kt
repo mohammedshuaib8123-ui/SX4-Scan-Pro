@@ -118,3 +118,14 @@ object ObdTroubleCodeDecoder {
         }
     }
 }
+
+/**
+ * Remembers which DTC modes this ECU said it does not support, so a scan does not ask again. Real-car evidence (2026-11-15): Mode 0A always
+ * answered `7F 0A 11` (service not supported) and cost a full transaction on every scan. A "response pending" (7F xx 78) is not a refusal.
+ */
+internal object DtcModePolicy {
+    fun isNotSupported(raw: String, mode: String): Boolean {
+        val line = raw.uppercase().split('\r', '\n').map { l -> l.filterNot { it.isWhitespace() } }.firstOrNull { it.startsWith("7F$mode") } ?: return false
+        return line.length >= 6 && line.substring(4, 6).let { it == "11" || it == "12" }
+    }
+}

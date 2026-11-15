@@ -32,11 +32,16 @@ internal class LinkMonitor(private val silentLimit: Int = 4, private val timeout
         }
     }
 
-    /** Next recovery action with back-off; the waits are short so readings resume quickly after ignition on. */
+    /**
+     * Next recovery action with back-off; the waits are short so readings resume quickly after ignition on.
+     * The light re-init (ATPC) goes first: in the 2026-11-15 real-car capture every one of 10 ECU dropouts (engine stopped or restarted)
+     * ignored two plain 0100 probes and was fixed by the light re-init, so probing first only added about 5 s of frozen gauges.
+     */
     fun nextRecovery(): RecoveryAction {
         val a = attempt++
         val step = when {
-            a < 2 -> RecoveryStep.PROBE
+            a == 0 -> RecoveryStep.LIGHT_REINIT
+            a == 1 -> RecoveryStep.PROBE
             a < 4 -> RecoveryStep.LIGHT_REINIT
             else -> if (a % 3 == 1) RecoveryStep.FULL_REINIT else RecoveryStep.PROBE
         }

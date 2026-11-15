@@ -139,7 +139,7 @@ private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34
 internal class TimeoutFlag { var hit = false }
 data class GaugeValue(val label: String, val value: String, val unit: String = "", val available: Boolean = true, val capturedAtMs: Long = System.currentTimeMillis())
 data class TroubleCodeResult(val category: String, val code: String)
-private data class DtcScanSummary(val codes: List<TroubleCodeResult>, val supportedModes: Int, val noDataModes: Int, val invalidModes: Int, val failedModes: Int, val partialModes: Int = 0)
+private data class DtcScanSummary(val codes: List<TroubleCodeResult>, val supportedModes: Int, val noDataModes: Int, val invalidModes: Int, val failedModes: Int, val partialModes: Int = 0, val notSupportedModes: Int = 0)
 
 class MainActivity : ComponentActivity() {
     private val permissionRequest = registerForActivityResult(
@@ -637,6 +637,10 @@ class MainActivity : ComponentActivity() {
                             "Some reply lines from the engine ECU could not be read, so this list may be incomplete. Scan again before relying on it. Other modules were not scanned."
                         summary.codes.isNotEmpty() ->
                             "Valid responses from ${summary.supportedModes}/3 engine ECU modes. BCM, ABS, airbag and other modules were not scanned."
+                        summary.codes.isEmpty() && summary.failedModes == 0 && summary.invalidModes == 0 && summary.noDataModes == 0 ->
+                            "No fault codes stored or pending in the engine ECU (${summary.supportedModes} mode(s) answered" +
+                                (if (summary.notSupportedModes > 0) ", ${summary.notSupportedModes} mode(s) not supported by this ECU" else "") +
+                                "). Other modules were not scanned."
                         summary.noDataModes == summary.supportedModes && summary.failedModes == 0 && summary.invalidModes == 0 ->
                             "No DTCs reported by the ${summary.supportedModes} responding engine ECU mode(s). Other modules were not scanned."
                         else ->
@@ -1390,6 +1394,7 @@ class MainActivity : ComponentActivity() {
     /** [reconnecting] repeats the same set-up after a lost link: same adapter init and header/protocol restore, no discovery, same capture session. */
     private fun connectAndRead(reconnecting: Boolean = false): Pair<String, Unit> {
         if (!reconnecting) captureSession = "S" + System.currentTimeMillis()
+        modesKnownUnsupported.clear()
         if (android.os.Build.VERSION.SDK_INT >= 31 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
         ) throw SecurityException("Bluetooth permission not granted")
@@ -1567,7 +1572,12 @@ class MainActivity : ComponentActivity() {
             when (val ev = poller.step(System.currentTimeMillis())) {
                 is PollEvent.Recovery -> { sessionLog.append("EVT", "ECU recovery " + ev.step + (if (ev.recovered) " succeeded" else " no answer")); return ev }
                 is PollEvent.Idle -> return null
-                is PollEvent.Polled -> {}
+                is PollEvent.Polled -> {
+                    // Real replies feed the capability registry (VERIFIED / DECODED); the file is written rarely, see RegistrySaveGate.
+                    liveFeed.onPolled(ev.pid, ev.reading, ev.kind)
+                    if (liveFeed.takeDirty()) registrySaveGate.markDirty()
+                    if (registrySaveGate.shouldSave(System.currentTimeMillis())) flushRegistry()
+                }
             }
             if (poller.monitor.state != LinkState.COMMUNICATING) return null
         }
@@ -1575,6 +1585,17 @@ class MainActivity : ComponentActivity() {
     }
 
     private val registryStore by lazy { RegistryStore(java.io.File(filesDir, "registry/parameters.json")) }
+    private val liveFeed = LiveRegistryFeed({ parameterRegistry })
+    private val registrySaveGate = RegistrySaveGate()
+
+    /** Writes the registry now if a live state change is waiting to be saved. Safe to call from any thread, cheap when nothing changed. */
+    @Synchronized
+    private fun flushRegistry() {
+        if (!registrySaveGate.hasPending()) return
+        val ok = runCatching { registryStore.save(parameterRegistry) }.getOrDefault(false)
+        registrySaveGate.saved(System.currentTimeMillis())
+        if (!ok) sessionLog.append("EVT", "parameter registry could not be saved")
+    }
     /** Persisted capability states (P2). Loaded at start; nothing writes to it until the discovery phase. */
     private var parameterRegistry: ParameterRegistry = ParameterRegistry.withBuiltInDefinitions()
 
@@ -1791,6 +1812,9 @@ class MainActivity : ComponentActivity() {
         return core + extras
     }
 
+    /** DTC modes the ECU refused with "service not supported" on this connection (cleared at every connect). */
+    private val modesKnownUnsupported: MutableSet<String> = java.util.Collections.synchronizedSet(mutableSetOf())
+
     // DTC modes are one transaction: do not interleave them with live PID polling.
     @Synchronized
     private fun readTroubleCodes(): DtcScanSummary {
@@ -1800,8 +1824,10 @@ class MainActivity : ComponentActivity() {
         var invalid = 0
         var failed = 0
         var partial = 0
+        var notSupported = 0
         val codes = mutableListOf<TroubleCodeResult>()
         for ((mode, category) in modes) {
+            if (mode in modesKnownUnsupported) { notSupported++; continue }
             val raw = try {
                 sendCommand(mode, 10000, keepLines = true)
             } catch (e: IOException) {
@@ -1812,6 +1838,12 @@ class MainActivity : ComponentActivity() {
             // Line-aware: more than three codes arrive as several frames, and each is checked
             // with the same strict rules as before. Unreadable lines are counted, never dropped.
             val read = ObdTroubleCodeDecoder.decodeResponse(raw, mode, Framing.fromProtocolText(protocolText))
+            if (read.validFrames == 0 && DtcModePolicy.isNotSupported(raw, mode)) {
+                modesKnownUnsupported += mode
+                sessionLog.append("EVT", "DTC mode $mode is not supported by this ECU (negative response); not asked again on this connection")
+                notSupported++
+                continue
+            }
             when {
                 read.validFrames > 0 -> {
                     supported++
@@ -1822,7 +1854,7 @@ class MainActivity : ComponentActivity() {
                 else -> invalid++
             }
         }
-        return DtcScanSummary(codes.distinct(), supported, noData, invalid, failed, partial)
+        return DtcScanSummary(codes.distinct(), supported, noData, invalid, failed, partial, notSupported)
     }
 
     private fun decodeTroubleCodes(response: String, mode: String): List<String> =
@@ -2005,6 +2037,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun endTrip() {
+        flushRegistry()
         try { tripWriter?.flush(); tripWriter?.close() } catch (_: Exception) { }
         tripWriter = null
         // Fold this trip's distance into the lifetime tracked distance exactly once.

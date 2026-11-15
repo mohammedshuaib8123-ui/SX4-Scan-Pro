@@ -10,15 +10,19 @@ internal data class AlertLimits(
     val boostMaxKpa: Int? = null
 ) {
     fun rules(): List<WarningRule> = buildList {
-        coolantMaxC?.let { add(WarningRule("coolant-limit", "coolant", WarningSeverity.CAUTION, it.toDouble(), it - 5.0)) }
-        rpmMax?.let { add(WarningRule("rpm-limit", "rpm", WarningSeverity.CAUTION, it.toDouble(), it - 200.0)) }
-        boostMaxKpa?.let { add(WarningRule("boost-limit", "boost", WarningSeverity.CAUTION, it.toDouble(), it - 10.0)) }
+        // Freshness windows follow how often each sensor can really be read on the K-line (see PollPlan): coolant is slow, RPM is fast.
+        coolantMaxC?.let { add(WarningRule("coolant-limit", "coolant", WarningSeverity.CAUTION, it.toDouble(), it - 5.0, maxAgeMs = COOLANT_MAX_AGE_MS)) }
+        rpmMax?.let { add(WarningRule("rpm-limit", "rpm", WarningSeverity.CAUTION, it.toDouble(), it - 200.0, maxAgeMs = RPM_MAX_AGE_MS)) }
+        boostMaxKpa?.let { add(WarningRule("boost-limit", "boost", WarningSeverity.CAUTION, it.toDouble(), it - 10.0, maxAgeMs = BOOST_MAX_AGE_MS)) }
     }
 
     companion object {
         val COOLANT = 80..130
         val RPM = 2000..6000
         val BOOST = 50..300
+        const val COOLANT_MAX_AGE_MS = 20_000L
+        const val RPM_MAX_AGE_MS = 5_000L
+        const val BOOST_MAX_AGE_MS = 8_000L
         const val COOLANT_START = 100
         const val RPM_START = 4000
         const val BOOST_START = 150
