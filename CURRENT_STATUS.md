@@ -22,7 +22,7 @@ New feature: **Data Check** (Health/Trip tab, top card) and **Fuel Economy Log**
 - `FuelLog` (pure) + `DataCheckUi.kt`: the ECU does not support fuel level (2F) or fuel rate (5E), so fuel use cannot be measured by OBD. The owner enters odometer + litres at each full tank; tank-to-tank km/L is compared with the usual (median of earlier tanks, needs 3 tanks) and warns at 15 % worse (alert at 30 %).
 - Wiring: `MainActivity.runDataCheck` (once a second while the ECU answers, only fresh readings), `dataCheckBanner`, `saveBaselines`, `addFillUp`.
 
-Verification: 537 pure-JVM tests pass locally (harness: `/home/claude/tools/test.sh`, not in the repo). Android/Compose files (`MainActivity.kt`, `DataCheckUi.kt`, `BluetoothAccessTest`) are compiled only by the `Branch check` workflow on push; see the CI note at the end of this section.
+Verification: 537 pure-JVM tests pass locally (harness: `/home/claude/tools/test.sh`, not in the repo). Android/Compose files (`MainActivity.kt`, `DataCheckUi.kt`, `BluetoothAccessTest`) are compiled only by the `Branch check` workflow on push; CI result: workflow "Branch check" run 43748410951 on 78ac9de: `testDebugUnitTest` and `assembleDebug` succeeded (BUILD SUCCESSFUL), debug APK `SX4-Scan-Pro-debug` attached to that run.
 
 Still to verify on the car/tablet: re-init-first recovery time, the new poll rates (read `PERF` lines), standby reconnect when the car is started later, automatic Mode 09 scan (VIN/calibration IDs not yet seen from this ECU), whether the data-check thresholds stay quiet on a healthy drive and speak up when something is really wrong, and that the data-check card looks right on the tablet.
 
