@@ -40,6 +40,14 @@ internal class TripStats {
         lastFuel = fuelLitresPerHour
     }
 
+    /** Forget the last sample so the next one starts a new segment; nothing is integrated across the break. */
+    fun breakContinuity() { lastT = null; lastSpeed = null; lastFuel = null }
+
+    /** Totals only. The last-sample memory is deliberately not saved, so a restore can never bridge a gap. */
+    fun totals() = Totals(distanceKm, movingMs, dataMs, maxSpeedKmh, fuelLitres, fuelSeen)
+
+    data class Totals(val distanceKm: Double, val movingMs: Long, val dataMs: Long, val maxSpeedKmh: Double, val fuelLitres: Double, val fuelSeen: Boolean)
+
     /** Average speed while moving, or null before the car has moved. */
     fun averageMovingKmh(): Double? = if (movingMs > 0) distanceKm / (movingMs / 3_600_000.0) else null
 
@@ -47,6 +55,10 @@ internal class TripStats {
     fun litresPer100Km(): Double? = if (fuelSeen && distanceKm >= 0.5) fuelLitres / distanceKm * 100.0 else null
 
     companion object {
+        fun restore(t: Totals): TripStats = TripStats().also {
+            it.distanceKm = t.distanceKm; it.movingMs = t.movingMs; it.dataMs = t.dataMs
+            it.maxSpeedKmh = t.maxSpeedKmh; it.fuelLitres = t.fuelLitres; it.fuelSeen = t.fuelSeen
+        }
         const val MAX_GAP_MS = 10_000L
         const val MOVING_KMH = 1.0
 

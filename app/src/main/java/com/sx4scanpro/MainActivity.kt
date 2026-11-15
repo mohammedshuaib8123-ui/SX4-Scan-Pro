@@ -175,7 +175,10 @@ class MainActivity : ComponentActivity() {
             )
         }
     }
-    private var trip by mutableStateOf(TripStats())
+    private val tripSession = TripSession()
+    private val trip: TripStats get() = tripSession.stats
+    private var lastTripPersistMs = 0L
+    private var lastTripNotice = ""
     /** Gauge keys ("coolant", "rpm", "boost") currently above an owner-set limit. */
     private var alertSensors by mutableStateOf(emptySet<String>())
     private var welcomeSettings by mutableStateOf(WelcomeSettings())
@@ -308,6 +311,11 @@ class MainActivity : ComponentActivity() {
         )
         extraPids = PidCatalog.parseSelection(prefs.getString("extra_pids", null))
         trackedKm = prefs.getFloat("tracked_km", 0f).toDouble()
+        // A trip saved before the process died comes back paused; it resumes only when live data returns.
+        TripCodec.decode(prefs.getString("trip_active", null))?.let { tripSession.restore(it); tripStartMs = it.startMs }
+        TripService.onStopRequested = { runOnUiThread { endTrip() } }
+        if (android.os.Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 9101)
         driveMode = DriveMode.parse(prefs.getString("drive_mode", null))
         welcomeSettings = WelcomeSettings(
             durationSec = WelcomeSettings.clampDuration(prefs.getFloat("welcome_duration", WelcomeSettings.DEFAULT_DURATION_SEC)),
@@ -423,6 +431,7 @@ class MainActivity : ComponentActivity() {
             while (true) {
                 delay(1000)
                 nowMs = System.currentTimeMillis()
+                tripClock(nowMs)
             }
         }
         // Plugging or unplugging the phone updates the Head Unit checks immediately.
@@ -442,8 +451,8 @@ class MainActivity : ComponentActivity() {
         // Coming back from installing the receiver, or opening the tab, re-checks everything.
         LaunchedEffect(selectedTab) { if (selectedTab == 2) readiness = computeHeadUnitReadiness() }
 
-        fun disconnect() {
-            endTrip()
+        fun disconnect(stopTrip: Boolean = true) {
+            if (stopTrip) endTrip()
             userInitiatedDisconnect = true
             closeSocket()
             connection.userDisconnected()
@@ -460,7 +469,7 @@ class MainActivity : ComponentActivity() {
             // One connection or recovery at a time: a second tap must not open a second socket.
             if (connection.snapshot.busy || recovery.isRecovering()) return
             scope.launch {
-                disconnect()
+                disconnect(stopTrip = false)
                 userInitiatedDisconnect = false
                 pollStalled = false
                 lastDiscovery = null
@@ -585,7 +594,7 @@ class MainActivity : ComponentActivity() {
                         while (waited < pace && isActive && !userInitiatedDisconnect) { val step = minOf(250L, pace - waited); delay(step); waited += step }
                     }
                     if (recoveryFailed) {
-                        endTrip()
+                        holdTrip()
                         closeSocket()
                         status = connection.snapshot.reason.ifBlank { "Connection lost" }
                         alertSensors = emptySet()
@@ -597,14 +606,14 @@ class MainActivity : ComponentActivity() {
                         gauges = gauges.map { it.copy(value = "--", available = false) }
                     }
                 } catch (e: SecurityException) {
-                    endTrip()
+                    holdTrip()
                     closeSocket()
                     connection.connectFailed(FailureKind.INITIALIZATION_INTERRUPTED, "Bluetooth permission is required")
                     status = "Permission required"
                     alertSensors = emptySet()
                 } catch (e: Exception) {
                     val kind = FailureClassifier.fromException(e, connection.snapshot.state)
-                    endTrip()
+                    holdTrip()
                     closeSocket()
                     alertSensors = emptySet()
                     // Tapping DISCONNECT closes the socket mid-read; that is not a failure.
@@ -806,7 +815,7 @@ class MainActivity : ComponentActivity() {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text("TRIP COMPUTER", color = cyan, style = MaterialTheme.typography.titleMedium)
-                                        val elapsed = if (tripStartMs > 0L && connected) nowMs - tripStartMs else 0L
+                                        val elapsed = if (tripSession.hasTrip()) nowMs - tripSession.startMs else 0L
                                         val avg = trip.averageMovingKmh()
                                         val l100 = trip.litresPer100Km()
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -822,6 +831,10 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             }
                                         }
+                                        if (tripSession.hasTrip()) Text(
+                                            if (tripSession.phase == TripPhase.RECORDING) "Recording" else tripSession.pause?.text.orEmpty(),
+                                            color = if (tripSession.phase == TripPhase.RECORDING) cyan else Color(0xFFFFB84D), fontSize = 14.sp, fontWeight = FontWeight.Bold
+                                        )
                                         Text(
                                             if (l100 != null) String.format(java.util.Locale.US, "Fuel: %.1f L/100 km (from the ECU's fuel-rate reading)", l100)
                                             else "Fuel use: not available. It needs the ECU to report fuel rate (tick Engine fuel rate in Settings); a diesel's MAF reading cannot give a reliable figure.",
@@ -829,7 +842,8 @@ class MainActivity : ComponentActivity() {
                                         )
                                         Text("Distance is integrated from real speed readings only. Gaps in the data are skipped, never filled in. Each poll is also saved to a CSV file on this tablet.", color = muted, fontSize = 13.sp)
                                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                            OutlinedButton(onClick = { startTrip() }, enabled = connected, modifier = Modifier.weight(1f)) { Text("NEW TRIP") }
+                                            OutlinedButton(onClick = { startTrip(forceNew = true) }, enabled = connected, modifier = Modifier.weight(1f)) { Text("NEW TRIP") }
+                                            OutlinedButton(onClick = { endTrip() }, enabled = tripSession.hasTrip(), modifier = Modifier.weight(1f)) { Text("STOP TRIP") }
                                             Button(onClick = { shareLastTrip() }, modifier = Modifier.weight(1f)) { Text("SHARE TRIP CSV") }
                                             OutlinedButton(onClick = { deleteSavedTrips() }, modifier = Modifier.weight(1f)) { Text("DELETE SAVED") }
                                         }
@@ -1964,30 +1978,72 @@ class MainActivity : ComponentActivity() {
         window.attributes = lp
     }
 
-    private fun startTrip() {
-        endTrip()
-        trip = TripStats()
-        tripStartMs = System.currentTimeMillis()
-        tripHeaderWritten = false
-        tripNote = ""
-        tripTick++
+    private fun tripDir() = java.io.File(filesDir, "trips").apply { mkdirs() }
+
+    private fun openTripWriter(file: java.io.File) {
         try {
-            val dir = java.io.File(filesDir, "trips").apply { mkdirs() }
-            val name = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
-            val file = java.io.File(dir, "trip-$name.csv")
             tripFile = file
-            tripWriter = file.bufferedWriter()
+            tripHeaderWritten = file.exists() && file.length() > 0
+            tripWriter = java.io.FileWriter(file, true).buffered()
         } catch (e: Exception) {
             tripWriter = null
             tripNote = "Trip recording could not start: " + (e.message ?: "storage error")
         }
     }
 
+    /** Starts a trip, or on a reconnect continues the held one (same file, totals kept, no gap bridged). */
+    private fun startTrip(forceNew: Boolean = false) {
+        val now = System.currentTimeMillis()
+        tripNote = ""
+        if (!forceNew && tripSession.hasTrip()) {
+            tripSession.resume(now)
+            openTripWriter(java.io.File(tripDir(), tripSession.fileName))
+        } else {
+            endTrip()
+            val name = "trip-" + java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date()) + ".csv"
+            tripSession.begin(now, name)
+            openTripWriter(java.io.File(tripDir(), name))
+        }
+        tripStartMs = tripSession.startMs
+        tripTick++
+        persistTrip(now)
+        tripClock(now)
+    }
+
+    private fun persistTrip(now: Long) {
+        lastTripPersistMs = now
+        val snap = tripSession.snapshot(now)
+        if (snap == null) prefs.edit().remove("trip_active").apply()
+        else prefs.edit().putString("trip_active", TripCodec.encode(snap)).apply()
+    }
+
+    /** Once a second: pause a trip whose samples stopped, keep the notification truthful, save progress. */
+    private fun tripClock(now: Long) {
+        if (!tripSession.hasTrip()) return
+        val before = tripSession.phase
+        tripSession.tick(now)
+        if (tripSession.phase != before) tripTick++
+        val text = if (tripSession.phase == TripPhase.RECORDING)
+            String.format(java.util.Locale.US, "Recording • %.2f km", tripSession.stats.distanceKm)
+        else tripSession.pause?.text.orEmpty()
+        if (text != lastTripNotice) { lastTripNotice = text; TripService.show(this, text) }
+        if (now - lastTripPersistMs >= 5_000L || tripSession.phase != before) persistTrip(now)
+    }
+
+    /** Link lost or app closing: keep the trip (paused, saved), release the file, stop nothing the driver didn't ask to stop. */
+    private fun holdTrip() {
+        try { tripWriter?.flush(); tripWriter?.close() } catch (_: Exception) { }
+        tripWriter = null
+        if (tripSession.hasTrip()) { tripSession.tick(Long.MAX_VALUE / 2); persistTrip(System.currentTimeMillis()); tripTick++ }
+    }
+
     private fun recordTrip(list: List<GaugeValue>) {
         val now = System.currentTimeMillis()
         fun num(label: String) = list.firstOrNull { it.label == label }?.takeIf { it.available }?.value?.toDoubleOrNull()
-        trip.add(now, num("Vehicle speed"), num("Engine fuel rate"))
+        val sp = list.firstOrNull { it.label == "Vehicle speed" }?.takeIf { it.available }
+        tripSession.onSample(now, sp?.value?.toDoubleOrNull(), sp?.capturedAtMs, num("Engine fuel rate"), connection.snapshot.ecuAvailable)
         tripTick++
+        tripClock(now)
         val w = tripWriter ?: return
         try {
             if (!tripHeaderWritten) {
@@ -2004,15 +2060,22 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** The driver's Stop: closes the file, folds distance into the lifetime total once, clears the saved session. */
     private fun endTrip() {
         try { tripWriter?.flush(); tripWriter?.close() } catch (_: Exception) { }
         tripWriter = null
-        // Fold this trip's distance into the lifetime tracked distance exactly once.
-        if (trip.distanceKm > 0.0) {
-            trackedKm += trip.distanceKm
-            prefs.edit().putFloat("tracked_km", trackedKm.toFloat()).apply()
-            trip = TripStats()
+        if (tripSession.hasTrip()) {
+            val done = tripSession.stop()
+            if (done.distanceKm > 0.0) {
+                trackedKm += done.distanceKm
+                prefs.edit().putFloat("tracked_km", trackedKm.toFloat()).apply()
+            }
         }
+        prefs.edit().remove("trip_active").apply()
+        tripStartMs = 0L
+        lastTripNotice = ""
+        TripService.hide(this)
+        tripTick++
     }
 
     private fun savedTrips(): List<java.io.File> =
@@ -2266,7 +2329,9 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         runCatching { unregisterReceiver(btReceiver) }
         runCatching { unregisterReceiver(sessionReceiver) }
-        endTrip()
+        holdTrip()
+        TripService.onStopRequested = null
+        TripService.hide(this)
         runCatching { if (BluetoothAdapter.getDefaultAdapter()?.isDiscovering == true) BluetoothAdapter.getDefaultAdapter()?.cancelDiscovery() }
         closeSocket()
         mainHandler.removeCallbacksAndMessages(null)
