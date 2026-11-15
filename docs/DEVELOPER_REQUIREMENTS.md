@@ -1381,6 +1381,14 @@ The user reports that Trip Computer pauses when switching to another app.
 - Test foreground operation, app switching, screen off/on, rotation/recreation, Bluetooth loss/reconnect, ignition OFF/ON with adapter powered, user stop and process recreation.
 - Respect Android battery and background execution policies; do not promise uninterrupted recording when the OS or hardware makes it impossible.
 
+**Status (branch `claude/v1-trip-background`, code complete, CI build and unit tests green; NOT validated on the real SX4):**
+
+- Done in code: `TripService` (foreground service, `connectedDevice` type, persistent notification with a *Stop trip* action; manifest declares only FOREGROUND_SERVICE, FOREGROUND_SERVICE_CONNECTED_DEVICE, POST_NOTIFICATIONS); `TripSession` state machine (accumulates only fresh speed from an answering ECU, otherwise PAUSED with a visible reason, the next sample starts a new segment so no gap is bridged, no zero is invented); `TripCodec` persisted snapshot (totals only, restored as PAUSED "app restarted" after process death, corrupt records rejected); link loss/recovery failure/app close *hold* the trip instead of ending it, and a reconnect continues the same trip and CSV file; Stop (button or notification) is the only action that ends the trip and folds distance into the lifetime total once. Trip tab shows Recording/paused reason and a STOP TRIP button.
+- Tests: `TripSessionTest` (fresh/stale/missing speed, adapter loss and reconnect without bridging, tick pause, stop, snapshot round trip, corrupt snapshots, resume).
+- Partial / known limitation: the OBD poll loop is still owned by `MainActivity`'s coroutine, not moved into the service. The foreground service keeps the process alive during app switching and screen off, but if the Activity itself is destroyed (swiped from recents) the session closes, the trip is saved paused and resumes on the next Connect. A full move of the connection into the service remains open and would touch the connection code shared with other workstreams.
+- Single serialized adapter pipeline unchanged (service issues no commands).
+- Still requires real-car validation on the SX4: app switching, screen off/on, rotation, adapter loss/reconnect, ignition OFF/ON, notification Stop, process kill, and Android 13+ notification permission and foreground-service behaviour on the owner's tablet.
+
 #### 26.16.5 Complete the visible diagnostic surface; no placeholder menus
 
 - Review all visible options across ECU Info, ECU Explorer, Capability Catalogue, Vehicle Health, Freeze Frame, DTC scan, Advanced Live Data, Trip Computer and Diagnostic History.
