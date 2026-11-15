@@ -1303,3 +1303,113 @@ Required behaviour:
 
 **Audit priority:** Include this defect explicitly in Phase 1's feature matrix and recommend a focused freeze-frame fix as a candidate early task. Do not silently expand the scope into unrelated refactoring.
 
+
+
+### 26.16 V1 completion mandate: no dead diagnostic options or placeholder results
+
+**User's product decision:** Build the complete V1 scope described in Sections 26.1–26.15, together with the additional defects and requirements below. This is an implementation programme, not another documentation-only audit. After the initial source audit and a proposed safe sequence, implement the approved work in small, testable phases until the requested functions are genuinely usable.
+
+The user's explicit acceptance requirement is that the shipped app must not expose dead buttons, non-functional menu options, dummy scan results, or routine UI states such as "NOT ATTEMPTED" and "NOT SCANNED" as if they were useful feature outcomes.
+
+This does **not** authorize fabricated ECU capabilities or unsafe requests. If a capability cannot be performed on this vehicle/adapter, the app must explain the concrete reason and avoid presenting it as an available action. Do not disguise missing implementation as an ECU limitation. Distinguish:
+- **Not implemented by the app:** a development gap; complete it or remove/hide the non-functional entry until implemented.
+- **Not applicable to this vehicle:** supported by vehicle/ECU configuration evidence.
+- **ECU did not support / rejected the documented request:** show the actual response and explain it.
+- **Communication failure / timeout:** the operation was attempted but no usable response arrived; offer retry/recovery.
+- **Successful result:** show decoded ECU data with source, units and timestamp.
+
+Do not show "NOT ATTEMPTED" or "NOT SCANNED" as terminal feature results in the user-facing production UI. Those may remain internal diagnostic/log states where useful for engineering. Every visible action must either execute a real, safe operation or be absent from the user-facing UI until it can.
+
+#### 26.16.1 ECU Info must become a working diagnostic information centre
+
+The current Mode 09 profile scan is a narrow identity read, not a complete ECU information feature. The user wants the options presented inside ECU Info to work.
+
+Required work:
+- Inventory every visible ECU Info option, button, row, menu and export action; map each to its implementation and actual request/response.
+- Keep working VIN, calibration ID, CVN and ECU name reads, but verify Mode 09 support parsing and each individual request.
+- Do not make every request conditional solely on a potentially incomplete/incorrect support bitmap if a separately sourced, safe read-only request strategy can establish support. Any direct probe must be documented, bounded, read-only and tested; do not blindly send arbitrary identifiers.
+- Add further genuinely useful ECU identity/version/protocol information only when request identifiers and decoding are sourced for the actual protocol/vehicle.
+- Where a user-selectable item is shown, tapping it must run the relevant read-only operation, show progress, capture raw response, decode the result, and show a meaningful result or precise failure explanation.
+- Make refresh/retry work. Do not show stale cached data as newly scanned; label cached data with its capture time.
+- Make JSON/CSV/PDF export controls functional and ensure exports reflect the latest captured evidence.
+- If an option cannot safely be implemented or is not supported by this vehicle, remove/hide it from the actionable list or show a clear, evidence-based explanation; never leave a dead control or a generic "not attempted" result.
+- Add tests for supported, valid-zero where applicable, negative response, no data, timeout, malformed and partial response paths.
+- Verify every visible ECU Info action on the target SX4 with the Vgate adapter where feasible.
+
+#### 26.16.2 Engine scan and full-vehicle scan must be honest and operational
+
+- Keep standard emissions DTC services (Mode 03 stored, Mode 07 pending, Mode 0A permanent) clearly identified as engine/emissions OBD checks; they are not a full vehicle scan.
+- Build a genuine full-vehicle scan workflow only for modules that can be safely and reliably addressed using documented protocol/address information and the available adapter.
+- The workflow must attempt each configured, approved module and supported read-only diagnostic operation, collect actual responses and produce a module-by-module report.
+- Investigate ECM, ABS, SRS, BCM, EPS, cluster and other modules only where applicable to the exact vehicle and supported by sourced addressing/protocol evidence.
+- Do not claim a module was scanned when no request was sent. Do not report a full-vehicle scan complete when only ECM emissions services were queried.
+- Do not blindly scan arbitrary CAN/K-line addresses, issue undocumented requests or weaken ReadOnlyGuard.
+- If the Vgate adapter cannot access a module/protocol, explain the specific adapter/protocol limitation and do not imply the vehicle itself lacks that module.
+- Provide a useful engine-only scan and clearly named full-vehicle scan entry points; both must execute real work and show what was queried.
+
+#### 26.16.3 Vehicle Health Report must become an actual evidence-based assessment
+
+The current report largely prints available live gauges and can include irrelevant or misleading readings such as RPM = 0. Replace this with a report-specific data selection and deterministic assessment layer.
+
+Requirements:
+- Define report sections for connection/session quality, engine operating state, starting/cranking, fuel/rail pressure, air/boost, EGR, cooling, electrical/charging, DTC/freeze-frame and maintenance context.
+- Include only relevant readings with valid values, correct units, valid timestamps and acceptable freshness.
+- Do not treat RPM=0 as proof of a fault or normal condition without context. Distinguish engine off, cranking, running, stale, missing and invalid states.
+- Never convert null, unavailable, unsupported, stale or malformed readings to zero.
+- Do not populate fields just because a gauge exists. Each field must have a defined reason for inclusion and a valid source.
+- Compare actual versus target only when both values are available, verified, time-aligned and have a documented interpretation.
+- Findings must be generated by tested deterministic rules from Section 26.6; otherwise report "insufficient evidence" in plain language rather than inventing a diagnosis.
+- Include evidence, timestamps, units, operating conditions, limitations and safe next checks.
+- Separate ECU-observed facts from inferred possibilities and maintenance reminders.
+- A report must remain useful when only some data is available; explicitly state which systems/data were actually evaluated.
+- Add unit tests for engine-off, cranking, running, stale, missing, malformed, valid-zero and mixed-availability inputs.
+
+#### 26.16.4 Trip Computer must survive app switching and backgrounding
+
+The user reports that Trip Computer pauses when switching to another app.
+
+- Move trip sampling and OBD session ownership out of a Compose-only/Activity-bound coroutine into an appropriate lifecycle-independent connection/recording component.
+- Investigate and implement a compliant Android foreground service for an active user-started trip/OBD session where required by the target Android versions and Bluetooth connected-device foreground-service rules.
+- Declare only the required manifest permissions/service types and handle runtime permission and foreground-service start restrictions correctly.
+- Show a persistent, understandable notification while an active background trip/OBD session is running, with a user-accessible stop action.
+- Maintain one serialized adapter command pipeline; the service and UI must never issue concurrent ELM commands.
+- Keep elapsed trip time and last known trip state across app switching, screen off/on and Activity recreation. Persist enough state to recover after process recreation where feasible.
+- Continue distance/fuel integration only from valid, fresh samples. Do not bridge long data gaps or invent distance/fuel while disconnected.
+- On adapter loss, ignition off/on or ECU silence, mark sampling paused/degraded, attempt bounded recovery and resume only after valid responses return.
+- When Android or the adapter prevents background acquisition, show a clear paused reason rather than silently freezing the trip.
+- Keep UI state synchronized with the service; returning to the app must not reset or fork the active trip.
+- Test foreground operation, app switching, screen off/on, rotation/recreation, Bluetooth loss/reconnect, ignition OFF/ON with adapter powered, user stop and process recreation.
+- Respect Android battery and background execution policies; do not promise uninterrupted recording when the OS or hardware makes it impossible.
+
+#### 26.16.5 Complete the visible diagnostic surface; no placeholder menus
+
+- Review all visible options across ECU Info, ECU Explorer, Capability Catalogue, Vehicle Health, Freeze Frame, DTC scan, Advanced Live Data, Trip Computer and Diagnostic History.
+- Every visible action must have a working end-to-end path: click -> operation -> response -> decoding/assessment -> state update -> useful result/log.
+- Remove/hide any control that has no implemented safe operation until it is ready. Do not retain a decorative button that merely changes a note or displays hardcoded sample data.
+- Do not use dummy ECU responses, hardcoded scan findings, fake values, default-zero substitutions or stale cached values presented as live.
+- For functions that are genuinely blocked by ECU/vehicle/adapter limitations, present a user-readable reason and any safe alternative action (for example, retry connection, run engine OBD check, or export session evidence).
+- Keep engineering statuses such as NOT_ATTEMPTED/NOT_SCANNED in logs or internal models if needed, but do not make them the normal visible result of a user-invoked operation.
+- Make progress, success, partial success, failure, retry and cancellation states consistent across the app.
+
+#### 26.16.6 Implementation and release approach
+
+This completion mandate supersedes the earlier instruction to stop after a Phase 1 audit. Phase 1 remains a short, necessary baseline step, but the goal is implementation through completion.
+
+1. Re-read Sections 26.1–26.16 and inspect the current main branch and tests.
+2. Produce a concise source-backed implementation map and dependency order; do not spend a separate long cycle re-auditing already documented issues.
+3. Implement in small coherent phases, prioritizing foundational data correctness and real ECU operation before UI polish:
+   - truthful request/response/state handling and freeze-frame fix;
+   - working ECU Info actions and evidence capture;
+   - engine scan correctness and safely scoped module discovery/full-vehicle scan;
+   - report-specific data validation and deterministic vehicle health;
+   - lifecycle-independent trip/OBD session and background recording;
+   - history/export and final UI cleanup.
+4. Before each phase, state exact files and intended changes. Avoid broad refactors unrelated to acceptance criteria.
+5. Run relevant unit tests and build/CI checks after each phase; add regression tests for every reported defect.
+6. Keep the app installable and usable between phases. Do not remove existing working V1 cockpit, live data, connection, logging or trip functionality.
+7. Validate real-vehicle capabilities separately from unit-test success. Do not label vehicle-dependent features verified until tested on the target SX4.
+8. Maintain a checklist of every visible action and its verified end-to-end behaviour. No unfinished action may be presented as a working production feature.
+9. Update this requirements file and developer handover with completed work, exact commit, tests, build result, target-car validation and remaining evidence-based limitations.
+10. Deliver a final V1 release candidate only after the acceptance criteria in Sections 26.14 and 26.16 are met.
+
+**Important:** The user wants implementation, not another requirements-only update. Do not stop after explaining that a feature is currently unimplemented. Do not claim completion without code, tests and evidence. Preserve the strict read-only safety boundary and do not introduce AI/cloud features.
