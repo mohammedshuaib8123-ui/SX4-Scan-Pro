@@ -11,7 +11,7 @@ For anyone (or any later Claude session) continuing this work.
 - "Stop hook: unpushed commits" messages can be false; verify with `git ls-remote origin <branch>`.
 
 ## How to verify
-1. Pure-Kotlin files (no `android`/`androidx` imports) compile and test locally: `/home/claude/kc.sh -cp <kotlin-stdlib,junit-4.13.2,hamcrest-core-1.3 jars from /opt/gradle-8.14.3/lib> -d out <files>`, then run `org.junit.runner.JUnitCore`.
+1. Pure-Kotlin files (no `android`/`androidx`/coroutines imports) compile and test locally with the Kotlin compiler bundled in Gradle (`/opt/gradle-8.14.3/lib/kotlin-compiler-embeddable-2.0.21.jar` plus stdlib, script-runtime, reflect, daemon-embeddable, trove4j, annotations, coroutines jars; run `org.jetbrains.kotlin.cli.jvm.K2JVMCompiler -no-stdlib -no-reflect`). Compile every pure main file together with every test that compiles against them (tests that need Android classes, such as `BluetoothAccessTest`, are left out), then run `org.junit.runner.JUnitCore` with junit-4.13.2 and hamcrest-core-1.3. Latest local run: 537 tests, all passing. The helper scripts lived outside the repo and are re-creatable from this paragraph.
 2. Android/Compose files cannot be built in the sandbox (Maven Central/Google Maven blocked). Push to a `claude/**` branch; `.github/workflows/branch-check.yml` runs `gradle testDebugUnitTest assembleDebug`, uploads the debug APK, and publishes the log to the `ci-log` branch (`summary.txt`, `errors.txt`, `build.log`). Poller script: scratchpad `ci.sh`.
 3. A build is not "ready" until CI is green.
 
@@ -55,3 +55,16 @@ Release candidate: `claude/v1-final-integration` @ fb37ae8 = `main` 4dbff6a + OB
 ## P6 live-data performance (2026-11-11)
 `PollScheduler` (priority, stretch, starvation guard), `PollPlan.priorityOf`, `PidCapabilities.park`, `PollPerformance.kt` (`PollMetrics`, `AdaptivePacer`), `LivePoller` (metrics, pacer, re-entrancy guard), `MainActivity` (60 s `PERF` log block). Tests: `PollPerformanceTest.kt`. Pacing only slows, never below plan. Real-car performance still to be measured. Session export remains a separate outstanding requirement.
 P6 review fix: `PidCapabilities.clearTemporaryState()` is called with `pacer.reset()` after a successful recovery probe. Verified totals: 356 tests, 33 in `PollPerformanceTest.kt`. Outstanding: real-car validation of P5/P6, session export, ECU Explorer, PR #5 decision, BCM/EPS feasibility and verified multi-module discovery.
+
+## Real-car session 2026-11-15 (this branch: `claude/v1-realcar-fixes-and-sanity-monitor`)
+Read `docs/REAL_CAR_SESSION_2026-11-15.md` first (observations, findings table with files, decisions). What changed and where:
+- `LiveEvidence.kt` (new): `LiveRegistryFeed` feeds live replies to `ParameterRegistry`; `RegistrySaveGate` throttles disk writes. Hooked in `MainActivity.runPollSlice` (`liveFeed`, `registrySaveGate`, `flushRegistry`).
+- `LinkMonitor.nextRecovery` (light re-init first), `ConnectionMachine.failureText` (wording), `RecoverySupervisor`/`RecoveryPolicy` (Bluetooth standby, suspend log).
+- `ObdTroubleCodeDecoder.kt` (`DtcModePolicy`), `MainActivity.readTroubleCodes` (`modesKnownUnsupported`, cleared at connect), `DtcScanSummary.notSupportedModes`.
+- `LiveGauges.kt` (`PollPlan` intervals, `extraIntervalMs`, `RAIL_INTERVAL_MS`, rail priority 2), `AlertLimits.kt` (per-sensor freshness windows).
+- `EcuScan.kt` (`EcuScanPolicy`), `MainActivity` (`performEcuScan`, `autoEcuScanAtConnect`, `adapterNameForScan` set at connect).
+- `DataCheck.kt` (new, pure): `DataCheckMonitor`, `Baselines`, `FuelLog`. `DataCheckUi.kt` (new, Compose): `DataCheckCard`, `FuelLogCard`, shown at the top of tab 1. `MainActivity`: `runDataCheck`, `dataCheckBanner`, `saveBaselines`, `resetDataCheckLearning`, `addFillUp`, `removeLastFillUp`; `startTrip()` resets the trip counters and keeps the learned references.
+- Tests: `RealCarFixesTest.kt` (incl. `EcuScanPolicyTest`), `DataCheckTest.kt` (27), extended `ConnectionRecoveryTest.kt`.
+Design rules kept: read-only ECU access, no invented values (every learned reference comes from this car's own readings; generic limits are labelled), no stale-as-live, no parallel commands, Gauge Wall untouched.
+Lessons for the next session: the DTC scan is user-triggered, not periodic; the K-line carries about 3.5 requests/s, so every new PID costs the others refresh time; the CI workflow `Branch check` runs only for `claude/**` pushes and publishes the log to the `ci-log` branch.
+Open: merge needs owner approval; verify on the car (list in `CURRENT_STATUS.md`); the next likely work is tuning the data-check limits from more real drives and, if wanted, a fuel estimate (needs a fuel-rate source, which this ECU does not provide).

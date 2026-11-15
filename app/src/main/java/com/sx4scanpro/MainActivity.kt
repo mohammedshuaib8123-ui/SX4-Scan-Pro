@@ -335,6 +335,8 @@ class MainActivity : ComponentActivity() {
         }
         sessionLog.append("EVT", "app started")
         loadEcuProfiles()
+        fuelFills = FuelLog.parse(prefs.getString("fuel_log", null))
+        dataBaselines = dataCheck.baselineRows()
         loadParameterRegistry()
         ContextCompat.registerReceiver(this, btReceiver, btFilter, ContextCompat.RECEIVER_NOT_EXPORTED)
         // Open Headunit is another app, so its status broadcast needs an exported receiver.
@@ -555,6 +557,7 @@ class MainActivity : ComponentActivity() {
                             gauges.forEach { g -> history.record(g.label, if (g.available) g.value.toDoubleOrNull() else null) }
                             historyVersion++
                             recordTrip(gauges)
+                            if (connection.snapshot.ecuAvailable) runDataCheck(nowMs, poller)
                         }
                         val rpmGauge = gauges.firstOrNull { it.label == "Engine RPM" }
                         val sensorReadings = gauges.mapNotNull { gauge ->
@@ -718,9 +721,9 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
-                            AnimatedVisibility(visible = warningPreview || warningMessage.isNotBlank(), enter = fadeIn(tween(220)) + slideInHorizontally(tween(260)) { -it / 8 }, exit = fadeOut(tween(180))) {
+                            AnimatedVisibility(visible = warningPreview || warningMessage.isNotBlank() || dataCheckBanner.isNotBlank(), enter = fadeIn(tween(220)) + slideInHorizontally(tween(260)) { -it / 8 }, exit = fadeOut(tween(180))) {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF4B171D)), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF5252))) {
-                                    Text(if (warningMessage.isNotBlank()) warningMessage else "WARNING SYSTEM PREVIEW — NOT A LIVE VEHICLE FAULT", Modifier.padding(12.dp), color = Color.White, fontWeight = FontWeight.Black)
+                                    Text(if (warningMessage.isNotBlank()) warningMessage else if (dataCheckBanner.isNotBlank()) dataCheckBanner else "WARNING SYSTEM PREVIEW — NOT A LIVE VEHICLE FAULT", Modifier.padding(12.dp), color = Color.White, fontWeight = FontWeight.Black)
                                 }
                             }
                             if (showWall) {
@@ -805,6 +808,12 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         1 -> LazyColumn(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            item {
+                                DataCheckCard(dataFindings, dataTally, dataBaselines, dataSummary, connected, panel, cyan, muted) { resetDataCheckLearning() }
+                            }
+                            item {
+                                FuelLogCard(fuelFills, nowMs, panel, cyan, muted, { o, l -> addFillUp(o, l) }, { removeLastFillUp() })
+                            }
                             item {
                                 val tick = tripTick
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
@@ -1591,6 +1600,70 @@ class MainActivity : ComponentActivity() {
     private val liveFeed = LiveRegistryFeed({ parameterRegistry })
     private val registrySaveGate = RegistrySaveGate()
 
+    // ---- data check (sensor sanity, learned normal values, trip tally) and fuel log ----
+    private val dataCheck by lazy {
+        DataCheckMonitor(Baselines.fromJson(runCatching { java.io.File(filesDir, "datacheck/baselines.json").takeIf { it.exists() }?.readText() }.getOrNull()))
+    }
+    private var dataFindings by mutableStateOf<List<DataFinding>>(emptyList())
+    private var dataTally by mutableStateOf<List<TallyRow>>(emptyList())
+    private var dataBaselines by mutableStateOf<List<BaselineRow>>(emptyList())
+    private var dataSummary by mutableStateOf(TripSummary(0, 0, 0, 0, 0, null))
+    private var dataCheckBanner by mutableStateOf("")
+    private var fuelFills by mutableStateOf<List<FillUp>>(emptyList())
+    private val announcedFindings = mutableSetOf<String>()
+    private var lastBaselineSaveMs = 0L
+
+    /** Called about once a second while the ECU is answering. Only readings that are still fresh are given to the monitor. */
+    private fun runDataCheck(nowMs: Long, poller: LivePoller) {
+        val values = HashMap<Int, Double>()
+        for ((pid, _, _) in DataCheckMonitor.TALLIED) {
+            val r = poller.reading(pid) ?: continue
+            val maxAge = when (pid) { 0x0C, 0x0D -> 5_000L; 0x33 -> 90_000L; else -> 25_000L }
+            if (nowMs - r.atMs <= maxAge) values[pid] = r.value
+        }
+        dataCheck.update(nowMs, values)
+        val found = dataCheck.findings()
+        dataFindings = found
+        dataSummary = dataCheck.summary()
+        if (nowMs - dataTallyMs >= 3_000L) { dataTallyMs = nowMs; dataTally = dataCheck.tally(); dataBaselines = dataCheck.baselineRows() }
+        dataCheckBanner = found.firstOrNull { it.level >= CheckLevel.WARN }?.let { "CHECK: " + it.title } ?: ""
+        announcedFindings.retainAll(found.map { it.id }.toSet())
+        for (f in found) if (announcedFindings.add(f.id)) {
+            sessionLog.append("EVT", "data check ${f.level} ${f.id}: ${f.detail}")
+            if (f.level == CheckLevel.ALERT) chime?.startTone(ToneGenerator.TONE_PROP_NACK, 520)
+        }
+        if (nowMs - lastBaselineSaveMs >= 60_000L) saveBaselines(nowMs)
+    }
+    private var dataTallyMs = 0L
+
+    private fun saveBaselines(nowMs: Long = System.currentTimeMillis()) {
+        lastBaselineSaveMs = nowMs
+        val json = dataCheck.baselinesJsonIfDirty() ?: return
+        runCatching {
+            val f = java.io.File(filesDir, "datacheck/baselines.json"); f.parentFile?.mkdirs()
+            val tmp = java.io.File(f.parentFile, "baselines.json.tmp"); tmp.writeText(json); tmp.renameTo(f)
+        }.onFailure { sessionLog.append("EVT", "data check references could not be saved") }
+    }
+
+    private fun resetDataCheckLearning() {
+        dataCheck.resetLearning(); saveBaselines()
+        runCatching { java.io.File(filesDir, "datacheck/baselines.json").delete() }
+        dataBaselines = dataCheck.baselineRows()
+        sessionLog.append("EVT", "data check: learned normal values were reset by the owner")
+    }
+
+    private fun addFillUp(odoKm: Double?, litres: Double?): String? {
+        FuelLog.validate(fuelFills, odoKm, litres)?.let { return it }
+        fuelFills = (fuelFills + FillUp(odoKm!!, litres!!, System.currentTimeMillis(), true)).sortedBy { it.odoKm }
+        prefs.edit().putString("fuel_log", FuelLog.serialize(fuelFills)).apply()
+        return null
+    }
+
+    private fun removeLastFillUp() {
+        fuelFills = fuelFills.dropLast(1)
+        prefs.edit().putString("fuel_log", FuelLog.serialize(fuelFills)).apply()
+    }
+
     /** Writes the registry now if a live state change is waiting to be saved. Safe to call from any thread, cheap when nothing changed. */
     @Synchronized
     private fun flushRegistry() {
@@ -2020,6 +2093,7 @@ class MainActivity : ComponentActivity() {
 
     private fun startTrip() {
         endTrip()
+        dataCheck.startTrip(); announcedFindings.clear(); dataFindings = emptyList(); dataTally = emptyList(); dataCheckBanner = ""
         trip = TripStats()
         tripStartMs = System.currentTimeMillis()
         tripHeaderWritten = false
@@ -2060,6 +2134,7 @@ class MainActivity : ComponentActivity() {
 
     private fun endTrip() {
         flushRegistry()
+        saveBaselines()
         try { tripWriter?.flush(); tripWriter?.close() } catch (_: Exception) { }
         tripWriter = null
         // Fold this trip's distance into the lifetime tracked distance exactly once.

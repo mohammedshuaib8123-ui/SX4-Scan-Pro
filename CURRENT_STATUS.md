@@ -1,6 +1,32 @@
 # CURRENT STATUS — SX4 Scan Pro V1
 
-Last updated: 2026-11-11 · `main` = 8fd5d84 (P1-P5 integrated). Active work: branch `claude/v1-p6-live-performance` (P6 live-data performance, PR open, not merged).
+Last updated: 2026-11-16. Active branch: `claude/v1-realcar-fixes-and-sanity-monitor` (from `main` 601d97c; **not merged**, waiting for the owner). Sections below "Latest work" are the older history and are kept for the record.
+
+## Latest work (2026-11-16): first real-car capture, fixes, and the data-check monitor
+Source: session export of 2026-11-15 (4.7 h, SX4 ZDi, adapter V-LINK, ISO 14230-4 KWP fast, engine ECU address 0x11, 7,606 capture records, 15,850 log records). Findings table with file/symbol mapping: `docs/REAL_CAR_SESSION_2026-11-15.md`.
+
+Fixed on this branch (each has tests in `RealCarFixesTest.kt` / `ConnectionRecoveryTest.kt` / `DataCheckTest.kt`):
+- **F1 registry never left ADVERTISED** (VERIFIED 0 / DECODED 0 after thousands of valid replies): nothing in live polling called the registry. New `LiveEvidence.kt` (`LiveRegistryFeed`, `RegistrySaveGate`) records real replies as VERIFIED/DECODED, NO DATA/malformed as inconclusive only, throttled to one evidence entry per 60 s per PID, file written at most every 30 s and at trip end.
+- **F2 ECU dropouts at engine stop/start**: 10 of 10 were fixed by `ATPC` and none by two `0100` probes, so `LinkMonitor.nextRecovery()` now starts with the light re-init (about 5 s less frozen time).
+- **F3 wording**: "The ECU stopped answering (engine stopped or ignition off)".
+- **F4 Bluetooth reconnect**: quick attempts (5, back-off 2-30 s) are followed by a bounded slow standby (36 tries, 30 s apart) so the app reconnects when the car is started later; a sleep that overran by more than 10 s is logged as "device was suspended". `RecoveryPolicy.bluetoothStandbyAttempts/StandbyMs/suspendSlackMs`.
+- **F5 Mode 0A**: a `7F 0A 11/12` reply is remembered for the connection (`DtcModePolicy`) and 0A is not asked again; an all-empty scan now says "No fault codes stored or pending".
+- **F6 poll rates**: the K-line carries about 3.5 requests/s (about 270-290 ms each) and the old plan asked for about 7/s, so slow PIDs updated every ~17 s while going stale after ~10 s. `PollPlan` now asks for about what the line can carry (RPM 0.8 s, speed 1.2 s, MAP 2 s, MAF/load 2.5 s, rail 3 s priority 2, coolant 8 s, EGR 10 s, IAT 20 s, voltage 15 s, baro 30 s) and alert freshness windows follow (`AlertLimits.COOLANT_MAX_AGE_MS` 20 s, RPM 5 s, boost 8 s; before, coolant updated in 4-5 s against a 4 s window).
+- **F7 Mode 09**: read-only identity scan runs once after connecting when no profile is saved or it is older than 24 h (`EcuScanPolicy`, `autoEcuScanAtConnect`); the button still works.
+- Not done on purpose: showing last gauge values dimmed during an ECU dropout (conflicts with "never show stale readings as live"); gauges keep showing `--`.
+
+New feature: **Data Check** (Health/Trip tab, top card) and **Fuel Economy Log**.
+- `DataCheck.kt` (pure): rules for impossible sensor values (coolant, intake air), charging voltage, rail pressure collapse/over-pressure, idle rail pressure and idle air flow against the car's own learned normal, rail pressure under load per speed/load bin, MAP vs barometric with engine stopped, boost at high load, air-flow efficiency (MAF vs engine speed and MAP, displacement 1.248 L), frozen sensors, thermostat never reaching 70 °C after 10 min driving. Warnings need a hold time, clear after 15 s, show a banner; ALERT level also gives one chime (no siren).
+- Learned references: locked after 120 samples (usable from 40), only learned while no warning is active and never from a sample that already disagrees with a ready reference; saved in `filesDir/datacheck/baselines.json`; owner can reset.
+- Calibrated on the real drive: replaying all 17,059 s through the monitor raised no false alarm; learned warm idle rail 28.8 MPa, idle air flow 7.4 g/s, steady air-flow efficiency 0.74.
+- `FuelLog` (pure) + `DataCheckUi.kt`: the ECU does not support fuel level (2F) or fuel rate (5E), so fuel use cannot be measured by OBD. The owner enters odometer + litres at each full tank; tank-to-tank km/L is compared with the usual (median of earlier tanks, needs 3 tanks) and warns at 15 % worse (alert at 30 %).
+- Wiring: `MainActivity.runDataCheck` (once a second while the ECU answers, only fresh readings), `dataCheckBanner`, `saveBaselines`, `addFillUp`.
+
+Verification: 537 pure-JVM tests pass locally (harness: `/home/claude/tools/test.sh`, not in the repo). Android/Compose files (`MainActivity.kt`, `DataCheckUi.kt`, `BluetoothAccessTest`) are compiled only by the `Branch check` workflow on push; see the CI note at the end of this section.
+
+Still to verify on the car/tablet: re-init-first recovery time, the new poll rates (read `PERF` lines), standby reconnect when the car is started later, automatic Mode 09 scan (VIN/calibration IDs not yet seen from this ECU), whether the data-check thresholds stay quiet on a healthy drive and speak up when something is really wrong, and that the data-check card looks right on the tablet.
+
+Known limits of the data check: references learned while the car is faulty will be wrong (reset after repairs); rail pressure is sampled only every ~3 s so short dips can be missed; generic limits (voltage 12.8 V, boost 40 kPa, over-pressure 170 MPa) are general engineering numbers, not SX4 specifications, and the messages say so.
 
 ## Product
 Personal-use Kotlin/Compose tablet cockpit for a 2012 Maruti Suzuki SX4 ZDi (1.3 DDiS, manual), Vgate iCar Pro (Bluetooth Classic ELM327), Realme Pad 2 (Android 14, landscape). Never commercial, never Play Store.
