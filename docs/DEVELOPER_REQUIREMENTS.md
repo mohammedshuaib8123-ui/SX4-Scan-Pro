@@ -1413,3 +1413,99 @@ This completion mandate supersedes the earlier instruction to stop after a Phase
 10. Deliver a final V1 release candidate only after the acceptance criteria in Sections 26.14 and 26.16 are met.
 
 **Important:** The user wants implementation, not another requirements-only update. Do not stop after explaining that a feature is currently unimplemented. Do not claim completion without code, tests and evidence. Preserve the strict read-only safety boundary and do not introduce AI/cloud features.
+
+### 26.17 P0 release blocker: complete ECU diagnostics and full diagnosis report
+
+**Priority: P0 — must be completed and validated before V1 can be considered diagnostically release-ready.** This requirement consolidates and elevates the user's immediate priorities across ECU scanning, DTC visibility, Freeze Frame, ECU Info and Vehicle Health. It supplements Sections 26.6, 26.15 and 26.16; where this section is more specific, follow this section.
+
+#### 26.17.1 Correct the complete ECU scanning pipeline
+
+- Trace and fix the end-to-end path: user action -> diagnostic request -> serialized adapter communication -> raw ECU response -> response validation -> decoding -> persistence/state -> UI.
+- Fix all existing ECU scanning defects in the supported V1 scope. Do not assume the defect is only in the UI; establish where data is lost or misinterpreted.
+- For every successfully retrieved and decoded item, display the actual result. Do not show only counts or category labels while hiding the underlying codes/data.
+- Display all ECU-reported stored (Mode 03), pending (Mode 07) and permanent (Mode 0A) DTCs returned by valid positive responses, including every code when multiple codes are present.
+- Correctly handle valid response headers, adapter chatter, whitespace, line breaks, CAN headers, multi-line/multi-frame responses and padding as applicable to the existing transport. Validate response service, payload length and code bytes before decoding.
+- Never turn NO DATA, timeout, unsupported service, malformed response, empty response or transport failure into a successful zero-code result. Distinguish a valid ECU response containing no DTCs from a failed or inconclusive scan.
+- Preserve raw request/response evidence and associate each result with the service, ECU/module, capture time and scan session where available.
+- Do not claim full-vehicle coverage when only generic engine/emissions OBD services have been queried. Only report modules actually queried with evidence-backed addressing and valid responses.
+
+#### 26.17.2 Explain every stored, pending and permanent fault
+
+For each actual DTC returned by the ECU, show:
+- Exact DTC identifier and category/status (stored, pending or permanent).
+- Plain-language description.
+- Severity/priority only where supported by a reliable definition; do not invent severity.
+- Possible symptoms and likely causes, clearly labelled as possibilities rather than confirmed findings.
+- Sensible, safe inspection/diagnostic next steps.
+- ECU/module source and scan timestamp.
+- Related freeze-frame evidence and relevant live-data evidence when available.
+
+Use a local, deterministic DTC description catalogue with traceable definitions where possible. If a code is not in the catalogue, still display the exact code and say that its description is unavailable. Never hide an unknown code.
+
+Do not equate stored/pending/permanent categories with proof that a fault is physically active at this instant. Only show an active/current status when the ECU provides reliable status evidence. Keep the ECU-reported category distinct from any app-generated interpretation.
+
+#### 26.17.3 Make Freeze Frame fully functional
+
+- Fix the existing Freeze Frame button and its complete request/response/decode/display path.
+- Retrieve and display all supported freeze-frame parameters returned by the ECU, with names, values, units, frame number, source and timestamp.
+- Show the DTC associated with the freeze frame when the ECU response provides that association.
+- Reuse validated PID decoding only where the Mode 02 response format and semantics are correctly handled.
+- Distinguish a valid zero from unavailable, unsupported, NO DATA, timeout, malformed and partial responses.
+- Never substitute default zeros or current live values for missing freeze-frame values.
+- Preserve raw Mode 02 request/response evidence and provide a useful explanation when no freeze-frame data is available.
+
+#### 26.17.4 Make ECU Info complete and operational
+
+- Fix every visible ECU Info action and display every supported identity value actually retrieved and decoded.
+- Include VIN, calibration ID, calibration verification number (CVN), ECU name, protocol and other identity/version fields only where supported by valid ECU responses.
+- Show per-item progress, result, units/format where relevant, source/service, timestamp and precise failure reason.
+- Preserve raw responses for traceability.
+- Do not use stale cached values as fresh results, and do not hide successfully decoded fields.
+- Remove or hide dead controls; do not claim unsupported identity information is available.
+
+#### 26.17.5 Make Vehicle Health / Full Diagnosis Report a consolidated evidence report
+
+The report must include all relevant data successfully collected during the diagnostic session, not just a selection of live gauge readings.
+
+Required report content, when available:
+- Scan/session summary, timestamp, vehicle/ECU identity and adapter/protocol details.
+- Exact scan scope: engine/emissions scan versus any genuinely queried additional modules.
+- All stored, pending and permanent DTCs, with the explanations and context required by 26.17.2.
+- Freeze-frame data associated with faults, including unavailable/unsupported reasons where relevant.
+- ECU Info values and all supported ECU diagnostic data captured in the session.
+- Relevant live readings and diesel parameters with units, timestamps, freshness and source.
+- Deterministic health findings, supporting evidence, operating context and safe next checks.
+- Explicit limitations: modules/services not queried, unsupported data, failed requests and incomplete scans.
+
+Rules:
+- Include all available diagnostic evidence; do not silently omit decoded ECU data.
+- Separate ECU-reported facts from app-generated interpretation and possible causes.
+- Do not label a fault active unless reliable ECU status evidence supports it.
+- Do not infer that the whole vehicle is fault-free from an engine-only scan.
+- Do not invent values, OEM thresholds, fault descriptions or module results.
+- A partial report must remain useful and clearly identify what was and was not evaluated.
+- Provide a clear user-readable report view and preserve/export the underlying evidence where supported.
+
+#### 26.17.6 Tests and acceptance gate
+
+Add or update automated tests for:
+- Single and multiple DTCs in each supported DTC service.
+- Correct decoding, category association, duplicate handling and zero padding.
+- Positive response with no DTCs versus NO DATA, unsupported, timeout, malformed, partial and transport-failure states.
+- Multi-line/multi-frame/header/noise response handling where supported by the transport.
+- Unknown DTC display without dropping the code.
+- Freeze Frame valid non-zero, valid zero, missing, unsupported, timeout, malformed and partial data.
+- ECU Info supported values and each failure state.
+- Health/full report inclusion of stored, pending, permanent, freeze-frame, ECU identity and live-data evidence, including incomplete/failed scans.
+- No fabricated/default-zero values and no false whole-vehicle all-clear claim.
+
+**P0 acceptance:** A real valid ECU response must result in every decoded DTC and supported diagnostic value being visible and traceable in the app and the consolidated report. Automated tests and a successful build are required; actual-SX4 validation must be recorded separately and no vehicle-dependent capability may be called verified until tested on the target vehicle. Preserve existing working V1 connectivity, polling, cockpit and logging. Keep all diagnostics strictly read-only: no DTC clearing, coding, adaptation, reset, actuator tests or programming. No AI or cloud dependency.
+
+#### 26.17.7 Work ownership and parallel execution
+
+To avoid overlapping edits and merge conflicts, split work as follows:
+
+- **Claude 2 — P0 owner:** owns Section 26.17 end-to-end: ECU scan/DTC parsing and display, Freeze Frame, ECU Info, and consolidated Vehicle Health/Full Diagnosis Report. Work on one dedicated V1 feature branch. Trace existing code first, then implement the smallest coherent changes with tests. Do not split the same diagnostic pipeline across multiple agents.
+- **Claude 1 — separate workstream:** must not edit DTC scanning, ECU diagnostic transport/parsing, Freeze Frame, ECU Info, Vehicle Health or the consolidated diagnosis report while Claude 2 owns P0. Claude 1 may work only on an independently scoped Trip Computer/background-session task or another explicitly assigned non-overlapping V1 task, on a separate branch. Before starting, identify files that overlap with Claude 2; if any shared file must change, pause and coordinate rather than editing it concurrently.
+- Integrate and validate Claude 2's P0 work before merging any branch that touches shared diagnostic/session files. Do not have both agents independently modify MainActivity or shared ECU/adapter classes.
+
