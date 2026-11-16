@@ -12,6 +12,8 @@ private class FakePorts : RecoveryPorts {
     var sockets = 1
     var paused = false
     var abortAfterSleeps = Int.MAX_VALUE
+    /** Extra time the clock jumps during each sleep (a suspended tablet). */
+    var sleepOverrunMs = 0L
     /** One entry per reconnect call: true = ECU answers, false = ECU silent, null = IOException. */
     var script: MutableList<Boolean?> = mutableListOf()
     var onReconnect: () -> Unit = {}
@@ -26,7 +28,7 @@ private class FakePorts : RecoveryPorts {
     }
     override fun pausePolling(): Boolean { paused = true; events += "pause"; return true }
     override fun resumePolling() { paused = false; events += "resume" }
-    override fun sleep(ms: Long) { sleeps += ms; clock += ms }
+    override fun sleep(ms: Long) { sleeps += ms; clock += ms + sleepOverrunMs }
     override fun aborted(): Boolean = sleeps.size >= abortAfterSleeps
     override fun now(): Long = clock
     override fun log(message: String) { events += "log:$message" }
@@ -201,12 +203,39 @@ class RecoverySupervisorTest {
     @Test fun retryExhaustionStopsBoundedAndCleansUp() {
         val p = FakePorts()
         val m = readyMachine()
-        assertFalse(sup(p, m).recoverBluetooth(FailureKind.BLUETOOTH_DISCONNECTED, ""))
+        assertFalse(sup(p, m, RecoveryPolicy(bluetoothStandbyAttempts = 0)).recoverBluetooth(FailureKind.BLUETOOTH_DISCONNECTED, ""))
         assertEquals(5, p.events.count { it == "reconnect" })
         assertEquals(ConnectionState.ERROR, m.snapshot.state)
         assertTrue(m.snapshot.reason.contains("5 attempts"))
         assertEquals(0, p.sockets); assertFalse(p.socketOpen); assertFalse(p.paused)
         assertTrue(p.sleeps.all { it <= 30_000L })
+    }
+
+    @Test fun slowStandbyKeepsTryingAfterTheQuickAttemptsAndReconnectsWhenTheCarStarts() {
+        // Real-car case: adapter unpowered while the car is off; it answers only after 5 quick attempts and several standby ones.
+        val p = FakePorts().apply { script = (List<Boolean?>(9) { null } + true).toMutableList() }
+        val m = readyMachine()
+        assertTrue(sup(p, m).recoverBluetooth(FailureKind.BLUETOOTH_DISCONNECTED, ""))
+        assertEquals(ConnectionState.READY, m.snapshot.state)
+        assertEquals(10, p.events.count { it == "reconnect" })
+        assertEquals(listOf(2_000L, 4_000L, 8_000L, 16_000L, 30_000L), p.sleeps.take(5))
+        assertTrue(p.sleeps.drop(5).all { it == 30_000L })
+    }
+
+    @Test fun standbyIsBoundedAndThenStopsForGood() {
+        val p = FakePorts(); val m = readyMachine()
+        val pol = RecoveryPolicy(bluetoothAttempts = 2, bluetoothStandbyAttempts = 3)
+        assertFalse(sup(p, m, pol).recoverBluetooth(FailureKind.BLUETOOTH_DISCONNECTED, ""))
+        assertEquals(5, p.events.count { it == "reconnect" })
+        assertTrue(m.snapshot.reason.contains("5 attempts"))
+        assertEquals(ConnectionState.ERROR, m.snapshot.state); assertFalse(p.paused)
+    }
+
+    @Test fun aSuspendedDeviceIsLoggedAndStillRetries() {
+        val p = FakePorts().apply { script = mutableListOf(true); sleepOverrunMs = 3_600_000L }
+        val m = readyMachine()
+        assertTrue(sup(p, m).recoverBluetooth(FailureKind.BLUETOOTH_DISCONNECTED, ""))
+        assertTrue(p.events.any { it.startsWith("log:") && it.contains("suspended") })
     }
 
     @Test fun staleSocketIsClosedBeforeEveryReconnect() {

@@ -16,6 +16,15 @@ internal data class RecoveryPolicy(
     /** Socket reconnect attempts before giving up for good (the user must tap Connect). */
     val bluetoothAttempts: Int = 5,
     val bluetoothBackoff: Backoff = Backoff(2_000L, 30_000L),
+    /**
+     * Slow retries after the quick ones, one every [bluetoothStandbyMs]. Real-car evidence (2026-11-15): the link dropped, the tablet slept
+     * for hours, and the quick attempts were used up before the car was switched on again; one more try happened to succeed. Keeping a bounded,
+     * slow standby means the app reconnects by itself when the car is started, without a rapid retry loop.
+     */
+    val bluetoothStandbyAttempts: Int = 36,
+    val bluetoothStandbyMs: Long = 30_000L,
+    /** A sleep that overran its request by more than this means the device was suspended; it is logged so the evidence is explicit. */
+    val suspendSlackMs: Long = 10_000L,
     /** Quick ECU recovery attempts, then slow standby probing. */
     val ecuAttempts: Int = 10,
     val ecuBackoff: Backoff = Backoff(1_000L, 10_000L),
@@ -115,14 +124,18 @@ internal class RecoverySupervisor(
                 machine.gaveUp(kind, "Recovery could not start: live polling did not stop in time", RecoveryLayer.NONE)
                 return false
             }
-            if (!machine.recoveryStarted(kind, reason, RecoveryLayer.BLUETOOTH, policy.bluetoothAttempts)) return false
+            val total = policy.bluetoothAttempts + policy.bluetoothStandbyAttempts
+            if (!machine.recoveryStarted(kind, reason, RecoveryLayer.BLUETOOTH, total)) return false
             ports.log("recovery: $reason")
             var last = reason
-            for (attempt in 1..policy.bluetoothAttempts) {
+            for (attempt in 1..total) {
                 ports.closeSocket()
-                val wait = policy.bluetoothBackoff.delayMs(attempt)
+                val wait = if (attempt <= policy.bluetoothAttempts) policy.bluetoothBackoff.delayMs(attempt) else policy.bluetoothStandbyMs
                 machine.recoveryAttempt(attempt, wait)
+                val slept0 = ports.now()
                 ports.sleep(wait)
+                val slept = ports.now() - slept0
+                if (slept > wait + policy.suspendSlackMs) ports.log("recovery: the device was suspended for about ${slept / 1000} s during the wait; trying now")
                 if (ports.aborted()) { ports.closeSocket(); machine.userDisconnected(); return false }
                 try {
                     if (ports.reconnect()) {
@@ -143,7 +156,7 @@ internal class RecoverySupervisor(
                 if (ports.aborted()) { ports.closeSocket(); machine.userDisconnected(); return false }
             }
             ports.closeSocket()
-            machine.gaveUp(kind, "Could not reconnect after ${policy.bluetoothAttempts} attempts: $last", RecoveryLayer.NONE)
+            machine.gaveUp(kind, "Could not reconnect after $total attempts: $last", RecoveryLayer.NONE)
             ports.log("recovery gave up: $last")
             return false
         } finally {

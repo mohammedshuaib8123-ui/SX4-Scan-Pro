@@ -41,3 +41,14 @@ internal object EcuScan {
         )
     }
 }
+
+/**
+ * When the identity scan (VIN, calibration IDs, CVNs, ECU name) runs by itself. The 2026-11-15 capture had no ECU profile at all because
+ * the scan is a button nobody pressed. It is read-only Mode 09, so it is done once after connecting when there is no saved profile or the
+ * saved one is old; the button still runs it on demand.
+ */
+internal object EcuScanPolicy {
+    const val MAX_AGE_MS = 24L * 60 * 60 * 1000
+
+    fun dueAtConnect(saved: EcuProfile?, nowMs: Long): Boolean = saved == null || nowMs - saved.capturedAtMs > MAX_AGE_MS || saved.capturedAtMs > nowMs
+}
