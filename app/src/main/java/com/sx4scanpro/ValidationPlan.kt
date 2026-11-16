@@ -47,7 +47,7 @@ internal object ValidationPlan {
         val passed = items.count { statusOf(records, it.id) == ValidationStatus.PASSED }
         val failed = items.count { statusOf(records, it.id) == ValidationStatus.FAILED }
         add("  Entered by hand by the owner, each with the time it was entered; the app never marks a check itself and a manual PASS is not independently verified. $passed passed, $failed failed, ${items.size - passed - failed} not yet tested.")
-        add("  Session export ZIP: these results are NOT yet included in the ZIP (pending); they appear only in this report and, as one line per entry, in the session log.")
+        add("  Session export ZIP: all checks, including untested ones, are included as ${ValidationExport.FILE} with the same wording (manual entries, not independently verified); entries also appear as one line each in the session log.")
         items.groupBy { it.group }.forEach { (g, list) ->
             add("  $g")
             list.forEach { it2 ->
@@ -64,14 +64,27 @@ internal object ValidationPlan {
 internal object ValidationCodec {
     fun encode(records: List<ValidationRecord>): String = records.joinToString("\n") { "${it.id}|${it.status.name}|${it.atMs}|${it.note.replace('\n', ' ').replace('|', '/')}" }
 
-    fun decode(text: String?): List<ValidationRecord> {
-        if (text.isNullOrBlank()) return emptyList()
-        return text.lines().mapNotNull { line ->
+    fun decode(text: String?): List<ValidationRecord> = decodeDetailed(text).records
+
+    /**
+     * Same parsing as [decode] (the records are identical), but also counts the lines that could not be read so an export can say so
+     * instead of silently dropping them. [ValidationDecode.unreadableIds] are known check ids whose saved line was damaged. Blank lines are ignored.
+     */
+    fun decodeDetailed(text: String?): ValidationDecode {
+        if (text.isNullOrBlank()) return ValidationDecode(emptyList(), 0, emptySet())
+        val records = ArrayList<ValidationRecord>()
+        val badIds = LinkedHashSet<String>()
+        var bad = 0
+        for (line in text.lines()) {
+            if (line.isBlank()) continue
             val p = line.split('|', limit = 4)
-            if (p.size < 4) return@mapNotNull null
-            val st = ValidationStatus.values().firstOrNull { it.name == p[1] } ?: return@mapNotNull null
-            val t = p[2].toLongOrNull() ?: return@mapNotNull null
-            if (ValidationPlan.find(p[0]) == null) null else ValidationRecord(p[0], st, t, p[3])
+            val st = if (p.size < 4) null else ValidationStatus.values().firstOrNull { it.name == p[1] }
+            val t = if (st == null) null else p[2].toLongOrNull()
+            if (st != null && t != null && ValidationPlan.find(p[0]) != null) records += ValidationRecord(p[0], st, t, p[3])
+            else { bad++; p.firstOrNull()?.takeIf { ValidationPlan.find(it) != null }?.let { badIds += it } }
         }
+        return ValidationDecode(records, bad, badIds)
     }
 }
+
+internal class ValidationDecode(val records: List<ValidationRecord>, val unreadableLines: Int, val unreadableIds: Set<String>)

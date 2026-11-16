@@ -36,7 +36,7 @@ private class Fixture(val dir: File = tmp()) {
         capture.record("S1", 1_030, "0902", "49 02 01 4D 41 33 45 59 44 38 31 53 30 30 31 32 33 34 35 36", "DATA", 40, "ISO 14230-4", error = "seen on $BT")
     }
     fun request(redact: Boolean, live: Boolean = false) = ExportRequest("build X", BT, "ISO 14230-4", "S1", live, redact, 5_000L)
-    fun sources() = ExportSources(sessionLog.files(), capture.files(), registry, profile)
+    fun sources() = ExportSources(sessionLog.files(), capture.files(), registry, profile, ValidationSnapshot.fromSavedText(null))
     fun build(redact: Boolean, live: Boolean = false, max: Long = SessionExport.DEFAULT_MAX_SOURCE_BYTES, dest: File = File(dir, "out/e.zip")) =
         SessionExport.build(dest, request(redact, live), sources(), max)
 }
@@ -55,7 +55,7 @@ class SessionExportTest {
         val r = fx.build(false)
         assertNull(r.error); assertNotNull(r.file)
         val e = entries(r.file!!)
-        assertEquals(setOf("session_events.log", "capture.jsonl", "registry_summary.json", "ecu_profile.json", "manifest.json"), e.keys)
+        assertEquals(setOf("session_events.log", "capture.jsonl", "registry_summary.json", "ecu_profile.json", "validation_results.json", "manifest.json"), e.keys)
         val m = manifest(r.file!!)
         assertEquals(SessionExport.FORMAT, m["format"]); assertEquals(1L, m["formatVersion"])
         assertEquals("build X", m["build"]); assertEquals(5_000L, m["exportedAtMs"])

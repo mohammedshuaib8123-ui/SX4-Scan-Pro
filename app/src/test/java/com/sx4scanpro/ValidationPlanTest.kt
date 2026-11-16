@@ -14,7 +14,7 @@ class ValidationPlanTest {
         val text = ValidationPlan.reportLines(emptyList()).joinToString("\n")
         assertTrue(text.contains("0 passed, 0 failed, ${ValidationPlan.items.size} not yet tested"))
         assertFalse(text.contains("PASS (not independently verified)\n"))
-        assertTrue(text.contains("not independently verified")); assertTrue(text.contains("NOT yet included in the ZIP (pending)"))
+        assertTrue(text.contains("not independently verified")); assertFalse(text.contains("pending")); assertTrue(text.contains("validation_results.json"))
     }
 
     @Test fun recordReplacesEarlierResultAndIgnoresUnknownIds() {

@@ -1392,11 +1392,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** P7: one ZIP with manifest, session events, structured capture, registry summary and ECU profile. Stored data is not changed; read-only. */
+    /** P7: one ZIP with manifest, session events, structured capture, registry summary, ECU profile and validation results. Stored data is not changed; read-only. */
     private fun exportCompleteSession(redact: Boolean, scope: kotlinx.coroutines.CoroutineScope, report: (String) -> Unit) {
         scope.launch {
             val snap = connSnapshot
             val live = snap.state != ConnectionState.DISCONNECTED && snap.state != ConnectionState.ERROR
+            // One snapshot of the saved validation text (the persisted source of truth), taken once for this export.
+            val validationSnapshot = try { ValidationSnapshot.fromSavedText(prefs.getString("validation", null)) }
+                catch (e: Exception) { ValidationSnapshot.unavailable(e.message ?: e.javaClass.simpleName) }
             val result = withContext(Dispatchers.IO) {
                 val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date())
                 val dir = java.io.File(filesDir, "logs")
@@ -1404,7 +1407,7 @@ class MainActivity : ComponentActivity() {
                 SessionExport.build(
                     java.io.File(dir, "export-$stamp" + (if (redact) "-redacted" else "") + ".zip"),
                     ExportRequest(BuildInfo.LABEL, adapterNameForScan, protocolText, captureSession, live, redact, System.currentTimeMillis()),
-                    ExportSources(sessionLog.files(), capture.files(), parameterRegistry, ecuProfile)
+                    ExportSources(sessionLog.files(), capture.files(), parameterRegistry, ecuProfile, validationSnapshot)
                 )
             }
             val file = result.file
