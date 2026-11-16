@@ -1,5 +1,10 @@
 # CURRENT STATUS — SX4 Scan Pro V1
 
+## V1 integration (branch `claude/v1-integration`)
+
+Integrated onto the P0 main: trip background/persistence (`ObdRuntime`, `TripService`, `TripSession`), per-sensor gauge freshness, and the real-car fixes (live registry evidence, data-check monitor, fuel log, automatic ECU identity scan, recovery tweaks). The real-car branch's engine edits were re-applied inside `ObdRuntime`, since the poll loop and connection code no longer live in `MainActivity`. Not taken: its DTC-mode skip (P0's `DtcScanReport` already reports unsupported services), the Crystal cockpit (would replace the current cockpit and drop boost-unit scaling, drive modes and shift lights), and the DDiS brief's code (kept as `docs/reference/` reference material only). Nothing here is validated on the real SX4 or the Realme Pad 2 yet.
+
+
 Last updated: 2026-11-16. Active branch: `claude/v1-realcar-fixes-and-sanity-monitor` (from `main` 601d97c; **not merged**, waiting for the owner). Sections below "Latest work" are the older history and are kept for the record.
 
 ## Latest work (2026-11-16): first real-car capture, fixes, and the data-check monitor
