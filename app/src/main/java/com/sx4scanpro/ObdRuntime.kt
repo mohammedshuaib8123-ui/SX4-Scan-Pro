@@ -14,6 +14,7 @@ import android.hardware.usb.UsbManager
 import android.content.pm.PackageManager
 import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.content.IntentFilter
 import android.net.Uri

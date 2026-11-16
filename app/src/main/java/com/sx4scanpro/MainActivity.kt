@@ -235,6 +235,12 @@ class MainActivity : ComponentActivity() {
         get() = rt.adapterNameForScan
         set(v) { rt.adapterNameForScan = v }
     private val tripSession: TripSession get() = rt.tripSession
+    private var tripWriter: java.io.BufferedWriter?
+        get() = rt.tripWriter
+        set(v) { rt.tripWriter = v }
+    private var tripFile: java.io.File?
+        get() = rt.tripFile
+        set(v) { rt.tripFile = v }
     private val trip: TripStats get() = rt.trip
     private val connection: ConnectionMachine get() = rt.connection
     private val recoveryPolicy: RecoveryPolicy get() = rt.recoveryPolicy
