@@ -57,3 +57,14 @@ P1 guard/capture, P2 registry, P3 discovery, P4 decoder + digital speed, P5 conn
 - Session export (separate requirement), ECU Explorer, PR #5 cockpit decision.
 - BCM/EPS feasibility (research only: not verified that the Indian diesel SX4 has these modules or what addresses/protocols they use) and verified multi-module discovery.
 - Interval tuning from real `PERF` data; unused `readDashboard()` removal.
+
+## P0 ECU diagnostics pipeline (branch claude/p0-ecu-diagnostics, Claude 2, from main 617c183)
+Implemented, pending CI and a real-car run:
+- DTC scan keeps a state per service (03 / 07 / 0A): codes reported, valid empty, partial, NO DATA, unsupported, malformed, transport failure. Only a complete scan with every service answering cleanly may say "engine ECU reported no codes", and never for the whole vehicle. Raw replies are kept.
+- Local generic code catalogue (SAE J2012 titles in the app's own wording) with possible causes and next checks, shown as possibilities. Unknown codes are still listed by identifier. No severity, no "active" claim.
+- Freeze frame reader: PID 02 (causing DTC), chained Mode 02 support list, each supported PID with its own status and raw reply. A timeout on one PID no longer closes the socket or ends the read.
+- Full diagnosis report (multi-page PDF, wrapped, nothing cut off): codes with explanations, freeze frame, ECU identity, live readings, findings kept apart from the ECU facts, and a limitations section listing everything not scanned or not read.
+- ECU Info: scan result summary says which identity items were not read and why; a profile from an earlier run is flagged as history.
+- Cockpit health card shows "Fault scan incomplete" instead of a clean state when a service did not answer.
+Tests: 575 pure-JVM tests pass locally (about 80 new). Compose and Android files are not compiled in this sandbox, so CI is the first compile of MainActivity, SxCockpit, SxLower and SxEcuInfo.
+Not verified: behaviour against the real ECU and Vgate adapter.

@@ -67,7 +67,7 @@ private fun HealthItem(label: String, detail: String, ok: Boolean?, modifier: Mo
 
 /** Left half of the lower grid: three health checks and the fault-code row in the prototype's warning style. */
 @Composable
-internal fun SxHealth(connected: Boolean, ecuOnline: Boolean, rpmSignal: Boolean, faultCount: Int?, onOpenDiagnostics: () -> Unit, modifier: Modifier = Modifier) {
+internal fun SxHealth(connected: Boolean, ecuOnline: Boolean, rpmSignal: Boolean, faultCount: Int?, onOpenDiagnostics: () -> Unit, modifier: Modifier = Modifier, scanIncomplete: Boolean = false) {
     Column(modifier.drawBehind { drawLine(Sx.Border, Offset(size.width, 0f), Offset(size.width, size.height), 1.dp.toPx()) }.padding(end = 20.dp)) {
         SectionHeading(Icons.Outlined.VerifiedUser, "Vehicle health", "ECU MONITOR")
         Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -75,7 +75,7 @@ internal fun SxHealth(connected: Boolean, ecuOnline: Boolean, rpmSignal: Boolean
             HealthItem("ECU", if (!connected) "Not connected" else if (ecuOnline) "Responding" else "Not responding", if (connected) ecuOnline else null)
             HealthItem("OBD link", if (connected) "Connected" else "Offline", connected)
         }
-        val has = (faultCount ?: 0) > 0
+        val has = (faultCount ?: 0) > 0 || scanIncomplete
         val tint = if (has) Sx.Warning else Sx.MutedForeground
         val shape = RoundedCornerShape(4.dp)
         Row(
@@ -89,10 +89,24 @@ internal fun SxHealth(connected: Boolean, ecuOnline: Boolean, rpmSignal: Boolean
             }
             Column(Modifier.weight(1f)) {
                 Text(
-                    when { faultCount == null -> "Fault codes not scanned"; faultCount == 0 -> "No fault codes in last scan"; faultCount == 1 -> "Fault code detected"; else -> "Fault codes detected" },
+                    when {
+                        scanIncomplete && (faultCount == null || faultCount == 0) -> "Fault scan incomplete"
+                        faultCount == null -> "Fault codes not scanned"
+                        faultCount == 0 -> "Engine ECU reported no fault codes"
+                        faultCount == 1 -> "Fault code reported by ECU"
+                        else -> "Fault codes reported by ECU"
+                    },
                     color = tint, fontSize = 11.sp
                 )
-                Text(if (faultCount == null) "Open diagnostics to scan" else "Review diagnostic report", color = Sx.MutedForeground, fontSize = 8.sp, modifier = Modifier.padding(top = 3.dp))
+                Text(
+                    when {
+                        scanIncomplete -> "Not every fault service answered - scan again"
+                        faultCount == null -> "Open diagnostics to scan"
+                        faultCount == 0 -> "Engine ECU only - other modules not scanned"
+                        else -> "Review diagnostic report"
+                    },
+                    color = Sx.MutedForeground, fontSize = 8.sp, modifier = Modifier.padding(top = 3.dp)
+                )
             }
             Icon(Icons.Outlined.ChevronRight, contentDescription = null, tint = tint, modifier = Modifier.size(17.dp))
         }

@@ -139,7 +139,6 @@ private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34
 internal class TimeoutFlag { var hit = false }
 data class GaugeValue(val label: String, val value: String, val unit: String = "", val available: Boolean = true, val capturedAtMs: Long = System.currentTimeMillis())
 data class TroubleCodeResult(val category: String, val code: String)
-private data class DtcScanSummary(val codes: List<TroubleCodeResult>, val supportedModes: Int, val noDataModes: Int, val invalidModes: Int, val failedModes: Int, val partialModes: Int = 0)
 
 class MainActivity : ComponentActivity() {
     private val permissionRequest = registerForActivityResult(
@@ -181,7 +180,9 @@ class MainActivity : ComponentActivity() {
     private var welcomeSettings by mutableStateOf(WelcomeSettings())
     private var welcomePlayedOnce = false
     private var driveMode by mutableStateOf(DriveMode.SPORT)
-    private var freezeEntries by mutableStateOf<List<FreezeFrame.Entry>?>(null)
+    private var freezeResult by mutableStateOf<FreezeFrameResult?>(null)
+    /** Last engine-ECU fault-code scan with the status and raw reply of every service (03 / 07 / 0A). */
+    private var dtcReport by mutableStateOf<DtcScanReport?>(null)
     private var freezeNote by mutableStateOf("")
     private var freezeBusy by mutableStateOf(false)
     private val uiScope = kotlinx.coroutines.MainScope()
@@ -627,21 +628,12 @@ class MainActivity : ComponentActivity() {
                 scanningCodes = true
                 dtcStatus = "Reading engine ECU modes 03 / 07 / 0A…"
                 try {
-                    val summary = withContext(Dispatchers.IO) { readTroubleCodes() }
-                    dtcCodes = summary.codes
-                    dtcScanned = summary.supportedModes > 0
-                    dtcStatus = when {
-                        summary.supportedModes == 0 ->
-                            "The engine ECU did not return a valid response for modes 03 / 07 / 0A. Check protocol support and adapter communication."
-                        summary.partialModes > 0 ->
-                            "Some reply lines from the engine ECU could not be read, so this list may be incomplete. Scan again before relying on it. Other modules were not scanned."
-                        summary.codes.isNotEmpty() ->
-                            "Valid responses from ${summary.supportedModes}/3 engine ECU modes. BCM, ABS, airbag and other modules were not scanned."
-                        summary.noDataModes == summary.supportedModes && summary.failedModes == 0 && summary.invalidModes == 0 ->
-                            "No DTCs reported by the ${summary.supportedModes} responding engine ECU mode(s). Other modules were not scanned."
-                        else ->
-                            "Scan summary: ${summary.supportedModes} valid, ${summary.noDataModes} NO DATA, ${summary.invalidModes} unsupported/malformed, ${summary.failedModes} communication failure(s). Engine ECU only; other modules were not scanned."
-                    }
+                    val report = withContext(Dispatchers.IO) { readTroubleCodes() }
+                    dtcReport = report
+                    dtcCodes = report.codes.map { TroubleCodeResult(it.category, it.code) }
+                    dtcScanned = report.hasAnyAnswer
+                    dtcStatus = report.headline()
+                    sessionLog.append("EVT", "dtc scan: " + report.modes.joinToString("; ") { "${it.mode}=${it.status.name}(${it.codes.size})" })
                 } catch (e: Exception) {
                     dtcStatus = "Scan failed: " + (e.message ?: "communication error")
                     // A lost adapter is picked up by the poll loop, which reconnects; the scan only reports its own failure.
@@ -772,7 +764,9 @@ class MainActivity : ComponentActivity() {
                                     egr = g("EGR commanded"), fuel = g("Fuel level"), battery = g("Control module voltage"),
                                     speed = g("Vehicle speed"),
                                     tripKm = if (connected && trip.dataMs > 0) trip.distanceKm else null,
-                                    faultCount = if (dtcScanned) dtcCodes.size else null,
+                                    // 0 only when all three fault services answered cleanly; an inconclusive scan is flagged, never shown as clean.
+                                    faultCount = dtcReport?.let { r -> if (r.codes.isNotEmpty()) r.codes.size else if (r.engineEcuReportsNoCodes) 0 else null },
+                                    faultScanIncomplete = dtcReport?.let { r -> !r.isComplete } == true,
                                     headUnit = huSession, alertSensors = alertSensors,
                                     hotRpm = alertLimits.rpmMax?.let { it / DialScale.forLabel("Engine RPM").max },
                                     hotBoost = alertLimits.boostMaxKpa?.let { (GaugeUnits.boost(it.toDouble(), boostUnit) / GaugeUnits.boostScale(boostUnit).max).toFloat() },
@@ -847,6 +841,13 @@ class MainActivity : ComponentActivity() {
                                         }
                                         if (scanningCodes) LinearProgressIndicator(Modifier.fillMaxWidth(), color = cyan)
                                         Text(dtcStatus, color = muted)
+                                        dtcReport?.let { rep ->
+                                            Text(DtcScanReport.SCOPE, color = muted, fontSize = 12.sp)
+                                            Text("Scanned " + java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(rep.capturedAtMs)) + (if (rep.protocol.isNotBlank()) " • " + rep.protocol else ""), color = muted, fontSize = 12.sp)
+                                            rep.modes.forEach { m ->
+                                                Text(DtcScanText.modeLine(m), color = if (m.status.answered && m.status != DtcModeStatus.PARTIAL) Color.White else Color(0xFFFFB84D), fontSize = 13.sp)
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -864,7 +865,7 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
-                            if (dtcCodes.isEmpty()) item { Text("No returned DTCs to display yet.", color = muted) }
+                            if (dtcCodes.isEmpty()) item { Text(if (dtcReport == null) "No scan has been run yet." else "The engine ECU returned no DTCs in this scan (see the status of each service above).", color = muted) }
                             else items(dtcCodes) { result ->
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
                                     Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -874,11 +875,19 @@ class MainActivity : ComponentActivity() {
                                             Text("ENGINE ECU", color = muted, style = MaterialTheme.typography.labelSmall)
                                         }
                                     }
-                                    DtcExplainer.explain(result.code)?.let { x ->
-                                        Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp)) {
-                                            x.lines().forEach { Text(it, color = muted, fontSize = 13.sp) }
-                                            Text("What this exact code means for the SX4 must be checked in the service manual.", color = muted, fontSize = 12.sp)
+                                    val pres = DtcPresentation.of(result.code, result.category)
+                                    Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 14.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                                        Text(pres.title ?: "No description for this code in the app's catalogue; look it up in the service manual.", color = Color.White, fontSize = 14.sp)
+                                        Text("ECU category: " + pres.categoryMeaning, color = muted, fontSize = 12.sp)
+                                        pres.structure.forEach { Text(it, color = muted, fontSize = 12.sp) }
+                                        if (pres.possibleCauses.isNotEmpty()) {
+                                            Text("Possible causes (possibilities, not confirmed findings):", color = cyan, fontSize = 12.sp)
+                                            pres.possibleCauses.forEach { Text("• $it", color = muted, fontSize = 12.sp) }
+                                            Text("Sensible next checks:", color = cyan, fontSize = 12.sp)
+                                            pres.nextChecks.forEach { Text("• $it", color = muted, fontSize = 12.sp) }
                                         }
+                                        if (freezeResult?.dtc == result.code) Text("A freeze frame names this code (see below).", color = cyan, fontSize = 12.sp)
+                                        Text("Reported by the engine ECU. This does not by itself show the fault is present right now.", color = muted, fontSize = 11.sp)
                                     }
                                 }
                             }
@@ -888,10 +897,13 @@ class MainActivity : ComponentActivity() {
                                         Text("FREEZE FRAME", color = cyan, style = MaterialTheme.typography.titleMedium)
                                         Text("Sensor values the ECU stored when a fault was set (Mode 02). Read-only. Many ECUs return nothing when no fault is stored.", color = muted)
                                         Button(onClick = { readFreezeFrame() }, enabled = connected && !freezeBusy) { Text(if (freezeBusy) "READING…" else "READ FREEZE FRAME") }
-                                        val fe = freezeEntries
-                                        if (fe != null) {
-                                            if (fe.isEmpty()) Text("The ECU returned no freeze-frame data.", color = Color(0xFFFFB84D))
-                                            fe.forEach { Text(it.name + ": " + it.value + " " + it.unit, color = Color.White) }
+                                        val fr = freezeResult
+                                        if (fr != null) {
+                                            Text(fr.headline(), color = if (fr.hasData) Color.White else Color(0xFFFFB84D))
+                                            Text(FreezeFrameText.dtcLine(fr), color = Color.White)
+                                            Text("Frame ${fr.frameNumber} • read " + java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date(fr.capturedAtMs)), color = muted, fontSize = 12.sp)
+                                            fr.items.forEach { Text(FreezeFrameText.itemLine(it), color = if (it.status.hasData) Color.White else Color(0xFFFFB84D), fontSize = 14.sp) }
+                                            fr.notes.forEach { Text(it, color = muted, fontSize = 12.sp) }
                                         }
                                         if (freezeNote.isNotBlank()) Text(freezeNote, color = muted, fontSize = 13.sp)
                                     }
@@ -923,7 +935,7 @@ class MainActivity : ComponentActivity() {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
                                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text("HEALTH REPORT", color = cyan, style = MaterialTheme.typography.titleMedium)
-                                        Text("A one-page PDF of the current readings, the last fault scan, distance and maintenance status. Anything not read is marked as such.", color = muted)
+                                        Text("A multi-page PDF with the current readings, every fault code from the last scan with its explanation, the freeze frame, the ECU identity, distance and maintenance status. Anything not read, and every failed request, is listed as such.", color = muted)
                                         Button(onClick = { shareHealthReport(dtcScanned, dtcCodes, gauges, connected, adapterName) }) { Text("SHARE HEALTH REPORT (PDF)") }
                                         if (reportNote.isNotBlank()) Text(reportNote, color = muted, fontSize = 13.sp)
                                     }
@@ -1081,7 +1093,8 @@ class MainActivity : ComponentActivity() {
                             onExportJson = { exportEcu("json") },
                             onExportCsv = { exportEcu("csv") },
                             onExportPdf = { exportEcu("pdf") },
-                            onBack = { selectedTab = 0 }
+                            onBack = { selectedTab = 0 },
+                            fromEarlierSession = ecuProfile?.let { EcuReport.isFromEarlierSession(it, processStartMs()) } == true
                         )
                         else -> LazyColumn(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             item {
@@ -1643,7 +1656,10 @@ class MainActivity : ComponentActivity() {
             try {
                 val facts = AdapterFacts(adapterNameForScan, adapterIdText, adapterVoltageText, protocolText)
                 val profile = withContext(Dispatchers.IO) {
-                    EcuScan.run(elmPort, facts, supportedPids, "v0.8.0 build 26", System.currentTimeMillis()) { sessionLog.append("EVT", "ecu scan: $it") }
+                    EcuScan.run(elmPort, facts, supportedPids, "v0.8.0 build 26", System.currentTimeMillis()) { step ->
+                        sessionLog.append("EVT", "ecu scan: $step")
+                        ecuNote = "Scanning the ECU (read-only): $step…"
+                    }
                 }
                 val dir = ecuDir()
                 val latest = java.io.File(dir, "profile_latest.json")
@@ -1652,7 +1668,7 @@ class MainActivity : ComponentActivity() {
                 ecuPrevious = ecuProfile
                 ecuProfile = profile
                 sessionLog.append("EVT", "ecu scan done: vin=" + profile.vin.status + " cal=" + profile.calIds.status + " cvn=" + profile.cvns.status)
-                ecuNote = "Scan finished."
+                ecuNote = EcuReport.scanSummary(profile)
             } catch (e: Exception) {
                 sessionLog.append("EVT", "ecu scan failed: " + (e.message ?: e.javaClass.simpleName))
                 ecuNote = "Scan failed: " + (e.message ?: "communication error")
@@ -1661,6 +1677,10 @@ class MainActivity : ComponentActivity() {
     }
 
     @Volatile private var adapterNameForScan: String = ""
+
+    /** Wall-clock time this app process started. A saved ECU profile older than this was read in an earlier run. */
+    private fun processStartMs(): Long =
+        System.currentTimeMillis() - (android.os.SystemClock.elapsedRealtime() - android.os.Process.getStartElapsedRealtime())
 
     private fun exportEcu(kind: String) {
         val p = ecuProfile ?: return
@@ -1793,40 +1813,29 @@ class MainActivity : ComponentActivity() {
 
     // DTC modes are one transaction: do not interleave them with live PID polling.
     @Synchronized
-    private fun readTroubleCodes(): DtcScanSummary {
-        val modes = listOf("03" to "STORED", "07" to "PENDING", "0A" to "PERMANENT")
-        var supported = 0
-        var noData = 0
-        var invalid = 0
-        var failed = 0
-        var partial = 0
-        val codes = mutableListOf<TroubleCodeResult>()
-        for ((mode, category) in modes) {
+    private fun readTroubleCodes(): DtcScanReport {
+        val framing = Framing.fromProtocolText(protocolText)
+        val modes = mutableListOf<DtcModeScan>()
+        var linkGone = false
+        for ((mode, category) in DtcScanReport.SERVICES) {
+            if (linkGone) {
+                modes += DtcScanClassifier.failure(mode, category, "link lost earlier in this scan")
+                continue
+            }
             val raw = try {
                 sendCommand(mode, 10000, keepLines = true)
             } catch (e: IOException) {
-                failed++
-                if (socket?.isConnected != true) break
+                modes += DtcScanClassifier.failure(mode, category, e.message ?: "communication error")
+                if (socket?.isConnected != true) linkGone = true
                 continue
             }
-            // Line-aware: more than three codes arrive as several frames, and each is checked
-            // with the same strict rules as before. Unreadable lines are counted, never dropped.
-            val read = ObdTroubleCodeDecoder.decodeResponse(raw, mode, Framing.fromProtocolText(protocolText))
-            when {
-                read.validFrames > 0 -> {
-                    supported++
-                    codes += read.codes.map { TroubleCodeResult(category, it) }
-                    if (read.unreadable.isNotEmpty()) partial++
-                }
-                read.noData && read.unreadable.isEmpty() -> noData++
-                else -> invalid++
-            }
+            // Line-aware: more than three codes arrive as several frames, and each line is checked with the
+            // same strict rules as before. Every service keeps its own state and its verbatim reply, so a
+            // failed or empty answer can never be shown as "no codes".
+            modes += DtcScanClassifier.classify(mode, category, raw, framing)
         }
-        return DtcScanSummary(codes.distinct(), supported, noData, invalid, failed, partial)
+        return DtcScanReport(System.currentTimeMillis(), protocolText, modes)
     }
-
-    private fun decodeTroubleCodes(response: String, mode: String): List<String> =
-        ObdTroubleCodeDecoder.decode(response, mode)
 
     private fun parsePid(command: String, response: String): String? =
         ObdPidResponseDecoder.decode(command, response)
@@ -2019,16 +2028,10 @@ class MainActivity : ComponentActivity() {
         java.io.File(filesDir, "trips").listFiles { f -> f.extension == "csv" }?.sortedBy { it.name }.orEmpty()
 
     @Synchronized
-    private fun readFreezeFrameBlocking(): List<FreezeFrame.Entry> {
-        val out = mutableListOf<FreezeFrame.Entry>()
-        for (pid in FreezeFrame.PIDS) {
-            if (pid !in supportedPids) continue
-            val spec = PidCatalog.forPid(pid) ?: continue
-            val reply = try { sendCommand(FreezeFrame.command(pid)) } catch (_: IOException) { break }
-            FreezeFrame.decode(spec, reply)?.let { out += it }
-        }
-        return out
-    }
+    private fun readFreezeFrameBlocking(): FreezeFrameResult =
+        // The reader goes through the same port as live polling (one command at a time). A timeout on one PID is recorded
+        // for that PID only; it no longer closes the Bluetooth socket or silently ends the read.
+        FreezeFrameReader.read(elmPort, supportedPids, System.currentTimeMillis()) { sessionLog.append("EVT", "freeze frame: $it") }
 
     private fun readFreezeFrame() {
         if (freezeBusy) return
@@ -2036,7 +2039,9 @@ class MainActivity : ComponentActivity() {
         freezeNote = ""
         uiScope.launch {
             try {
-                freezeEntries = withContext(Dispatchers.IO) { readFreezeFrameBlocking() }
+                val result = withContext(Dispatchers.IO) { readFreezeFrameBlocking() }
+                freezeResult = result
+                sessionLog.append("EVT", "freeze frame done: " + result.headline())
             } catch (e: Exception) {
                 freezeNote = "Could not read freeze frame: " + (e.message ?: "unknown error")
             } finally { freezeBusy = false }
@@ -2051,22 +2056,34 @@ class MainActivity : ComponentActivity() {
                 val interval = prefs.getInt(Maintenance.key(n, "interval"), -1).takeIf { it > 0 }
                 n to Maintenance.describe(Maintenance.status(interval, trackedKm, prefs.getFloat(Maintenance.key(n, "done"), 0f).toDouble()))
             }.filter { it.second != "No interval set" }
-            val lines = HealthReport.lines(HealthReport.Input(
+            val unavailable = gauges.filter { !it.available && it.label != "Manifold pressure" }.map { it.label }
+            // Everything collected in this session goes into the report: the full per-service fault scan, the freeze frame
+            // and the ECU identity as well as the live readings. Items that were not read are listed as not read.
+            val lines = ReportLayout.wrap(HealthReport.lines(HealthReport.Input(
                 now, isConnected, adapterName, readings,
                 if (scanned) codes.map { it.code to it.category } else null,
-                if (isConnected && trip.dataMs > 0) trip.distanceKm else null, trackedKm, maint
-            ))
+                if (isConnected && trip.dataMs > 0) trip.distanceKm else null, trackedKm, maint,
+                dtcScan = dtcReport, freezeFrame = freezeResult, ecuProfile = ecuProfile, unavailableReadings = unavailable
+            )), 76)
+            // The report is paginated and wrapped: no line is cut off and nothing is dropped when it runs past one page.
+            val pages = ReportLayout.paginate(lines, 50)
             val doc = android.graphics.pdf.PdfDocument()
-            val page = doc.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(595, 842, 1).create())
             val paint = android.graphics.Paint().apply { textSize = 11f; isAntiAlias = true; typeface = android.graphics.Typeface.MONOSPACE }
-            var y = 48f
-            lines.forEachIndexed { i, line ->
-                paint.isFakeBoldText = i == 0 || line.isNotEmpty() && line == line.uppercase() && !line.startsWith(" ")
-                paint.textSize = if (i == 0) 15f else 11f
-                if (y < 810f) page.canvas.drawText(line.take(80), 40f, y, paint)
-                y += if (i == 0) 24f else 15f
+            pages.forEachIndexed { pageIndex, pageLines ->
+                val page = doc.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(595, 842, pageIndex + 1).create())
+                var y = 48f
+                pageLines.forEachIndexed { i, line ->
+                    val isTitle = pageIndex == 0 && i == 0
+                    paint.isFakeBoldText = isTitle || line.isNotEmpty() && line == line.uppercase() && !line.startsWith(" ")
+                    paint.textSize = if (isTitle) 15f else 11f
+                    page.canvas.drawText(line, 40f, y, paint)
+                    y += if (isTitle) 24f else 15f
+                }
+                paint.isFakeBoldText = false
+                paint.textSize = 9f
+                page.canvas.drawText("Page ${pageIndex + 1} of ${pages.size}", 40f, 830f, paint)
+                doc.finishPage(page)
             }
-            doc.finishPage(page)
             val dir = java.io.File(filesDir, "reports").apply { mkdirs() }
             val file = java.io.File(dir, "health_" + java.text.SimpleDateFormat("yyyyMMdd_HHmm", java.util.Locale.US).format(java.util.Date()) + ".pdf")
             java.io.FileOutputStream(file).use { doc.writeTo(it) }

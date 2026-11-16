@@ -44,7 +44,9 @@ internal fun SxEcuInfo(
     onExportCsv: () -> Unit,
     onExportPdf: () -> Unit,
     onBack: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    /** The shown profile was saved by an earlier run of the app: it is history, not a fresh read. */
+    fromEarlierSession: Boolean = false
 ) {
     Column(modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 24.dp, vertical = 14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -73,6 +75,7 @@ internal fun SxEcuInfo(
             Section("NO SCAN YET") { Text("Tap SCAN ECU while connected. Nothing is shown here until the ECU has actually answered.", color = Sx.MutedForeground, fontSize = 12.sp) }
         } else {
             Text("Last scan: " + java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).format(java.util.Date(profile.capturedAtMs)), color = Sx.MutedForeground, fontSize = 11.sp)
+            if (fromEarlierSession) Text("Saved from an earlier session, not read now. Scan again to get current values.", color = Sx.Warning, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
             FieldSection("2  VIN", profile.vin)
             FieldSection("3  CALIBRATION IDS", profile.calIds)
             FieldSection("4  CALIBRATION VERIFICATION NUMBERS", profile.cvns)
