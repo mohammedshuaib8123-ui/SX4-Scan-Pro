@@ -797,6 +797,9 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
                             item {
+                                SxLiveDataCard(gauges, supportedPids, ecuOnline, nowMs, { pid -> parameterRegistry.state(ParameterRegistry.idOf("01", "%02X".format(pid))) })
+                            }
+                            item {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
                                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                         Text("LIVE DATA CAPABILITY", color = cyan, style = MaterialTheme.typography.titleMedium)
