@@ -274,6 +274,19 @@ class MainActivity : ComponentActivity() {
     private fun resetDataCheckLearning() = rt.resetDataCheckLearning()
     private fun addFillUp(odoKm: Double?, litres: Double?): String? = rt.addFillUp(odoKm, litres)
     private fun removeLastFillUp() = rt.removeLastFillUp()
+    // ---- real-car validation checklist (owner-recorded; never set by the app itself) ----
+    private var validation by mutableStateOf<List<ValidationRecord>>(emptyList())
+    private var validationPhase by mutableStateOf<ValidationPhase?>(null)
+    private fun tagValidationPhase(p: ValidationPhase) {
+        validationPhase = if (p == ValidationPhase.ENDED) null else p
+        sessionLog.append("EVT", ValidationPlan.logLine(p))
+    }
+    private fun recordValidationResult(id: String, s: ValidationStatus) {
+        validation = if (s == ValidationStatus.UNTESTED) validation.filter { it.id != id }
+        else ValidationPlan.record(validation, id, s, System.currentTimeMillis())
+        prefs.edit().putString("validation", ValidationCodec.encode(validation)).apply()
+        sessionLog.append("EVT", "validation result: $id ${s.name}")
+    }
     private fun closeSocket() = rt.closeSocket()
     private fun sendCommand(command: String, timeoutMs: Long = 5000, keepLines: Boolean = false, timedOut: TimeoutFlag? = null): String = rt.sendCommand(command, timeoutMs, keepLines, timedOut)
     internal fun requestDiscovery(reason: String = "manual"): DiscoveryOutcome = rt.requestDiscovery(reason)
@@ -417,6 +430,7 @@ class MainActivity : ComponentActivity() {
         }
         sessionLog.append("EVT", "app started")
         loadEcuProfiles()
+        validation = ValidationCodec.decode(prefs.getString("validation", null))
         loadParameterRegistry()
         ContextCompat.registerReceiver(this, btReceiver, btFilter, ContextCompat.RECEIVER_NOT_EXPORTED)
         // Open Headunit is another app, so its status broadcast needs an exported receiver.
@@ -713,6 +727,9 @@ class MainActivity : ComponentActivity() {
                         1 -> LazyColumn(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             item {
                                 DataCheckCard(dataFindings, dataTally, dataBaselines, dataSummary, connected, panel, cyan, muted) { resetDataCheckLearning() }
+                            }
+                            item {
+                                ValidationCard(validation, validationPhase, panel, cyan, muted, { tagValidationPhase(it) }, { id, s -> recordValidationResult(id, s) })
                             }
                             item {
                                 FuelLogCard(fuelFills, nowMs, panel, cyan, muted, { o, l -> addFillUp(o, l) }, { removeLastFillUp() })
@@ -1624,7 +1641,10 @@ class MainActivity : ComponentActivity() {
                 now, isConnected, adapterName, readings,
                 if (scanned) codes.map { it.code to it.category } else null,
                 if (isConnected && trip.dataMs > 0) trip.distanceKm else null, trackedKm, maint,
-                dtcScan = dtcReport, freezeFrame = freezeResult, ecuProfile = ecuProfile, unavailableReadings = unavailable
+                dtcScan = dtcReport, freezeFrame = freezeResult, ecuProfile = ecuProfile, unavailableReadings = unavailable,
+                ruleReadings = if (isConnected) rt.ruleSnapshot else emptyList(),
+                ruleNowMs = System.currentTimeMillis(),
+                validation = ValidationPlan.reportLines(validation)
             )), 76)
             // The report is paginated and wrapped: no line is cut off and nothing is dropped when it runs past one page.
             val pages = ReportLayout.paginate(lines, 50)

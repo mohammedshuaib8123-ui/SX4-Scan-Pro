@@ -437,6 +437,8 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
         if (nowMs - lastBaselineSaveMs >= 60_000L) saveBaselines(nowMs)
     }
     var dataTallyMs = 0L
+    /** Latest raw readings (own timestamps) for the health rules; the rules drop anything stale, so an old snapshot cannot read as live. */
+    @Volatile var ruleSnapshot: List<RuleReading> = emptyList()
 
     fun saveBaselines(nowMs: Long = System.currentTimeMillis()) {
         lastBaselineSaveMs = nowMs
@@ -846,6 +848,7 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
                             historyVersion++
                             recordTrip(gauges)
                             if (connection.snapshot.ecuAvailable) runDataCheck(nowMs, poller)
+                            ruleSnapshot = HealthRules.PIDS.mapNotNull { (pid, name, unit) -> poller.reading(pid)?.let { RuleReading(name, it.value, unit, it.atMs) } }
                         }
                         val rpmGauge = gauges.firstOrNull { it.label == "Engine RPM" }
                         val sensorReadings = gauges.mapNotNull { gauge ->
