@@ -277,11 +277,11 @@ class MainActivity : ComponentActivity() {
     // ---- real-car validation checklist (owner-recorded; never set by the app itself) ----
     private var validation by mutableStateOf<List<ValidationRecord>>(emptyList())
     private var validationPhase by mutableStateOf<ValidationPhase?>(null)
-    private fun setValidationPhase(p: ValidationPhase) {
+    private fun tagValidationPhase(p: ValidationPhase) {
         validationPhase = if (p == ValidationPhase.ENDED) null else p
         sessionLog.append("EVT", ValidationPlan.logLine(p))
     }
-    private fun setValidationResult(id: String, s: ValidationStatus) {
+    private fun recordValidationResult(id: String, s: ValidationStatus) {
         validation = if (s == ValidationStatus.UNTESTED) validation.filter { it.id != id }
         else ValidationPlan.record(validation, id, s, System.currentTimeMillis())
         prefs.edit().putString("validation", ValidationCodec.encode(validation)).apply()
@@ -729,7 +729,7 @@ class MainActivity : ComponentActivity() {
                                 DataCheckCard(dataFindings, dataTally, dataBaselines, dataSummary, connected, panel, cyan, muted) { resetDataCheckLearning() }
                             }
                             item {
-                                ValidationCard(validation, validationPhase, panel, cyan, muted, { setValidationPhase(it) }, { id, s -> setValidationResult(id, s) })
+                                ValidationCard(validation, validationPhase, panel, cyan, muted, { tagValidationPhase(it) }, { id, s -> recordValidationResult(id, s) })
                             }
                             item {
                                 FuelLogCard(fuelFills, nowMs, panel, cyan, muted, { o, l -> addFillUp(o, l) }, { removeLastFillUp() })
