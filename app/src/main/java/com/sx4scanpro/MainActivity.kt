@@ -130,11 +130,11 @@ private fun GaugeCard(gauge: GaugeValue) {
 
 /** Sensors that already have their own dial or tile; the picker skips them to avoid duplicates. */
 /** Sensors the home screen always shows (fuel level, control module voltage), polled whether or not picked in Settings. */
-private val HOME_PIDS = setOf(0x2F, 0x42, 0x23, 0x5E)
+internal val HOME_PIDS = setOf(0x2F, 0x42, 0x23, 0x5E)
 private val CORE_PIDS = setOf(0x04, 0x05, 0x0B, 0x0C, 0x0D, 0x0F, 0x10, 0x11, 0x2C)
 
 private const val RECEIVER_PACKAGE = "com.andrerinas.headunitrevived"
-private val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
+internal val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
 internal class TimeoutFlag { var hit = false }
 data class GaugeValue(val label: String, val value: String, val unit: String = "", val available: Boolean = true, val capturedAtMs: Long = System.currentTimeMillis())
@@ -148,9 +148,122 @@ class MainActivity : ComponentActivity() {
         refreshPairedDevices()
     }
     private val prefs by lazy { getSharedPreferences("sx4_scan_pro", MODE_PRIVATE) }
+    // ---- Session state and engine live in ObdRuntime (process-owned); these are thin views of it. ----
+    private val rt: ObdRuntime get() = ObdRuntime.get(this)
+    private var selectedAddress: String?
+        get() = rt.selectedAddress
+        set(v) { rt.selectedAddress = v }
+    private var connConfig: ConnectionConfig
+        get() = rt.connConfig
+        set(v) { rt.connConfig = v }
+    private var extraPids: Set<Int>
+        get() = rt.extraPids
+        set(v) { rt.extraPids = v }
+    private var alertSensors: Set<String>
+        get() = rt.alertSensors
+        set(v) { rt.alertSensors = v }
+    private var trackedKm: Double
+        get() = rt.trackedKm
+        set(v) { rt.trackedKm = v }
+    private var tripTick: Int
+        get() = rt.tripTick
+        set(v) { rt.tripTick = v }
+    private var tripStartMs: Long
+        get() = rt.tripStartMs
+        set(v) { rt.tripStartMs = v }
+    private var tripNote: String
+        get() = rt.tripNote
+        set(v) { rt.tripNote = v }
+    private var socket: BluetoothSocket?
+        get() = rt.socket
+        set(v) { rt.socket = v }
+    private var supportedPids: Set<Int>
+        get() = rt.supportedPids
+        set(v) { rt.supportedPids = v }
+    private var protocolText: String
+        get() = rt.protocolText
+        set(v) { rt.protocolText = v }
+    private var ecuProfile: EcuProfile?
+        get() = rt.ecuProfile
+        set(v) { rt.ecuProfile = v }
+    private var ecuPrevious: EcuProfile?
+        get() = rt.ecuPrevious
+        set(v) { rt.ecuPrevious = v }
+    private var ecuScanning: Boolean
+        get() = rt.ecuScanning
+        set(v) { rt.ecuScanning = v }
+    private var ecuNote: String
+        get() = rt.ecuNote
+        set(v) { rt.ecuNote = v }
+    private var adapterIdText: String
+        get() = rt.adapterIdText
+        set(v) { rt.adapterIdText = v }
+    private var adapterVoltageText: String
+        get() = rt.adapterVoltageText
+        set(v) { rt.adapterVoltageText = v }
+    private var linkState: LinkState
+        get() = rt.linkState
+        set(v) { rt.linkState = v }
+    private var warningEngine: WarningEngine
+        get() = rt.warningEngine
+        set(v) { rt.warningEngine = v }
+    private var userInitiatedDisconnect: Boolean
+        get() = rt.userInitiatedDisconnect
+        set(v) { rt.userInitiatedDisconnect = v }
+    private var connSnapshot: ConnectionSnapshot
+        get() = rt.connSnapshot
+        set(v) { rt.connSnapshot = v }
+    private var pollStalled: Boolean
+        get() = rt.pollStalled
+        set(v) { rt.pollStalled = v }
+    private var captureSession: String
+        get() = rt.captureSession
+        set(v) { rt.captureSession = v }
+    private var parameterRegistry: ParameterRegistry
+        get() = rt.parameterRegistry
+        set(v) { rt.parameterRegistry = v }
+    private var pollingLive: Boolean
+        get() = rt.pollingLive
+        set(v) { rt.pollingLive = v }
+    private var lastDiscovery: DiscoveryOutcome?
+        get() = rt.lastDiscovery
+        set(v) { rt.lastDiscovery = v }
+    private var sessionStartMs: Long
+        get() = rt.sessionStartMs
+        set(v) { rt.sessionStartMs = v }
+    private var adapterNameForScan: String
+        get() = rt.adapterNameForScan
+        set(v) { rt.adapterNameForScan = v }
+    private val tripSession: TripSession get() = rt.tripSession
+    private val trip: TripStats get() = rt.trip
+    private val connection: ConnectionMachine get() = rt.connection
+    private val recoveryPolicy: RecoveryPolicy get() = rt.recoveryPolicy
+    private val stallWatchdog: StallWatchdog get() = rt.stallWatchdog
+    private val recovery: RecoverySupervisor get() = rt.recovery
+    private val traffic: TrafficLog get() = rt.traffic
+    private val sessionLog: SessionLog get() = rt.sessionLog
+    private val capture: CaptureStore get() = rt.capture
+    private val pollGate: PollGate get() = rt.pollGate
+    private val elmPort: ElmPort get() = rt.elmPort
+    private val discoveryController: DiscoveryController get() = rt.discoveryController
+    private val registryStore: RegistryStore get() = rt.registryStore
+    private fun closeSocket() = rt.closeSocket()
+    private fun sendCommand(command: String, timeoutMs: Long = 5000, keepLines: Boolean = false, timedOut: TimeoutFlag? = null): String = rt.sendCommand(command, timeoutMs, keepLines, timedOut)
+    internal fun requestDiscovery(reason: String = "manual"): DiscoveryOutcome = rt.requestDiscovery(reason)
+    private fun readTroubleCodes(): DtcScanReport = rt.readTroubleCodes()
+    private fun readFreezeFrameBlocking(): FreezeFrameResult = rt.readFreezeFrameBlocking()
+    private fun runEcuScan(scope: kotlinx.coroutines.CoroutineScope) = rt.runEcuScan(scope)
+    private fun startTrip(forceNew: Boolean = false) = rt.startTrip(forceNew)
+    private fun endTrip() = rt.endTrip()
+    private fun holdTrip() = rt.holdTrip()
+    private fun tripClock(now: Long) = rt.tripClock(now)
+    private fun loadEcuProfiles() = rt.loadEcuProfiles()
+    private fun loadParameterRegistry() = rt.loadParameterRegistry()
+    private fun buildPoller(): LivePoller = rt.buildPoller()
+    private fun ecuDir() = rt.ecuDir()
+    private fun logTraffic(tag: String, text: String) = rt.logTraffic(tag, text)
     private var btAccess by mutableStateOf(AccessStatus.NEEDS_REQUEST)
     private var scanAccess by mutableStateOf(AccessStatus.NEEDS_REQUEST)
-    private var selectedAddress by mutableStateOf<String?>(null)
     private val pairedDevices = mutableStateListOf<BtDevice>()
     private val foundDevices = mutableStateListOf<BtDevice>()
     private var scanning by mutableStateOf(false)
@@ -158,8 +271,6 @@ class MainActivity : ComponentActivity() {
     private var speedUnit by mutableStateOf(SpeedUnit.KMH)
     private var boostUnit by mutableStateOf(BoostUnit.KPA)
     private var deviceG by mutableStateOf<Double?>(null)
-    private var connConfig by mutableStateOf(ConnectionConfig())
-    private var extraPids by mutableStateOf<Set<Int>>(emptySet())
     private var alertLimits by mutableStateOf(AlertLimits())
     private var themeMode by mutableStateOf(ThemeMode.AUTO)
     private var lightLux by mutableStateOf<Float?>(null)
@@ -174,13 +285,7 @@ class MainActivity : ComponentActivity() {
             )
         }
     }
-    private val tripSession = TripSession()
-    private val trip: TripStats get() = tripSession.stats
-    private var lastTripPersistMs = 0L
-    private var stopSessionTick by mutableStateOf(0)
-    private var lastTripNotice = ""
     /** Gauge keys ("coolant", "rpm", "boost") currently above an owner-set limit. */
-    private var alertSensors by mutableStateOf(emptySet<String>())
     private var welcomeSettings by mutableStateOf(WelcomeSettings())
     private var welcomePlayedOnce = false
     private var driveMode by mutableStateOf(DriveMode.SPORT)
@@ -190,15 +295,8 @@ class MainActivity : ComponentActivity() {
     private var freezeNote by mutableStateOf("")
     private var freezeBusy by mutableStateOf(false)
     private val uiScope = kotlinx.coroutines.MainScope()
-    private var trackedKm by mutableStateOf(0.0)
     private var maintVersion by mutableStateOf(0)
     private var reportNote by mutableStateOf("")
-    private var tripTick by mutableStateOf(0)
-    private var tripStartMs by mutableStateOf(0L)
-    private var tripWriter: java.io.BufferedWriter? = null
-    private var tripFile: java.io.File? = null
-    private var tripHeaderWritten = false
-    private var tripNote by mutableStateOf("")
     private val lightListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) { lightLux = event.values[0] }
         override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) { }
@@ -239,62 +337,12 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-    private var socket: BluetoothSocket? = null
-    private var supportedPids: Set<Int> = emptySet()
-    @Volatile private var protocolText: String = ""
-    private var ecuProfile by mutableStateOf<EcuProfile?>(null)
-    private var ecuPrevious by mutableStateOf<EcuProfile?>(null)
-    private var ecuScanning by mutableStateOf(false)
-    private var ecuNote by mutableStateOf("")
-    @Volatile private var adapterIdText: String = ""
-    @Volatile private var adapterVoltageText: String = ""
-    private var linkState by mutableStateOf(LinkState.COMMUNICATING)
     private val engineStartDetector = EngineStartDetector()
-    // Empty until verified SX4-specific rules are approved; pipeline is wired but inactive.
-    @Volatile private var warningEngine = WarningEngine()
     private var speechReady = false
     private var textToSpeech: TextToSpeech? = null
     private var chime: ToneGenerator? = null
     private var cabinChimeTrack: AudioTrack? = null
     private var welcomeOverlayVisible by mutableStateOf(false)
-    @Volatile private var userInitiatedDisconnect = false
-    /** P5: the one connection state machine, its recovery driver and the poll-stall watchdog. */
-    private var connSnapshot by mutableStateOf(ConnectionSnapshot())
-    private val connection = ConnectionMachine { old, new ->
-        connSnapshot = new
-        if (old.state != new.state || old.failure != new.failure) {
-            sessionLog.append("EVT", "connection " + old.state + " -> " + new.state + (if (new.reason.isNotBlank()) ": " + new.reason else ""))
-        }
-    }
-    private val recoveryPolicy = RecoveryPolicy()
-    private val stallWatchdog = StallWatchdog(recoveryPolicy.stallMs)
-    @Volatile private var pollStalled = false
-    private val recoveryPorts = object : RecoveryPorts {
-        override fun closeSocket() { this@MainActivity.closeSocket() }
-        /** The same set-up as the first connection, minus discovery (no new PID requests). Throws when the ECU does not answer. */
-        override fun reconnect(): Boolean { connectAndRead(reconnecting = true); return true }
-        override fun pausePolling(): Boolean = pollGate.pause()
-        override fun resumePolling() = pollGate.resume()
-        override fun sleep(ms: Long) {
-            var left = ms
-            while (left > 0 && !aborted()) { val step = minOf(left, 250L); Thread.sleep(step); left -= step }
-        }
-        override fun aborted(): Boolean = userInitiatedDisconnect
-        override fun now(): Long = System.currentTimeMillis()
-        override fun log(message: String) { sessionLog.append("EVT", message) }
-    }
-    private val recovery by lazy { RecoverySupervisor(connection, recoveryPorts, recoveryPolicy) }
-    private val traffic = TrafficLog()
-    private val sessionLog by lazy { SessionLog(java.io.File(filesDir, "logs")) }
-    private val capture by lazy { CaptureStore(java.io.File(filesDir, "capture")) }
-    @Volatile private var captureSession: String = "S0"
-    /** Structured, lossless record of one adapter transaction (see RawExchange). Never throws. */
-    private fun recordExchange(command: String, raw: String, status: String, t0: Long, error: String? = null) {
-        stallWatchdog.progress(System.currentTimeMillis())
-        capture.record(captureSession, System.currentTimeMillis(), command, raw, status, System.currentTimeMillis() - t0, protocolText, error = error)
-    }
-    /** One place for adapter traffic: the on-screen preview and the persistent, shareable file. */
-    private fun logTraffic(tag: String, text: String) { traffic.add(tag, text); sessionLog.append(tag, text) }
     private val mainHandler = Handler(Looper.getMainLooper())
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -313,9 +361,6 @@ class MainActivity : ComponentActivity() {
         )
         extraPids = PidCatalog.parseSelection(prefs.getString("extra_pids", null))
         trackedKm = prefs.getFloat("tracked_km", 0f).toDouble()
-        // A trip saved before the process died comes back paused; it resumes only when live data returns.
-        TripCodec.decode(prefs.getString("trip_active", null))?.let { tripSession.restore(it); tripStartMs = it.startMs }
-        TripService.onStopRequested = { runOnUiThread { stopSessionTick++ } }
         if (android.os.Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 9101)
         driveMode = DriveMode.parse(prefs.getString("drive_mode", null))
@@ -371,6 +416,9 @@ class MainActivity : ComponentActivity() {
             }
         }
         chime = ToneGenerator(AudioManager.STREAM_MUSIC, 72)
+        // Audio hooks only; the session keeps running if this Activity goes away.
+        rt.onConnected = { if (welcomeSettings.shouldPlay(welcomePlayedOnce)) playEngineWelcome(); welcomePlayedOnce = true }
+        rt.onAlert = { sensors -> playAlert(sensors) }
         setContent { MaterialTheme { Dashboard() } }
     }
 
@@ -381,15 +429,9 @@ class MainActivity : ComponentActivity() {
         val panel = Sx.Card
         val cyan = Sx.Primary
         val muted = Sx.MutedForeground
-        var status by remember { mutableStateOf("Not connected") }
-        var adapterName by remember { mutableStateOf("Vgate iCar Pro • Bluetooth Classic") }
-        var gauges by remember { mutableStateOf(listOf(
-            GaugeValue("Engine RPM", "--", "rpm", false), GaugeValue("Vehicle speed", "--", "km/h", false),
-            GaugeValue("Coolant temperature", "--", "°C", false), GaugeValue("Intake air temperature", "--", "°C", false),
-            GaugeValue("Manifold pressure", "--", "kPa", false), GaugeValue("Turbo boost", "--", "kPa", false),
-            GaugeValue("MAF airflow", "--", "g/s", false), GaugeValue("Calculated engine load", "--", "%", false),
-            GaugeValue("Throttle position", "--", "%", false), GaugeValue("EGR commanded", "--", "%", false)
-        )) }
+        var status by rt::status
+        var adapterName by rt::adapterName
+        var gauges by rt::gauges
         var selectedTab by rememberSaveable { mutableStateOf(0) }
         var showWall by rememberSaveable { mutableStateOf(false) }
         var dtcStatus by remember { mutableStateOf("Connect the Vgate adapter to read engine ECU fault codes.") }
@@ -400,7 +442,7 @@ class MainActivity : ComponentActivity() {
         var readiness by remember { mutableStateOf(computeHeadUnitReadiness()) }
         var logPreview by remember { mutableStateOf<List<String>>(emptyList()) }
         var warningPreview by remember { mutableStateOf(false) }
-        var warningMessage by remember { mutableStateOf("") }
+        var warningMessage by rt::warningMessage
         val scope = rememberCoroutineScope()
         var exportChoice by remember { mutableStateOf(false) }
         if (exportChoice) {
@@ -425,8 +467,8 @@ class MainActivity : ComponentActivity() {
         val ecuOnline = connected && linkState == LinkState.COMMUNICATING
         val connecting = status == "Connecting…"
         val haptic = LocalHapticFeedback.current
-        val history = remember { GaugeHistory() }
-        var historyVersion by remember { mutableStateOf(0) }
+        val history = rt.history
+        var historyVersion by rt::historyVersion
         var nowMs by remember { mutableStateOf(System.currentTimeMillis()) }
         // One-second clock so readings that stop updating are marked STALE instead of looking live.
         LaunchedEffect(Unit) {
@@ -453,16 +495,7 @@ class MainActivity : ComponentActivity() {
         // Coming back from installing the receiver, or opening the tab, re-checks everything.
         LaunchedEffect(selectedTab) { if (selectedTab == 2) readiness = computeHeadUnitReadiness() }
 
-        fun disconnect(stopTrip: Boolean = true) {
-            if (stopTrip) endTrip()
-            userInitiatedDisconnect = true
-            closeSocket()
-            connection.userDisconnected()
-            status = "Disconnected"
-            gauges = gauges.map { it.copy(value = "--", available = false) }
-        }
-        // Notification "Stop trip": ends the trip AND the live session (same path as the DISCONNECT button).
-        LaunchedEffect(stopSessionTick) { if (stopSessionTick > 0) disconnect() }
+        fun disconnect(stopTrip: Boolean = true) { rt.disconnect(stopTrip) }
         fun connect() {
             if (btAccess != AccessStatus.GRANTED) {
                 status = if (btAccess == AccessStatus.BLOCKED) BluetoothAccess.message(btAccess)
@@ -472,164 +505,7 @@ class MainActivity : ComponentActivity() {
             }
             // One connection or recovery at a time: a second tap must not open a second socket.
             if (connection.snapshot.busy || recovery.isRecovering()) return
-            scope.launch {
-                disconnect(stopTrip = false)
-                userInitiatedDisconnect = false
-                pollStalled = false
-                lastDiscovery = null
-                sessionStartMs = System.currentTimeMillis()
-                history.clear()
-                status = "Connecting…"
-                connection.connectRequested()
-                var watchdog: kotlinx.coroutines.Job? = null
-                try {
-                    val result = withContext(Dispatchers.IO) { connectAndRead() }
-                    adapterName = result.first
-                    adapterNameForScan = result.first
-                    connection.ready(System.currentTimeMillis())
-                    status = "Connected"
-                    startTrip()
-                    // The greeting plays only once the ECU has really answered (connectAndRead throws otherwise).
-                    if (welcomeSettings.shouldPlay(welcomePlayedOnce)) playEngineWelcome()
-                    welcomePlayedOnce = true
-                    var poller = buildPoller()
-                    linkState = LinkState.COMMUNICATING
-                    var lastRecordMs = 0L
-                    var lastPerfLogMs = System.currentTimeMillis()
-                    // Backstop for a hung adapter read: closing the socket turns the stall into an ordinary lost-link recovery.
-                    watchdog = launch(Dispatchers.IO) {
-                        while (isActive) {
-                            delay(2000)
-                            if (stallWatchdog.isStalled(System.currentTimeMillis()) && !recovery.isRecovering()) {
-                                pollStalled = true
-                                stallWatchdog.disarm()
-                                sessionLog.append("EVT", "polling stalled: no adapter reply for ${recoveryPolicy.stallMs / 1000} s, closing the socket")
-                                closeSocket()
-                            }
-                        }
-                    }
-                    sessionLog.append("EVT", "live polling started: " + poller.scheduler.pids().size + " PIDs scheduled, " + supportedPids.size + " advertised")
-                    pollingLive = true
-                    var recoveryFailed = false
-                    while (isActive && !userInitiatedDisconnect) {
-                        val before = poller.monitor.state
-                        var lost: Exception? = null
-                        var recoveryEvent: PollEvent.Recovery? = null
-                        val sliced = withContext(Dispatchers.IO) {
-                            if (pollGate.tryEnterSlice()) {
-                                stallWatchdog.arm(System.currentTimeMillis())
-                                try { recoveryEvent = runPollSlice(poller) } catch (e: IOException) { lost = e }
-                                finally { stallWatchdog.disarm(); pollGate.exitSlice() }
-                                true
-                            } else false
-                        }
-                        if (!sliced) delay(50)   // discovery is using the adapter
-                        val nowMs = System.currentTimeMillis()
-                        val after = poller.monitor.state
-                        if (after != before) sessionLog.append("EVT", "ECU link $before -> $after")
-                        linkState = after
-                        // A lost socket (or a stalled adapter) is rebuilt; ECU silence alone never touches Bluetooth.
-                        var lossKind: FailureKind? = null
-                        var lossDetail = ""
-                        val ioLoss = lost
-                        if (ioLoss != null) {
-                            lossKind = if (pollStalled) FailureKind.POLLING_STALLED else FailureClassifier.fromException(ioLoss, connection.snapshot.state)
-                            lossDetail = ioLoss.message ?: ""
-                        } else if (userInitiatedDisconnect) break
-                        else {
-                            val ev = recoveryEvent
-                            if (recovery.observeEcu(after, ev != null, ev?.recovered == true, nowMs) == EcuAction.RECONNECT_BLUETOOTH) {
-                                lossKind = FailureKind.ADAPTER_TIMEOUT; lossDetail = "adapter stayed silent"
-                            }
-                        }
-                        val lossNow = lossKind
-                        if (lossNow != null) {
-                            pollStalled = false
-                            status = "Reconnecting…"
-                            gauges = gauges.map { it.copy(value = "--", available = false) }
-                            val ok = withContext(Dispatchers.IO) { recovery.recoverBluetooth(lossNow, lossDetail) }
-                            if (!ok) { recoveryFailed = true; break }
-                            poller = buildPoller()
-                            linkState = LinkState.COMMUNICATING
-                            pollingLive = true
-                            status = "Connected"
-                            continue
-                        }
-                        // Readings are shown only while the ECU is really answering; never stale values as live.
-                        gauges = if (!connection.snapshot.ecuAvailable) gauges.map { it.copy(value = "--", available = false) }
-                        else GaugeAssembler.build({ poller.reading(it) }, supportedPids, extraPids, nowMs)
-                            .map { GaugeValue(it.label, it.value, it.unit, it.available, it.capturedAtMs) }
-                        if (nowMs - lastPerfLogMs >= 60_000L) {   // bounded: one short block a minute into the rolling session log
-                            lastPerfLogMs = nowMs
-                            poller.metrics.summary().forEach { sessionLog.append("PERF", it) }
-                        }
-                        if (nowMs - lastRecordMs >= 1000L) {
-                            lastRecordMs = nowMs
-                            gauges.forEach { g -> history.record(g.label, if (g.available) g.value.toDoubleOrNull() else null) }
-                            historyVersion++
-                            recordTrip(gauges)
-                        }
-                        val rpmGauge = gauges.firstOrNull { it.label == "Engine RPM" }
-                        val sensorReadings = gauges.mapNotNull { gauge ->
-                            val sensor = when (gauge.label) {
-                                "Coolant temperature" -> "coolant"
-                                "Turbo boost" -> "boost"
-                                "MAF airflow" -> "maf"
-                                "Calculated engine load" -> "load"
-                                "Engine RPM" -> "rpm"
-                                else -> null
-                            } ?: return@mapNotNull null
-                            sensor to SensorReading(
-                                value = gauge.value.toDoubleOrNull(),
-                                capturedAtMs = gauge.capturedAtMs,
-                                supported = gauge.available,
-                                valid = gauge.available
-                            )
-                        }.toMap()
-                        val fired = warningEngine.evaluate(sensorReadings, System.currentTimeMillis())
-                        alertSensors = AlertTargets.sensorsFor(warningEngine.activeRuleIds())
-                        if (fired.isNotEmpty()) {
-                            warningMessage = AlertTargets.bannerText(alertSensors)
-                            playAlert(alertSensors)
-                        } else if (alertSensors.isEmpty()) warningMessage = ""
-                        // While the ECU is down, pace the retries with back-off (then slow standby) instead of a fixed 1 s loop.
-                        val pace = recovery.ecuPauseMs().let { if (it > 0) it else poller.pauseMs(nowMs) }
-                        var waited = 0L
-                        while (waited < pace && isActive && !userInitiatedDisconnect) { val step = minOf(250L, pace - waited); delay(step); waited += step }
-                    }
-                    if (recoveryFailed) {
-                        holdTrip()
-                        closeSocket()
-                        status = connection.snapshot.reason.ifBlank { "Connection lost" }
-                        alertSensors = emptySet()
-                        gauges = gauges.map { it.copy(value = "--", available = false) }
-                    } else if (status == "Connected") {
-                        connection.userDisconnected()
-                        status = "Disconnected"
-                        alertSensors = emptySet()
-                        gauges = gauges.map { it.copy(value = "--", available = false) }
-                    }
-                } catch (e: SecurityException) {
-                    holdTrip()
-                    closeSocket()
-                    connection.connectFailed(FailureKind.INITIALIZATION_INTERRUPTED, "Bluetooth permission is required")
-                    status = "Permission required"
-                    alertSensors = emptySet()
-                } catch (e: Exception) {
-                    val kind = FailureClassifier.fromException(e, connection.snapshot.state)
-                    holdTrip()
-                    closeSocket()
-                    alertSensors = emptySet()
-                    // Tapping DISCONNECT closes the socket mid-read; that is not a failure.
-                    if (userInitiatedDisconnect) connection.userDisconnected()
-                    else connection.connectFailed(kind, e.message ?: "Connection failed")
-                    status = if (userInitiatedDisconnect) "Disconnected" else (e.message ?: "Connection failed")
-                    if (!userInitiatedDisconnect) gauges = gauges.map { it.copy(value = "--", available = false) }
-                } finally {
-                    watchdog?.cancel()
-                    stallWatchdog.disarm()
-                }
-            }
+            rt.connectSession()
         }
         fun scanFaultCodes() {
             if (!connected) {
@@ -1417,283 +1293,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** [reconnecting] repeats the same set-up after a lost link: same adapter init and header/protocol restore, no discovery, same capture session. */
-    private fun connectAndRead(reconnecting: Boolean = false): Pair<String, Unit> {
-        if (!reconnecting) captureSession = "S" + System.currentTimeMillis()
-        if (android.os.Build.VERSION.SDK_INT >= 31 &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED
-        ) throw SecurityException("Bluetooth permission not granted")
-        val adapter = BluetoothAdapter.getDefaultAdapter() ?: throw IOException("Bluetooth is not supported on this device")
-        if (!adapter.isEnabled) throw IOException("Turn on Bluetooth")
-        val bonded = adapter.bondedDevices.orEmpty().map { BtDevice(it.name ?: it.address, it.address, true) }
-        // The user's explicit choice (Settings, OBD ADAPTER) wins; otherwise a single recognised adapter is used.
-        val chosen = when (val choice = AdapterSelector.choose(bonded, selectedAddress)) {
-            is AdapterChoice.Use -> choice.device
-            is AdapterChoice.Unavailable -> throw IOException(choice.message)
-        }
-        val device: BluetoothDevice = adapter.getRemoteDevice(chosen.address)
-        adapter.cancelDiscovery()
-        socket = openSocket(device)
-        connection.socketOpened()
-        connection.adapterInitializing()
-        val config = connConfig
-        sendCommand("ATZ", 5000)
-        config.initCommands().forEach { sendCommand(it) }
-        // Facts for the session log only; a failed query here never blocks connecting.
-        sessionLog.append("EVT", "connect: adapter=" + chosen.name + " " + chosen.address)
-        adapterIdText = runCatching { sendCommand("ATI", 3000) }.getOrDefault("")
-        adapterVoltageText = runCatching { sendCommand("ATRV", 3000) }.getOrDefault("")
-        connection.ecuInitializing()
-        // "Connected" must mean the ECU answered, not just that the adapter did.
-        val negotiation = EcuNegotiation { command, timeoutMs -> sendCommand(command, timeoutMs) }
-            .apply { preferredProtocol = config.protocol.elmNumber }.run()
-        if (negotiation.supportedPids.isEmpty()) {
-            closeSocket()
-            throw IOException(negotiation.failure)
-        }
-        supportedPids = negotiation.supportedPids
-        // The protocol is only known once the ECU has answered, so ATDP is asked now, not before negotiation.
-        protocolText = runCatching { sendCommand("ATDP", 3000) }.getOrDefault("")
-        sessionLog.append("EVT", "protocol=" + protocolText + " framing=" + Framing.fromProtocolText(protocolText))
-        // P3: the same discovery path a later manual request uses. It never decides whether the connection succeeds.
-        if (!reconnecting) {
-            pollingLive = false
-            runCatching { requestDiscovery("connect") }
-        }
-        return (device.name ?: "Bluetooth OBD adapter") to Unit
-    }
 
-    /** Secure SPP first, then insecure SPP: many ELM327 clones only accept the second. */
-    private fun openSocket(device: BluetoothDevice): BluetoothSocket {
-        val secure: () -> BluetoothSocket = { device.createRfcommSocketToServiceRecord(SPP_UUID) }
-        val insecure: () -> BluetoothSocket = { device.createInsecureRfcommSocketToServiceRecord(SPP_UUID) }
-        val makers = if (connConfig.insecureFirst) listOf(insecure, secure) else listOf(secure, insecure)
-        var last: IOException? = null
-        for (make in makers) {
-            val candidate = make()
-            try {
-                candidate.connect()
-                return candidate
-            } catch (e: IOException) {
-                last = e
-                try { candidate.close() } catch (_: Exception) { }
-            }
-        }
-        throw IOException("Could not open the Bluetooth link to the adapter (${last?.message ?: "refused"}). Check it is plugged in, the ignition is on and no other app is using it.")
-    }
-
-    @Synchronized
-    private fun sendCommand(command: String, timeoutMs: Long = 5000, keepLines: Boolean = false, timedOut: TimeoutFlag? = null): String {
-        // Single policy gate for every command: anything not on the read-only allowlist never reaches the adapter.
-        ReadOnlyGuard.check(command).let { v ->
-            if (v is GuardVerdict.Blocked) {
-                logTraffic("BLOCKED", "$command: ${v.reason}")
-                recordExchange(command, "", RawExchange.STATUS_BLOCKED, System.currentTimeMillis(), v.reason)
-                throw BlockedCommandException(command, v.reason)
-            }
-        }
-        val s = socket ?: throw IOException("Not connected")
-        if (!s.isConnected) throw IOException("OBD adapter connection is closed")
-        val t0 = System.currentTimeMillis()
-        val out = StringBuilder()
-
-        // A timed-out transaction makes the byte stream ambiguous. Never send another
-        // command on that stream; close it so a late ECU reply cannot be misread.
-        try {
-            val input = s.inputStream
-            // Drain bytes already waiting from a completed/abandoned transaction.
-            // This is bounded to avoid hanging if an adapter continuously streams data.
-            var drained = 0
-            while (input.available() > 0 && drained < 4096) {
-                if (input.read() == -1) throw IOException("OBD adapter closed the connection")
-                drained++
-            }
-
-            s.outputStream.write((command + "\r").toByteArray(Charsets.US_ASCII))
-            s.outputStream.flush()
-            logTraffic("TX", command)
-            val deadline = System.currentTimeMillis() + timeoutMs
-            var promptReceived = false
-            while (System.currentTimeMillis() < deadline) {
-                if (input.available() > 0) {
-                    val b = input.read()
-                    if (b == -1) throw IOException("OBD adapter closed the connection")
-                    if (b.toChar() == '>') {
-                        promptReceived = true
-                        break
-                    }
-                    if (out.length >= 4096) throw IOException("OBD response exceeded the safety limit")
-                    out.append(b.toChar())
-                } else {
-                    Thread.sleep(12)
-                }
-            }
-            if (!promptReceived) {
-                // Opt-in (live polling only): try to bring a late/busy adapter back to its prompt instead of dropping the link.
-                if (timedOut != null && resyncStream(s)) {
-                    timedOut.hit = true
-                    recordExchange(command, out.toString(), RawExchange.STATUS_TIMEOUT, t0, "timed out after $timeoutMs ms, adapter prompt recovered")
-                    logTraffic("ERR", "$command: timed out after ${timeoutMs} ms, adapter prompt recovered")
-                    return ""
-                }
-                throw IOException("Timed out waiting for OBD response to $command")
-            }
-            recordExchange(command, out.toString(), RawExchange.statusOf(out.toString()), t0)
-            logTraffic("RX", out.toString().trim().replace("\r", " ⏎ "))
-            // DTC replies keep one line per ECU frame so multi-frame answers can be decoded;
-            // everything else is compacted as before.
-            val response = if (keepLines) {
-                out.toString().uppercase().split('\r', '\n')
-                    .map { line -> line.filterNot { it.isWhitespace() } }
-                    .filter { it.isNotEmpty() }
-                    .joinToString("\n")
-            } else {
-                out.toString().replace("\r", "").replace("\n", "").replace(" ", "").uppercase()
-            }
-            // A prompt-terminated "?" or STOPPED is a complete adapter response,
-            // not a broken byte stream. Return it so one unsupported DTC mode does
-            // not abort the remaining read-only mode checks.
-            return response
-        } catch (e: Exception) {
-            recordExchange(command, out.toString(), RawExchange.STATUS_ERROR, t0, e.message ?: e.javaClass.simpleName)
-            logTraffic("ERR", "$command: ${e.message ?: e.javaClass.simpleName}")
-            closeSocket()
-            throw if (e is IOException) e else IOException("OBD transaction failed for $command", e)
-        }
-    }
-
-    /** A lone CR interrupts a busy ELM327 (it prints STOPPED) or repeats a read-only command; either way a `>` means the stream is clean again. */
-    private fun resyncStream(s: BluetoothSocket): Boolean {
-        return try {
-            s.outputStream.write("\r".toByteArray(Charsets.US_ASCII)); s.outputStream.flush()
-            val input = s.inputStream
-            val end = System.currentTimeMillis() + 2500
-            while (System.currentTimeMillis() < end) {
-                if (input.available() > 0) { if (input.read().toChar() == '>') return true } else Thread.sleep(12)
-            }
-            false
-        } catch (_: Exception) { false }
-    }
-
-    private val elmPort = object : ElmPort {
-        override fun send(command: String, timeoutMs: Long): ElmResult {
-            val t0 = android.os.SystemClock.elapsedRealtime()
-            val flag = TimeoutFlag()
-            val raw = sendCommand(command, timeoutMs, timedOut = flag)
-            return ElmResult(command, raw, ElmReply.classify(raw), android.os.SystemClock.elapsedRealtime() - t0, flag.hit)
-        }
-        override fun sendLines(command: String, timeoutMs: Long): ElmResult {
-            val t0 = android.os.SystemClock.elapsedRealtime()
-            val flag = TimeoutFlag()
-            val raw = sendCommand(command, timeoutMs, keepLines = true, timedOut = flag)
-            return ElmResult(command, raw, ElmReply.classify(raw), android.os.SystemClock.elapsedRealtime() - t0, flag.hit)
-        }
-    }
-
-    /** One bounded slice of polling (about 0.4 s): one command at a time, then control returns so the UI can refresh. */
-    private fun runPollSlice(poller: LivePoller): PollEvent.Recovery? {
-        val end = android.os.SystemClock.elapsedRealtime() + 400
-        while (android.os.SystemClock.elapsedRealtime() < end) {
-            when (val ev = poller.step(System.currentTimeMillis())) {
-                is PollEvent.Recovery -> { sessionLog.append("EVT", "ECU recovery " + ev.step + (if (ev.recovered) " succeeded" else " no answer")); return ev }
-                is PollEvent.Idle -> return null
-                is PollEvent.Polled -> {}
-            }
-            if (poller.monitor.state != LinkState.COMMUNICATING) return null
-        }
-        return null
-    }
-
-    private val registryStore by lazy { RegistryStore(java.io.File(filesDir, "registry/parameters.json")) }
-    /** Persisted capability states (P2). Loaded at start; nothing writes to it until the discovery phase. */
-    private var parameterRegistry: ParameterRegistry = ParameterRegistry.withBuiltInDefinitions()
-
-    private fun loadParameterRegistry() {
-        val res = registryStore.load()
-        parameterRegistry = res.registry
-        sessionLog.append("EVT", "parameter registry loaded: ${res.registry.all().size} definitions" + res.issues.joinToString("") { "; $it" })
-    }
-
-    /** Lets ECU discovery borrow the adapter from the live poll loop (P3). */
-    private val pollGate = PollGate()
-    @Volatile private var pollingLive = false
-
-    private fun discoveryRefusal(): String? = when {
-        socket?.isConnected != true -> "adapter not connected"
-        ecuScanning -> "an ECU scan is running"
-        pollingLive && linkState != LinkState.COMMUNICATING -> "ECU link is not communicating"
-        else -> null
-    }
-
-    private val discoveryController by lazy {
-        DiscoveryController(
-            gate = pollGate,
-            registry = { parameterRegistry },
-            persist = { registryStore.save(it) },
-            clock = { System.currentTimeMillis() },
-            log = { sessionLog.append("EVT", it) },
-            refusal = { discoveryRefusal() },
-            discover = {
-                val cfg = connConfig
-                PidDiscovery(
-                    send = { c, t -> elmPort.send(c, t) },
-                    framing = Framing.fromProtocolText(protocolText),
-                    reinit = { (listOf("ATZ") + cfg.initCommands()).forEach { elmPort.send(it, 5000L) } },
-                    exclusive = { block -> synchronized(this@MainActivity) { block() } }
-                ).run()
-            }
-        )
-    }
-
-    /**
-     * Mode 01 ECU discovery: reads the supported-PID bitmaps, updates and saves the parameter registry. Used at connect time and
-     * for any later request, so both share one implementation. Read-only. Blocking: call from a background thread. No UI yet.
-     */
-    internal fun requestDiscovery(reason: String = "manual"): DiscoveryOutcome = discoveryController.request(reason).also { lastDiscovery = it }
-
-    /** Latest discovery result of this app run (read-only; shown on the ECU Information screen). */
-    private var lastDiscovery by mutableStateOf<DiscoveryOutcome?>(null)
-    /** When the current connection began; evidence recorded earlier is shown as historical. */
-    private var sessionStartMs by mutableStateOf(0L)
-
-    private fun ecuDir() = java.io.File(filesDir, "ecu").apply { mkdirs() }
-
-    private fun loadEcuProfiles() {
-        runCatching {
-            ecuProfile = java.io.File(ecuDir(), "profile_latest.json").takeIf { it.exists() }?.let { EcuProfile.fromJson(it.readText()) }
-            ecuPrevious = java.io.File(ecuDir(), "profile_previous.json").takeIf { it.exists() }?.let { EcuProfile.fromJson(it.readText()) }
-        }
-    }
-
-    private fun runEcuScan(scope: kotlinx.coroutines.CoroutineScope) {
-        if (ecuScanning || discoveryController.isRunning()) return
-        scope.launch {
-            ecuScanning = true
-            ecuNote = "Scanning the ECU (read-only)…"
-            try {
-                val facts = AdapterFacts(adapterNameForScan, adapterIdText, adapterVoltageText, protocolText)
-                val profile = withContext(Dispatchers.IO) {
-                    EcuScan.run(elmPort, facts, supportedPids, "v0.8.0 build 26", System.currentTimeMillis()) { step ->
-                        sessionLog.append("EVT", "ecu scan: $step")
-                        ecuNote = "Scanning the ECU (read-only): $step…"
-                    }
-                }
-                val dir = ecuDir()
-                val latest = java.io.File(dir, "profile_latest.json")
-                if (latest.exists()) latest.copyTo(java.io.File(dir, "profile_previous.json"), overwrite = true)
-                latest.writeText(profile.toJson())
-                ecuPrevious = ecuProfile
-                ecuProfile = profile
-                sessionLog.append("EVT", "ecu scan done: vin=" + profile.vin.status + " cal=" + profile.calIds.status + " cvn=" + profile.cvns.status)
-                ecuNote = EcuReport.scanSummary(profile)
-            } catch (e: Exception) {
-                sessionLog.append("EVT", "ecu scan failed: " + (e.message ?: e.javaClass.simpleName))
-                ecuNote = "Scan failed: " + (e.message ?: "communication error")
-            } finally { ecuScanning = false }
-        }
-    }
-
-    @Volatile private var adapterNameForScan: String = ""
 
     /** Wall-clock time this app process started. A saved ECU profile older than this was read in an earlier run. */
     private fun processStartMs(): Long =
@@ -1772,16 +1372,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun buildPoller(): LivePoller {
-        val scheduler = PollScheduler().also { PollPlan.configure(it, extraPids + HOME_PIDS) }
-        val caps = PidCapabilities().also { it.setAdvertised(supportedPids) }
-        val cfg = connConfig
-        return LivePoller(
-            port = elmPort, scheduler = scheduler, capabilities = caps,
-            lightReinit = listOf("ATPC"),
-            fullReinit = listOf("ATZ") + cfg.initCommands()
-        )
-    }
 
     // Hold the same Activity monitor for the complete PID batch so a DTC scan cannot
     // consume a response intended for the live dashboard (sendCommand is re-entrant).
@@ -1828,31 +1418,6 @@ class MainActivity : ComponentActivity() {
         return core + extras
     }
 
-    // DTC modes are one transaction: do not interleave them with live PID polling.
-    @Synchronized
-    private fun readTroubleCodes(): DtcScanReport {
-        val framing = Framing.fromProtocolText(protocolText)
-        val modes = mutableListOf<DtcModeScan>()
-        var linkGone = false
-        for ((mode, category) in DtcScanReport.SERVICES) {
-            if (linkGone) {
-                modes += DtcScanClassifier.failure(mode, category, "link lost earlier in this scan")
-                continue
-            }
-            val raw = try {
-                sendCommand(mode, 10000, keepLines = true)
-            } catch (e: IOException) {
-                modes += DtcScanClassifier.failure(mode, category, e.message ?: "communication error")
-                if (socket?.isConnected != true) linkGone = true
-                continue
-            }
-            // Line-aware: more than three codes arrive as several frames, and each line is checked with the
-            // same strict rules as before. Every service keeps its own state and its verbatim reply, so a
-            // failed or empty answer can never be shown as "no codes".
-            modes += DtcScanClassifier.classify(mode, category, raw, framing)
-        }
-        return DtcScanReport(System.currentTimeMillis(), protocolText, modes)
-    }
 
     private fun parsePid(command: String, response: String): String? =
         ObdPidResponseDecoder.decode(command, response)
@@ -1990,114 +1555,10 @@ class MainActivity : ComponentActivity() {
         window.attributes = lp
     }
 
-    private fun tripDir() = java.io.File(filesDir, "trips").apply { mkdirs() }
-
-    private fun openTripWriter(file: java.io.File) {
-        try {
-            tripFile = file
-            tripHeaderWritten = file.exists() && file.length() > 0
-            tripWriter = java.io.FileWriter(file, true).buffered()
-        } catch (e: Exception) {
-            tripWriter = null
-            tripNote = "Trip recording could not start: " + (e.message ?: "storage error")
-        }
-    }
-
-    /** Starts a trip, or on a reconnect continues the held one (same file, totals kept, no gap bridged). */
-    private fun startTrip(forceNew: Boolean = false) {
-        val now = System.currentTimeMillis()
-        tripNote = ""
-        if (!forceNew && tripSession.hasTrip()) {
-            tripSession.resume(now)
-            openTripWriter(java.io.File(tripDir(), tripSession.fileName))
-        } else {
-            endTrip()
-            val name = "trip-" + java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date()) + ".csv"
-            tripSession.begin(now, name)
-            openTripWriter(java.io.File(tripDir(), name))
-        }
-        tripStartMs = tripSession.startMs
-        tripTick++
-        persistTrip(now)
-        tripClock(now)
-    }
-
-    private fun persistTrip(now: Long) {
-        lastTripPersistMs = now
-        val snap = tripSession.snapshot(now)
-        if (snap == null) prefs.edit().remove("trip_active").apply()
-        else prefs.edit().putString("trip_active", TripCodec.encode(snap)).apply()
-    }
-
-    /** Once a second: pause a trip whose samples stopped, keep the notification truthful, save progress. */
-    private fun tripClock(now: Long) {
-        if (!tripSession.hasTrip()) return
-        val before = tripSession.phase
-        tripSession.tick(now)
-        if (tripSession.phase != before) tripTick++
-        val text = if (tripSession.phase == TripPhase.RECORDING)
-            String.format(java.util.Locale.US, "Recording • %.2f km", tripSession.stats.distanceKm)
-        else tripSession.pause?.text.orEmpty()
-        if (text != lastTripNotice) { lastTripNotice = text; TripService.show(this, text) }
-        if (now - lastTripPersistMs >= 5_000L || tripSession.phase != before) persistTrip(now)
-    }
-
-    /** Link lost or app closing: keep the trip (paused, saved), release the file, stop nothing the driver didn't ask to stop. */
-    private fun holdTrip() {
-        try { tripWriter?.flush(); tripWriter?.close() } catch (_: Exception) { }
-        tripWriter = null
-        if (tripSession.hasTrip()) { tripSession.tick(Long.MAX_VALUE / 2); persistTrip(System.currentTimeMillis()); tripTick++ }
-    }
-
-    private fun recordTrip(list: List<GaugeValue>) {
-        val now = System.currentTimeMillis()
-        fun num(label: String) = list.firstOrNull { it.label == label }?.takeIf { it.available }?.value?.toDoubleOrNull()
-        val sp = list.firstOrNull { it.label == "Vehicle speed" }?.takeIf { it.available }
-        tripSession.onSample(now, sp?.value?.toDoubleOrNull(), sp?.capturedAtMs, num("Engine fuel rate"), connection.snapshot.ecuAvailable)
-        tripTick++
-        tripClock(now)
-        val w = tripWriter ?: return
-        try {
-            if (!tripHeaderWritten) {
-                w.write(TripCsv.header(list.map { it.label }))
-                w.newLine()
-                tripHeaderWritten = true
-            }
-            val iso = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", java.util.Locale.US).format(java.util.Date(now))
-            w.write(TripCsv.row(iso, list.map { if (it.available) it.value else null }))
-            w.newLine()
-            w.flush()
-        } catch (e: Exception) {
-            tripNote = "Trip file write failed: " + (e.message ?: "storage error")
-        }
-    }
-
-    /** The driver's Stop: closes the file, folds distance into the lifetime total once, clears the saved session. */
-    private fun endTrip() {
-        try { tripWriter?.flush(); tripWriter?.close() } catch (_: Exception) { }
-        tripWriter = null
-        if (tripSession.hasTrip()) {
-            val done = tripSession.stop()
-            if (done.distanceKm > 0.0) {
-                trackedKm += done.distanceKm
-                prefs.edit().putFloat("tracked_km", trackedKm.toFloat()).apply()
-            }
-        }
-        prefs.edit().remove("trip_active").apply()
-        tripStartMs = 0L
-        lastTripNotice = ""
-        TripService.hide(this)
-        tripTick++
-    }
 
     private fun savedTrips(): List<java.io.File> =
         java.io.File(filesDir, "trips").listFiles { f -> f.extension == "csv" }?.sortedBy { it.name }.orEmpty()
 
-    @Synchronized
-    private fun readFreezeFrameBlocking(): FreezeFrameResult =
-        // The reader goes through the same port as live polling (one command at a time). A timeout on one PID is recorded
-        // for that PID only; it no longer closes the Bluetooth socket or silently ends the read.
-        FreezeFrameReader.read(elmPort, supportedPids, System.currentTimeMillis()) { sessionLog.append("EVT", "freeze frame: $it") }
 
     private fun readFreezeFrame() {
         if (freezeBusy) return
@@ -2237,12 +1698,6 @@ class MainActivity : ComponentActivity() {
     private fun receiverCommandStatus(name: String, done: String): String =
         if (sendReceiverCommand(name)) done else "Could not reach Open Headunit. Is it installed and up to date?"
 
-    private fun closeSocket() {
-        pollingLive = false
-        if (socket != null) sessionLog.append("EVT", "socket closed")
-        try { socket?.close() } catch (_: Exception) { }
-        socket = null
-    }
 
     private fun isGranted(permission: String): Boolean =
         ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
@@ -2349,11 +1804,11 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         runCatching { unregisterReceiver(btReceiver) }
         runCatching { unregisterReceiver(sessionReceiver) }
-        holdTrip()
-        TripService.onStopRequested = null
-        TripService.hide(this)
+        // Detach UI hooks. A live session (socket, poll loop, trip) belongs to ObdRuntime and keeps recording.
+        rt.onConnected = null
+        rt.onAlert = null
+        if (!rt.sessionActive()) { rt.holdTrip(); TripService.hide(this) }
         runCatching { if (BluetoothAdapter.getDefaultAdapter()?.isDiscovering == true) BluetoothAdapter.getDefaultAdapter()?.cancelDiscovery() }
-        closeSocket()
         mainHandler.removeCallbacksAndMessages(null)
         if (isFinishing) sessionLog.append("EVT", "app closed")
         runCatching { siren?.release(); siren = null }
