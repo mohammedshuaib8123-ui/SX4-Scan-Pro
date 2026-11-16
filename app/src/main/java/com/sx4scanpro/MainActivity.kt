@@ -1624,7 +1624,9 @@ class MainActivity : ComponentActivity() {
                 now, isConnected, adapterName, readings,
                 if (scanned) codes.map { it.code to it.category } else null,
                 if (isConnected && trip.dataMs > 0) trip.distanceKm else null, trackedKm, maint,
-                dtcScan = dtcReport, freezeFrame = freezeResult, ecuProfile = ecuProfile, unavailableReadings = unavailable
+                dtcScan = dtcReport, freezeFrame = freezeResult, ecuProfile = ecuProfile, unavailableReadings = unavailable,
+                ruleReadings = if (isConnected) rt.ruleSnapshot else emptyList(),
+                ruleNowMs = System.currentTimeMillis()
             )), 76)
             // The report is paginated and wrapped: no line is cut off and nothing is dropped when it runs past one page.
             val pages = ReportLayout.paginate(lines, 50)
