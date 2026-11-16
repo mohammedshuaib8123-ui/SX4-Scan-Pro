@@ -13,7 +13,8 @@ class ValidationPlanTest {
         assertTrue(ValidationPlan.items.all { ValidationPlan.statusOf(emptyList(), it.id) == ValidationStatus.UNTESTED })
         val text = ValidationPlan.reportLines(emptyList()).joinToString("\n")
         assertTrue(text.contains("0 passed, 0 failed, ${ValidationPlan.items.size} not yet tested"))
-        assertFalse(text.contains("Passed on the car"))
+        assertFalse(text.contains("PASS (not independently verified)\n"))
+        assertTrue(text.contains("not independently verified")); assertTrue(text.contains("NOT yet included in the ZIP (pending)"))
     }
 
     @Test fun recordReplacesEarlierResultAndIgnoresUnknownIds() {
@@ -35,7 +36,7 @@ class ValidationPlanTest {
     @Test fun reportListsOwnerResultsOnly() {
         val r = ValidationPlan.record(emptyList(), "FREEZE_FRAME", ValidationStatus.PASSED, 1_700_000_000_000L, "real values")
         val text = ValidationPlan.reportLines(r).joinToString("\n")
-        assertTrue(text.contains("1 passed, 0 failed")); assertTrue(text.contains("Freeze frame shows real values: Passed on the car")); assertTrue(text.contains("real values"))
+        assertTrue(text.contains("1 passed, 0 failed")); assertTrue(text.contains("Freeze frame shows real values: Owner-entered PASS (not independently verified) (2023")); assertTrue(text.contains("real values"))
         assertTrue(text.contains("Fault-code scan shows every code: Not yet tested on the car"))
     }
 

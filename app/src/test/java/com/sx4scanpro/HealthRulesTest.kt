@@ -29,7 +29,7 @@ class HealthRulesTest {
         val f = HealthRules.evaluate(listOf(r(HealthRules.RPM, 0.0), r(HealthRules.MAP, 70.0, "kPa"), r(HealthRules.BARO, 101.0, "kPa")), now)
         val x = find(f, "MAP_BARO")!!
         assertEquals(HealthLevel.ATTENTION, x.level)
-        assertTrue(x.possibilities.isNotEmpty()); assertTrue(x.nextCheck.isNotBlank()); assertTrue(x.provenance.contains("app value"))
+        assertTrue(x.possibilities.isNotEmpty()); assertTrue(x.nextCheck.isNotBlank()); assertTrue(x.provenance.contains("UNVALIDATED app heuristic"))
     }
 
     @Test fun runningDoesNotJudgeMapBaro() {
@@ -63,12 +63,14 @@ class HealthRulesTest {
 
     @Test fun voltageBasisIsGenericNotOem() {
         val x = find(HealthRules.evaluate(listOf(r(HealthRules.RPM, 800.0), r(HealthRules.VOLTAGE, 12.0, "V")), now), "SUPPLY_VOLTAGE")!!
-        assertTrue(x.provenance.contains("Not a Suzuki figure"))
+        assertTrue(x.provenance.contains("UNVALIDATED app heuristic")); assertTrue(x.provenance.contains("Not a Suzuki figure"))
     }
 
     @Test fun temperatureAtDecoderLimitIsInvestigate() {
         val f = HealthRules.evaluate(listOf(r(HealthRules.RPM, 800.0), r(HealthRules.COOLANT, -40.0, "°C")), now)
-        assertEquals(HealthLevel.INVESTIGATE, find(f, "RANGE_COOLANT_TEMPERATURE")!!.level)
+        val rg = find(f, "RANGE_COOLANT_TEMPERATURE")!!
+        assertEquals("an endpoint alone is only an observation", HealthLevel.OBSERVATION, rg.level)
+        assertTrue(rg.summary.contains("not proof of a failed sensor"))
         assertNull("no warm-up observation from a limit value", find(f, "WARM_UP"))
         val ok = HealthRules.evaluate(listOf(r(HealthRules.RPM, 800.0), r(HealthRules.COOLANT, 85.0, "°C")), now)
         assertNull(find(ok, "RANGE_COOLANT_TEMPERATURE"))
@@ -82,6 +84,15 @@ class HealthRulesTest {
         assertTrue(x.missing.contains("Target"))
     }
 
+    @Test fun noRuleEverReportsInvestigateFromAnEndpointAlone() {
+        val f = HealthRules.evaluate(listOf(r(HealthRules.RPM, 800.0), r(HealthRules.COOLANT, 215.0, "°C"), r(HealthRules.IAT, -40.0, "°C")), now)
+        assertTrue(f.filter { it.ruleId.startsWith("RANGE_") }.all { it.level == HealthLevel.OBSERVATION })
+    }
+
+    @Test fun operatingStateTextCallsTheBandsUnvalidated() {
+        assertTrue(OperatingState.CRANKING.text.contains("unvalidated")); assertTrue(OperatingState.RUNNING.text.contains("unvalidated"))
+    }
+
     @Test fun nothingReadMeansNoFindingsAndNoInventedValues() {
         assertTrue(HealthRules.evaluate(emptyList(), now).none { it.level == HealthLevel.NORMAL })
         val lines = HealthRules.reportLines(emptyList(), now)
@@ -92,6 +103,7 @@ class HealthRulesTest {
     @Test fun reportStatesNoScoreNoOemLimits() {
         val text = HealthRules.reportLines(listOf(r(HealthRules.RPM, 800.0)), now).joinToString("\n")
         assertTrue(text.contains("no health score")); assertTrue(text.contains("no OEM limits"))
+        assertTrue(text.contains("unvalidated app heuristics")); assertTrue(text.contains("not a confirmed fault"))
     }
 
     @Test fun fullReportContainsRulesSection() {

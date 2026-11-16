@@ -3,7 +3,7 @@ package com.sx4scanpro
 /** One real-car check the owner runs and records. The app never marks one passed by itself: only a person with the car can. */
 internal data class ValidationItem(val id: String, val group: String, val title: String, val how: String)
 
-internal enum class ValidationStatus(val text: String) { UNTESTED("Not yet tested on the car"), PASSED("Passed on the car"), FAILED("Failed on the car") }
+internal enum class ValidationStatus(val text: String) { UNTESTED("Not yet tested on the car"), PASSED("Owner-entered PASS (not independently verified)"), FAILED("Owner-entered FAIL") }
 
 internal data class ValidationRecord(val id: String, val status: ValidationStatus, val atMs: Long, val note: String = "")
 
@@ -46,7 +46,8 @@ internal object ValidationPlan {
     fun reportLines(records: List<ValidationRecord>): List<String> = buildList {
         val passed = items.count { statusOf(records, it.id) == ValidationStatus.PASSED }
         val failed = items.count { statusOf(records, it.id) == ValidationStatus.FAILED }
-        add("  Recorded by the owner on the target car; the app never marks a check itself. $passed passed, $failed failed, ${items.size - passed - failed} not yet tested.")
+        add("  Entered by hand by the owner, each with the time it was entered; the app never marks a check itself and a manual PASS is not independently verified. $passed passed, $failed failed, ${items.size - passed - failed} not yet tested.")
+        add("  Session export ZIP: these results are NOT yet included in the ZIP (pending); they appear only in this report and, as one line per entry, in the session log.")
         items.groupBy { it.group }.forEach { (g, list) ->
             add("  $g")
             list.forEach { it2 ->

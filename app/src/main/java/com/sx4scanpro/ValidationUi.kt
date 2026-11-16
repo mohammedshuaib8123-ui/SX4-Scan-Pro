@@ -28,7 +28,7 @@ internal fun ValidationCard(
             Text("REAL-CAR VALIDATION", color = cyan, style = MaterialTheme.typography.titleMedium)
             Text(
                 "Do these on the car with someone else driving or while parked. Tap a condition before each test so the exported session says what the car was doing, then record what you saw. " +
-                    "Nothing here is marked passed by the app.",
+                    "These are your own manual entries, timestamped when you tap; the app never marks a check and a PASS here is not independent verification.",
                 color = muted, fontSize = 13.sp
             )
             Text("Current condition: " + (phase?.label ?: "none tagged"), color = Color.White, fontWeight = FontWeight.Bold)
@@ -48,7 +48,7 @@ internal fun ValidationCard(
                             OutlinedButton(onClick = { onResult(item.id, ValidationStatus.PASSED) }) { Text("PASSED", fontSize = 11.sp) }
                             OutlinedButton(onClick = { onResult(item.id, ValidationStatus.FAILED) }) { Text("FAILED", fontSize = 11.sp) }
                             OutlinedButton(onClick = { onResult(item.id, ValidationStatus.UNTESTED) }) { Text("RESET", fontSize = 11.sp) }
-                            Text(st.text, color = when (st) { ValidationStatus.PASSED -> Color(0xFF66E08A); ValidationStatus.FAILED -> Color(0xFFFF5252); else -> muted }, fontSize = 12.sp)
+                            Text(st.text + (records.lastOrNull { it.id == item.id }?.takeIf { it.status != ValidationStatus.UNTESTED }?.let { " · " + java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US).format(java.util.Date(it.atMs)) } ?: ""), color = when (st) { ValidationStatus.PASSED -> Color(0xFF66E08A); ValidationStatus.FAILED -> Color(0xFFFF5252); else -> muted }, fontSize = 12.sp)
                         }
                     }
                 }

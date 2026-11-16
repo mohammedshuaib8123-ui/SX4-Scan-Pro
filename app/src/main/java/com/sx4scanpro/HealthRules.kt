@@ -5,9 +5,9 @@ internal data class RuleReading(val name: String, val value: Double, val unit: S
 
 internal enum class OperatingState(val text: String) {
     UNKNOWN("unknown (no fresh RPM)"),
-    ENGINE_OFF("engine off (RPM about 0)"),
-    CRANKING("cranking or just catching (RPM below running speed)"),
-    RUNNING("engine running")
+    ENGINE_OFF("engine off (RPM below the unvalidated app band)"),
+    CRANKING("cranking or just catching (RPM below running speed; unvalidated app band)"),
+    RUNNING("engine running (RPM above the unvalidated app band)")
 }
 
 internal enum class HealthLevel(val text: String) {
@@ -64,11 +64,12 @@ internal object HealthRules {
     val PIDS = listOf(Triple(0x0C, RPM, "rpm"), Triple(0x05, COOLANT, "°C"), Triple(0x0F, IAT, "°C"), Triple(0x0B, MAP, "kPa"),
         Triple(0x33, BARO, "kPa"), Triple(0x42, VOLTAGE, "V"), Triple(0x23, RAIL, "kPa"))
 
-    /** Heuristic bands, labelled as such in the report; real cranking RPM on this car is not yet measured. */
+    /** UNVALIDATED app heuristics: real cranking and idle RPM on this SX4 are not yet measured, and none of these bands, tolerances or ranges is a Suzuki specification. */
     private const val OFF_RPM = 50.0
     private const val RUNNING_RPM = 400.0
     /** With the engine stopped the manifold is at ambient, so MAP and BARO should agree; 15 kPa is an app tolerance, not a sensor spec. */
     private const val MAP_BARO_TOLERANCE_KPA = 15.0
+    const val HEURISTIC = "UNVALIDATED app heuristic, not a Suzuki specification"
 
     private fun fresh(r: List<RuleReading>, name: String, nowMs: Long): RuleReading? =
         r.firstOrNull { it.name == name && it.value.isFinite() && nowMs - it.atMs in 0..MAX_AGE_MS }
@@ -103,7 +104,7 @@ internal object HealthRules {
             "Not evaluated: " + listOfNotNull(if (map == null) "manifold pressure" else null, if (baro == null) "barometric pressure" else null).joinToString(" and ") + " has no fresh reading.",
             emptyList(), "Needs both readings, fresh and read in the same moment.", emptyList(), "A fresh MAP and BARO pair.", "Keep the ignition on with the link connected and open the report again.")
         if (baro.value !in 60.0..110.0) return HealthFinding(id, title, HealthLevel.INVESTIGATE, st,
-            "Barometric pressure ${"%.0f".format(java.util.Locale.US, baro.value)} kPa is outside what the atmosphere can give at road altitudes.",
+            "Barometric pressure reads ${"%.0f".format(java.util.Locale.US, baro.value)} kPa, outside what the atmosphere can give at road altitudes. The reading is implausible; that alone does not prove a faulty sensor.",
             listOf(fmt(baro, now)), "Physical fact: ambient pressure at road altitudes lies roughly between 60 and 110 kPa.",
             listOf("BARO sensor fault or a decoding or reply problem"), "The ECU's own BARO plausibility is not exposed.", "Read the value again and compare it with a weather-station pressure for your altitude.")
         if (st != OperatingState.ENGINE_OFF) return HealthFinding(id, title, HealthLevel.OBSERVATION, st,
@@ -113,29 +114,29 @@ internal object HealthRules {
         val d = map.value - baro.value
         return if (kotlin.math.abs(d) <= MAP_BARO_TOLERANCE_KPA) HealthFinding(id, title, HealthLevel.NORMAL, st,
             "With the engine stopped MAP and BARO agree within ${"%.0f".format(java.util.Locale.US, MAP_BARO_TOLERANCE_KPA)} kPa (difference ${"%.0f".format(java.util.Locale.US, d)} kPa).",
-            listOf(fmt(map, now), fmt(baro, now)), "Physical fact: a stopped engine's manifold sits at ambient pressure. The tolerance is an app value, not a sensor specification.",
+            listOf(fmt(map, now), fmt(baro, now)), "Physical fact: a stopped engine's manifold sits at ambient pressure. The 15 kPa tolerance is an $HEURISTIC; not validated on this car.",
             emptyList(), "", "")
         else HealthFinding(id, title, HealthLevel.ATTENTION, st,
             "With the engine stopped MAP differs from BARO by ${"%.0f".format(java.util.Locale.US, d)} kPa.",
-            listOf(fmt(map, now), fmt(baro, now)), "Physical fact: a stopped engine's manifold sits at ambient pressure. The tolerance is an app value, not a sensor specification.",
+            listOf(fmt(map, now), fmt(baro, now)), "Physical fact: a stopped engine's manifold sits at ambient pressure. The 15 kPa tolerance is an $HEURISTIC; not validated on this car.",
             listOf("MAP or BARO sensor offset", "wiring or connector fault", "engine not fully stopped (still spinning down)"), "Only one moment was read; no repeat.", "Wait a few seconds with the engine off, then read again; if it persists have the MAP sensor circuit checked.")
     }
 
-    /** Values at the decoder's own minimum or maximum are what an open or shorted sensor circuit (or a decoding problem) produces. */
+    /** A value at the decoder's own limit is only an observation: it can come from an open or shorted circuit, but also from a missing value or a decoding problem, and nothing here corroborates a cause. */
     private fun sensorRange(r: List<RuleReading>, now: Long, st: OperatingState): List<HealthFinding> = buildList {
         listOf(COOLANT, IAT).forEach { n ->
             val x = fresh(r, n, now) ?: return@forEach
-            if (x.value <= -40.0 || x.value >= 215.0) add(HealthFinding("RANGE_" + n.replace(' ', '_').uppercase(), "$n at the end of its decodable range", HealthLevel.INVESTIGATE, st,
-                "$n reads ${"%.0f".format(java.util.Locale.US, x.value)} ${x.unit}, the limit of what the standard decoder can express.",
-                listOf(fmt(x, now)), "Decoder fact: the standard formula A-40 spans -40 to 215 degrees C; the end values usually mean an open or shorted sensor circuit or a missing value.",
-                listOf("sensor or wiring fault", "connector problem"), "A second reading from another source.", "Check the sensor connector and compare with the other temperature readings."))
+            if (x.value <= -40.0 || x.value >= 215.0) add(HealthFinding("RANGE_" + n.replace(' ', '_').uppercase(), "$n at the end of its decodable range", HealthLevel.OBSERVATION, st,
+                "$n reads ${"%.0f".format(java.util.Locale.US, x.value)} ${x.unit}, the limit of what the standard decoder can express. This alone is not proof of a failed sensor.",
+                listOf(fmt(x, now)), "Decoder fact: the standard formula A-40 spans -40 to 215 degrees C. No second source corroborates a cause.",
+                listOf("an open or shorted sensor circuit", "a missing or invalid value from the ECU", "a decoding or link problem"), "A repeat reading, the other temperature readings, or a related fault code.", "Read again; compare with the other temperature readings and check the sensor connector only if the value persists."))
         }
     }
 
     private fun charging(r: List<RuleReading>, now: Long, st: OperatingState): HealthFinding? {
         val v = fresh(r, VOLTAGE, now) ?: return null
         val id = "SUPPLY_VOLTAGE"; val title = "Supply voltage seen by the ECU"
-        val basis = "Generic 12 V lead-acid convention (about 12.4-12.8 V resting, about 13.2-14.8 V while charging). Not a Suzuki figure; the ECU voltage can differ slightly from the battery terminals."
+        val basis = "$HEURISTIC: generic 12 V lead-acid convention (about 12.4-12.8 V resting, about 13.2-14.8 V while charging). Not a Suzuki figure and not validated on this car; the ECU voltage can differ slightly from the battery terminals."
         val ev = listOf(fmt(v, now))
         val value = "%.2f".format(java.util.Locale.US, v.value)
         return when (st) {
@@ -175,6 +176,7 @@ internal object HealthRules {
     fun reportLines(readings: List<RuleReading>, nowMs: Long): List<String> = buildList {
         val st = stateOf(readings, nowMs)
         add("  Rule set version $RULESET_VERSION. App-generated from fresh live readings only (age up to ${MAX_AGE_MS / 1000} s); not ECU facts, no health score, no OEM limits.")
+        add("  The RPM bands (50 and 400), the 15 kPa MAP/BARO tolerance and the voltage ranges are unvalidated app heuristics, not Suzuki specifications. A result is an observation about these readings, not a confirmed fault.")
         add("  Operating state: ${st.text}")
         val f = evaluate(readings, nowMs)
         if (f.isEmpty()) add("  No rule had enough fresh evidence to run.")
