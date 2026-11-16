@@ -85,7 +85,8 @@ internal fun SxCockpit(
     onDisconnect: () -> Unit,
     onToggleWall: () -> Unit,
     arrive: Float = 1f,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    faultScanIncomplete: Boolean = false
 ) {
     val rpmSignal = readingOf(rpm) != null && !isStale(rpm, nowMs)
     val hudDim = if (mode == DriveMode.HUD) 0.45f else 1f
@@ -115,7 +116,7 @@ internal fun SxCockpit(
         }
         Box(Modifier.alpha(hudDim)) { SxTelemetry(coolant, intake, egr, rail, tripKm, "coolant" in alertSensors, nowMs) }
         Row(Modifier.fillMaxWidth().alpha(hudDim), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
-            SxHealth(connected, ecuOnline, rpmSignal, faultCount, onOpenDiagnostics, Modifier.weight(1f))
+            SxHealth(connected, ecuOnline, rpmSignal, faultCount, onOpenDiagnostics, Modifier.weight(1f), scanIncomplete = faultScanIncomplete)
             SxHeadUnit(headUnit, receiverInstalled, onOpenHeadUnit, onShowProjection, Modifier.weight(1f))
         }
         SxDuaButton(Modifier.fillMaxWidth())
