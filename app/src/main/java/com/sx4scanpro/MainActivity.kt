@@ -137,7 +137,7 @@ private const val RECEIVER_PACKAGE = "com.andrerinas.headunitrevived"
 internal val SPP_UUID: UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
 
 internal class TimeoutFlag { var hit = false }
-data class GaugeValue(val label: String, val value: String, val unit: String = "", val available: Boolean = true, val capturedAtMs: Long = System.currentTimeMillis())
+data class GaugeValue(val label: String, val value: String, val unit: String = "", val available: Boolean = true, val capturedAtMs: Long = System.currentTimeMillis(), val staleAfterMs: Long = STALE_MS)
 data class TroubleCodeResult(val category: String, val code: String)
 
 class MainActivity : ComponentActivity() {

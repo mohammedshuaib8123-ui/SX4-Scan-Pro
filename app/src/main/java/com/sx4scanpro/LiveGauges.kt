@@ -1,6 +1,6 @@
 package com.sx4scanpro
 
-internal data class LiveGauge(val label: String, val value: String, val unit: String, val available: Boolean, val capturedAtMs: Long)
+internal data class LiveGauge(val label: String, val value: String, val unit: String, val available: Boolean, val capturedAtMs: Long, val staleAfterMs: Long = 5_000L)
 
 /** Which PIDs the dashboard polls and how often. Intervals are starting points to be tuned from the session log. */
 internal object PollPlan {
@@ -23,8 +23,22 @@ internal object PollPlan {
     const val BARO_MAX_AGE_MS = 60_000L
     const val EXTRA_INTERVAL_MS = 3500L
 
-    /** A reading older than this is shown as unavailable, never as live. */
-    fun freshMs(intervalMs: Long): Long = maxOf(4000L, intervalMs * 3)
+    /**
+     * Per-sensor ages, set from the real car log (K-line: about 330 ms per request, so low-priority sensors refresh every 5-21 s).
+     * A reading older than staleMs is labelled STALE; older than blankMs it is shown as unavailable, never as live.
+     */
+    fun staleMs(pid: Int): Long = when (pid) {
+        0x0C, 0x0D -> 4_000L
+        0x0B -> 6_000L
+        0x04, 0x05, 0x10, 0x11 -> 10_000L
+        else -> 30_000L
+    }
+    fun blankMs(pid: Int): Long = when (pid) {
+        0x0C, 0x0D -> 8_000L
+        0x0B -> 10_000L
+        0x04, 0x05, 0x10, 0x11 -> 20_000L
+        else -> 60_000L
+    }
 
     /** 0: RPM and speed. 1: coolant and engine load. 2: MAP and MAF (boost and fuelling). 3: everything else the owner enabled, and baro. */
     fun priorityOf(pid: Int): Int = when (pid) {
@@ -44,24 +58,24 @@ internal object PollPlan {
 
 internal object GaugeAssembler {
     fun build(reading: (Int) -> Reading?, advertised: Set<Int>, extras: Set<Int>, now: Long): List<LiveGauge> {
-        fun fresh(pid: Int, interval: Long): Reading? = reading(pid)?.takeIf { now - it.atMs <= PollPlan.freshMs(interval) }
+        fun fresh(pid: Int): Reading? = reading(pid)?.takeIf { now - it.atMs <= PollPlan.blankMs(pid) }
         fun core(c: PollPlan.Quad): LiveGauge {
             val spec = PidCatalog.forPid(c.pid)
-            val r = if (c.pid in advertised && spec != null) fresh(c.pid, c.intervalMs) else null
-            return if (r != null && spec != null) LiveGauge(c.label, PidCatalog.format(spec, r.value), c.unit, true, r.atMs)
+            val r = if (c.pid in advertised && spec != null) fresh(c.pid) else null
+            return if (r != null && spec != null) LiveGauge(c.label, PidCatalog.format(spec, r.value), c.unit, true, r.atMs, PollPlan.staleMs(c.pid))
             else LiveGauge(c.label, "--", c.unit, false, now)
         }
         val base = PollPlan.core.map { core(it) }
-        val map = reading(0x0B)?.takeIf { 0x0B in advertised && now - it.atMs <= PollPlan.freshMs(1000L) }
+        val map = if (0x0B in advertised) fresh(0x0B) else null
         val baro = reading(PollPlan.BARO_PID)?.takeIf { PollPlan.BARO_PID in advertised && now - it.atMs <= PollPlan.BARO_MAX_AGE_MS }
         val boost = if (map != null && baro != null)
-            LiveGauge("Turbo boost", String.format(java.util.Locale.US, "%.1f", (map.value - baro.value).coerceAtLeast(0.0)), "kPa", true, map.atMs)
+            LiveGauge("Turbo boost", String.format(java.util.Locale.US, "%.1f", (map.value - baro.value).coerceAtLeast(0.0)), "kPa", true, map.atMs, PollPlan.staleMs(0x0B))
         else LiveGauge("Turbo boost", "--", "kPa", false, now)
         val extraGauges = (extras + HOME).sorted().mapNotNull { PidCatalog.forPid(it) }
             .filter { s -> PollPlan.core.none { it.pid == s.pid } && s.pid != PollPlan.BARO_PID }
             .map { spec ->
-                val r = if (spec.pid in advertised) fresh(spec.pid, PollPlan.EXTRA_INTERVAL_MS) else null
-                if (r != null) LiveGauge(spec.name, PidCatalog.format(spec, r.value), spec.unit, true, r.atMs)
+                val r = if (spec.pid in advertised) fresh(spec.pid) else null
+                if (r != null) LiveGauge(spec.name, PidCatalog.format(spec, r.value), spec.unit, true, r.atMs, PollPlan.staleMs(spec.pid))
                 else LiveGauge(spec.name, "--", spec.unit, false, now)
             }
         return base.take(5) + boost + base.drop(5) + extraGauges

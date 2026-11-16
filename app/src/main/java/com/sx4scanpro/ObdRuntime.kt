@@ -732,7 +732,7 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
                         // Readings are shown only while the ECU is really answering; never stale values as live.
                         gauges = if (!connection.snapshot.ecuAvailable) gauges.map { it.copy(value = "--", available = false) }
                         else GaugeAssembler.build({ poller.reading(it) }, supportedPids, extraPids, nowMs)
-                            .map { GaugeValue(it.label, it.value, it.unit, it.available, it.capturedAtMs) }
+                            .map { GaugeValue(it.label, it.value, it.unit, it.available, it.capturedAtMs, it.staleAfterMs) }
                         if (nowMs - lastPerfLogMs >= 60_000L) {   // bounded: one short block a minute into the rolling session log
                             lastPerfLogMs = nowMs
                             poller.metrics.summary().forEach { sessionLog.append("PERF", it) }
