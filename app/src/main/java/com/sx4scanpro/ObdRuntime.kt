@@ -554,8 +554,7 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
         ecuScanning = true
         try {
             ecuNote = "Reading ECU identity (read-only)…"
-            performEcuScan()
-            ecuNote = "Scan finished."
+            ecuNote = EcuReport.scanSummary(performEcuScan())
         } catch (e: Exception) {
             sessionLog.append("EVT", "ecu scan at connect failed: " + (e.message ?: e.javaClass.simpleName))
             ecuNote = "Scan failed: " + (e.message ?: "communication error")
@@ -569,7 +568,7 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
             ecuScanning = true
             ecuNote = "Scanning the ECU (read-only)…"
             try {
-                withContext(Dispatchers.IO) { performEcuScan() }
+                val profile = withContext(Dispatchers.IO) { performEcuScan() }
                 ecuNote = EcuReport.scanSummary(profile)
             } catch (e: Exception) {
                 sessionLog.append("EVT", "ecu scan failed: " + (e.message ?: e.javaClass.simpleName))
