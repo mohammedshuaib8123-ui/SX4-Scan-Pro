@@ -72,7 +72,9 @@ internal class ExportSources(
     /** Capture JSONL files, oldest first (see [CaptureStore.files]). */
     val captureFiles: List<File>,
     val registry: ParameterRegistry?,
-    val profile: EcuProfile?
+    val profile: EcuProfile?,
+    /** One snapshot of the saved validation results; null means the caller supplied none, which the export reports as unavailable. */
+    val validation: ValidationSnapshot? = null
 )
 
 internal data class ExportRequest(
@@ -83,7 +85,7 @@ internal data class ExportRequest(
 internal data class ExportResult(val file: File?, val manifest: Map<String, Any?>, val complete: Boolean, val error: String?)
 
 /**
- * One self-contained ZIP: session_events.log, capture.jsonl, registry_summary.json, ecu_profile.json and manifest.json (written last,
+ * One self-contained ZIP: session_events.log, capture.jsonl, registry_summary.json, ecu_profile.json, validation_results.json and manifest.json (written last,
  * with a SHA-256 and size for every other entry). Reads only what the app already stored: no vehicle communication. Streams line by line,
  * so memory use does not grow with the log; source data beyond [maxSourceBytes] per component is left out and the manifest says so.
  */
@@ -242,14 +244,22 @@ internal object SessionExport {
             }
         }
 
-        // 5. Manifest (last, so it can carry the hashes of everything above).
+        // 5. Owner-entered validation results (all checks, untested included; manual entries, not independently verified).
+        val validation = entry(ValidationExport.FILE) { c ->
+            val v = src.validation
+            c.present = v != null && v.state != ValidationDataState.UNAVAILABLE
+            c.write(zip, MiniJson.write(red.scrub(ValidationExport.body(v)), 1) + "\n"); c.records = ValidationPlan.items.size.toLong()
+        }
+
+        // 6. Manifest (last, so it can carry the hashes of everything above).
         val ending = SessionEnding.infer(lastMarker, req.liveNow)
-        val parts = listOf(log, capture, registry, profile)
+        val parts = listOf(log, capture, registry, profile, validation)
         val issues = ArrayList<String>()
         if (!log.present || log.records == 0L) issues += "session event log is empty or missing"
         if (!capture.present || capture.records == 0L) issues += "no structured capture records"
         if (!registry.present) issues += "parameter registry unavailable"
         if (!profile.present) issues += "no ECU profile (no ECU scan has been run)"
+        issues += ValidationExport.issues(src.validation)
         if (capture.malformed > 0) issues += "capture.jsonl: " + capture.malformed + " malformed or partially written line(s) kept as found, not parsed"
         parts.filter { it.truncated }.forEach { issues += it.name + ": " + it.skippedFiles + " older file(s) left out to keep the export bounded" }
         if (ending == SessionEnding.INCOMPLETE) issues += "session was still running or ended in an error when exported"
