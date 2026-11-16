@@ -14,20 +14,22 @@ import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
 /**
- * Foreground service that keeps the app process alive while a trip is recording or paused, so
- * switching apps or turning the screen off does not stop the OBD session. It owns no trip data:
- * the session lives in MainActivity and is persisted by [TripSession]/[TripCodec].
- * The notification carries a Stop action that ends the trip through [onStopRequested].
+ * Foreground service that keeps the app process (and so [ObdRuntime], which owns the OBD session, the single
+ * command pipeline and the trip) alive while a trip is recording or paused, even with no Activity.
+ * It owns no trip data. The notification's Stop action calls [ObdRuntime.stopSession] synchronously,
+ * which closes the adapter session and finalises the trip once, and only then removes the notification and stops.
  */
 class TripService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            val handler = onStopRequested
-            if (handler != null) handler() else getSharedPreferences("sx4_scan_pro", MODE_PRIVATE).edit().remove("trip_active").apply()
-            stopForeground(STOP_FOREGROUND_REMOVE)
-            stopSelf()
+            // Order matters: session and trip first (synchronously, on this main thread), then the notification, then the service.
+            // stopSession does not touch this service, so there is no recursive stop.
+            try { ObdRuntime.get(this).stopSession() } finally {
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
             return START_NOT_STICKY
         }
         val text = intent?.getStringExtra(EXTRA_TEXT) ?: "Trip recording"
@@ -46,8 +48,6 @@ class TripService : Service() {
         private const val EXTRA_TEXT = "text"
         private const val CHANNEL = "trip"
         private const val NOTIF_ID = 4101
-        /** Set by MainActivity while it is alive. */
-        @Volatile var onStopRequested: (() -> Unit)? = null
 
         private fun build(ctx: Context, text: String): Notification {
             val nm = ctx.getSystemService(NotificationManager::class.java)

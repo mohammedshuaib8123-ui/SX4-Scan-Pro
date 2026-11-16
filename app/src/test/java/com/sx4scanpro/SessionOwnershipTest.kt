@@ -35,10 +35,17 @@ class SessionOwnershipTest {
         assertTrue(body.contains("rt.onConnected = null"))
     }
 
-    @Test fun stopFromNotificationEndsTheSessionWithoutAnActivity() {
-        val rt = src("ObdRuntime.kt"); assumeTrue(rt != null)
-        assertTrue(rt!!.contains("TripService.onStopRequested = { scope.launch { disconnect(true) } }"))
+    @Test fun stopFromNotificationClosesSessionBeforeNotificationAndService() {
         val svc = src("TripService.kt"); assumeTrue(svc != null)
-        assertFalse("service must not hold an Activity", svc!!.contains("MainActivity.kt") || svc.contains("runOnUiThread"))
+        val stop = svc!!.substringAfter("if (intent?.action == ACTION_STOP) {").substringBefore("return START_NOT_STICKY")
+        val session = stop.indexOf("stopSession()"); val fg = stop.indexOf("stopForeground("); val self = stop.indexOf("stopSelf()")
+        assertTrue("stopSession must be called", session >= 0)
+        assertTrue("session closes before the notification is removed", session < fg)
+        assertTrue("notification removed before the service stops", fg < self)
+        assertFalse("no async hop (callback/launch) in the Stop path", stop.contains("launch") || stop.contains("onStopRequested"))
+        assertFalse("service must not hold an Activity", svc.contains("runOnUiThread"))
+        val rt = src("ObdRuntime.kt"); assumeTrue(rt != null)
+        assertTrue("stopSession must not stop the service it is running in", rt!!.contains("fun stopSession() = disconnect(stopTrip = true, hideService = false)"))
+        assertFalse(rt.contains("onStopRequested"))
     }
 }

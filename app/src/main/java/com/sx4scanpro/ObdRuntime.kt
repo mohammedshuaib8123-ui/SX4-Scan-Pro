@@ -599,7 +599,7 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
     }
 
     /** The driver's Stop: closes the file, folds distance into the lifetime total once, clears the saved session. */
-    fun endTrip() {
+    fun endTrip(hideService: Boolean = true) {
         try { tripWriter?.flush(); tripWriter?.close() } catch (_: Exception) { }
         tripWriter = null
         if (tripSession.hasTrip()) {
@@ -612,7 +612,7 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
         prefs.edit().remove("trip_active").apply()
         tripStartMs = 0L
         lastTripNotice = ""
-        TripService.hide(this)
+        if (hideService) TripService.hide(this)
         tripTick++
     }
 
@@ -630,8 +630,16 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
     }
 
     /** Ends the live session: the trip, the socket and the notification. Same path for DISCONNECT, power and notification Stop. */
-    fun disconnect(stopTrip: Boolean = true) {
-        if (stopTrip) endTrip()
+    fun disconnect(stopTrip: Boolean = true) = disconnect(stopTrip, hideService = true)
+
+    /**
+     * Notification Stop. Runs on the main thread, completes before returning: poll loop told to stop, socket closed,
+     * trip finalised and persisted exactly once ([endTrip] is a no-op without a trip). The service removes its own notification.
+     */
+    fun stopSession() = disconnect(stopTrip = true, hideService = false)
+
+    private fun disconnect(stopTrip: Boolean, hideService: Boolean) {
+        if (stopTrip) endTrip(hideService)
         userInitiatedDisconnect = true
         closeSocket()
         connection.userDisconnected()
@@ -802,7 +810,6 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
         trackedKm = prefs.getFloat("tracked_km", 0f).toDouble()
         // A trip saved before the process died comes back paused; it resumes only when live data returns.
         TripCodec.decode(prefs.getString("trip_active", null))?.let { tripSession.restore(it); tripStartMs = it.startMs }
-        TripService.onStopRequested = { scope.launch { disconnect(true) } }
         // The trip clock must run even with no Activity: a hung adapter pauses the trip here.
         scope.launch { while (true) { delay(1000); tripClock(System.currentTimeMillis()) } }
     }
