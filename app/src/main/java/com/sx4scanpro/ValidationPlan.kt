@@ -64,11 +64,26 @@ internal object ValidationPlan {
 internal object ValidationCodec {
     fun encode(records: List<ValidationRecord>): String = records.joinToString("\n") { "${it.id}|${it.status.name}|${it.atMs}|${it.note.replace('\n', ' ').replace('|', '/')}" }
 
+    /**
+     * The text to save after the owner records [rec] (null = the owner cleared that check). Every saved line is kept exactly as it was,
+     * including lines that cannot be read, so damage stays detectable by later exports; only earlier readable lines for the same check
+     * are replaced, and the new line goes last so it supersedes any damaged line for that check.
+     */
+    fun saveWith(saved: String?, id: String, rec: ValidationRecord?): String {
+        val kept = (saved ?: "").lines().filter { line ->
+            if (line.isBlank()) return@filter false
+            val p = line.split('|', limit = 4)
+            val readable = p.size == 4 && ValidationStatus.values().any { it.name == p[1] } && p[2].toLongOrNull() != null && ValidationPlan.find(p[0]) != null
+            !(readable && p[0] == id)
+        }
+        return (kept + listOfNotNull(rec?.let { encode(listOf(it)) })).joinToString("\n")
+    }
+
     fun decode(text: String?): List<ValidationRecord> = decodeDetailed(text).records
 
     /**
      * Same parsing as [decode] (the records are identical), but also counts the lines that could not be read so an export can say so
-     * instead of silently dropping them. [ValidationDecode.unreadableIds] are known check ids whose saved line was damaged. Blank lines are ignored.
+     * instead of silently dropping them. [ValidationDecode.unreadableIds] are known check ids whose latest saved line was damaged (a readable line for the same id saved after it supersedes it). Blank lines are ignored.
      */
     fun decodeDetailed(text: String?): ValidationDecode {
         if (text.isNullOrBlank()) return ValidationDecode(emptyList(), 0, emptySet())
@@ -80,7 +95,7 @@ internal object ValidationCodec {
             val p = line.split('|', limit = 4)
             val st = if (p.size < 4) null else ValidationStatus.values().firstOrNull { it.name == p[1] }
             val t = if (st == null) null else p[2].toLongOrNull()
-            if (st != null && t != null && ValidationPlan.find(p[0]) != null) records += ValidationRecord(p[0], st, t, p[3])
+            if (st != null && t != null && ValidationPlan.find(p[0]) != null) { records += ValidationRecord(p[0], st, t, p[3]); badIds -= p[0] }
             else { bad++; p.firstOrNull()?.takeIf { ValidationPlan.find(it) != null }?.let { badIds += it } }
         }
         return ValidationDecode(records, bad, badIds)

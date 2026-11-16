@@ -284,7 +284,8 @@ class MainActivity : ComponentActivity() {
     private fun recordValidationResult(id: String, s: ValidationStatus) {
         validation = if (s == ValidationStatus.UNTESTED) validation.filter { it.id != id }
         else ValidationPlan.record(validation, id, s, System.currentTimeMillis())
-        prefs.edit().putString("validation", ValidationCodec.encode(validation)).apply()
+        // Saved lines that cannot be read are kept verbatim so later exports still report them.
+        prefs.edit().putString("validation", ValidationCodec.saveWith(prefs.getString("validation", null), id, validation.lastOrNull { it.id == id })).apply()
         sessionLog.append("EVT", "validation result: $id ${s.name}")
     }
     private fun closeSocket() = rt.closeSocket()

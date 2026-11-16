@@ -96,3 +96,48 @@ class ValidationExportTest {
         assertTrue((b["notes"] as List<*>).isNotEmpty())
     }
 }
+
+class ValidationPersistenceTest {
+    private val bad = "garbage\nTRIP_STOP|PASSED|notatime|x\nGONE|PASSED|1|x"
+    private fun updated(saved: String?, id: String, st: ValidationStatus, at: Long, note: String = "") =
+        ValidationCodec.saveWith(saved, id, ValidationRecord(id, st, at, note))
+
+    @Test fun validRecordsSurviveAndMalformedLinesStayDetectableAfterAnUpdate() {
+        val start = ValidationCodec.encode(listOf(ValidationRecord("LIVE_DATA", ValidationStatus.PASSED, 7L, "ok"), ValidationRecord("REPORT", ValidationStatus.FAILED, 8L))) + "\n" + bad
+        val after = updated(start, "DTC_SCAN", ValidationStatus.PASSED, 99L, "n")
+        val d = ValidationCodec.decodeDetailed(after)
+        assertEquals(3, d.unreadableLines); assertEquals(setOf("TRIP_STOP"), d.unreadableIds)
+        assertEquals(listOf(ValidationRecord("LIVE_DATA", ValidationStatus.PASSED, 7L, "ok"), ValidationRecord("REPORT", ValidationStatus.FAILED, 8L), ValidationRecord("DTC_SCAN", ValidationStatus.PASSED, 99L, "n")), d.records)
+        assertTrue(bad.lines().all { after.lines().contains(it) })
+    }
+
+    @Test fun exportAfterTheUpdateStillReportsUnknownAndIncomplete() {
+        val after = updated("LIVE_DATA|PASSED|7|ok\n" + bad, "DTC_SCAN", ValidationStatus.FAILED, 99L)
+        val snap = ValidationSnapshot.fromSavedText(after)
+        val b = ValidationExport.body(snap)
+        @Suppress("UNCHECKED_CAST") val c = (b["checks"] as List<Map<String, Any?>>).associateBy { it["id"] }
+        assertEquals("PARTIALLY_UNREADABLE", b["dataState"]); assertEquals("UNKNOWN", c.getValue("TRIP_STOP")["status"])
+        assertEquals("FAILED", c.getValue("DTC_SCAN")["status"]); assertEquals("PASSED", c.getValue("LIVE_DATA")["status"])
+        assertTrue(ValidationExport.issues(snap).isNotEmpty())
+        val dir = Files.createTempDirectory("sx4val2").toFile()
+        val r = SessionExport.build(File(dir, "e.zip"), ExportRequest("b", "A", "p", "S1", false, false, 5_000L), ExportSources(emptyList(), emptyList(), null, null, snap))
+        assertFalse(r.complete)
+    }
+
+    @Test fun aNewResultForADamagedCheckSupersedesTheDamagedLineButKeepsTheEvidence() {
+        val after = updated("TRIP_STOP|BROKEN|1|x", "TRIP_STOP", ValidationStatus.PASSED, 5L)
+        val d = ValidationCodec.decodeDetailed(after)
+        assertEquals(1, d.unreadableLines); assertTrue(d.unreadableIds.isEmpty()); assertEquals(ValidationStatus.PASSED, ValidationPlan.statusOf(d.records, "TRIP_STOP"))
+    }
+
+    @Test fun normalUpdatesBehaveAsBefore() {
+        var saved: String? = null
+        saved = updated(saved, "LIVE_DATA", ValidationStatus.FAILED, 1L, "a | b")
+        saved = updated(saved, "LIVE_DATA", ValidationStatus.PASSED, 2L)
+        saved = updated(saved, "REPORT", ValidationStatus.PASSED, 3L)
+        assertEquals(ValidationCodec.encode(listOf(ValidationRecord("LIVE_DATA", ValidationStatus.PASSED, 2L), ValidationRecord("REPORT", ValidationStatus.PASSED, 3L))), saved)
+        assertEquals("REPORT|PASSED|3|", ValidationCodec.saveWith(saved, "LIVE_DATA", null))
+        assertEquals("", ValidationCodec.saveWith(null, "LIVE_DATA", null))
+        assertTrue(ValidationCodec.decodeDetailed(saved).unreadableLines == 0)
+    }
+}
