@@ -25,7 +25,9 @@ internal object HealthReport {
         val unavailableReadings: List<String> = emptyList(),
         /** Fresh numeric readings for the deterministic rules (see [HealthRules]); empty means no rule can run. */
         val ruleReadings: List<RuleReading> = emptyList(),
-        val ruleNowMs: Long = 0L
+        val ruleNowMs: Long = 0L,
+        /** Owner-recorded real-car validation lines (see [ValidationPlan]); empty omits the section. */
+        val validation: List<String> = emptyList()
     )
 
     private fun time(ms: Long) = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date(ms))
@@ -75,6 +77,7 @@ internal object HealthReport {
             add("")
             add("LIMITATIONS")
             addAll(limitations(i))
+            if (i.validation.isNotEmpty()) { add(""); add("REAL-CAR VALIDATION"); addAll(i.validation) }
         }
         add("")
         add("DISTANCE")
