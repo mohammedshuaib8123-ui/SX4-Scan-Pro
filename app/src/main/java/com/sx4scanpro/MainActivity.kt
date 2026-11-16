@@ -178,6 +178,7 @@ class MainActivity : ComponentActivity() {
     private val tripSession = TripSession()
     private val trip: TripStats get() = tripSession.stats
     private var lastTripPersistMs = 0L
+    private var stopSessionTick by mutableStateOf(0)
     private var lastTripNotice = ""
     /** Gauge keys ("coolant", "rpm", "boost") currently above an owner-set limit. */
     private var alertSensors by mutableStateOf(emptySet<String>())
@@ -313,7 +314,7 @@ class MainActivity : ComponentActivity() {
         trackedKm = prefs.getFloat("tracked_km", 0f).toDouble()
         // A trip saved before the process died comes back paused; it resumes only when live data returns.
         TripCodec.decode(prefs.getString("trip_active", null))?.let { tripSession.restore(it); tripStartMs = it.startMs }
-        TripService.onStopRequested = { runOnUiThread { endTrip() } }
+        TripService.onStopRequested = { runOnUiThread { stopSessionTick++ } }
         if (android.os.Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED)
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 9101)
         driveMode = DriveMode.parse(prefs.getString("drive_mode", null))
@@ -459,6 +460,8 @@ class MainActivity : ComponentActivity() {
             status = "Disconnected"
             gauges = gauges.map { it.copy(value = "--", available = false) }
         }
+        // Notification "Stop trip": ends the trip AND the live session (same path as the DISCONNECT button).
+        LaunchedEffect(stopSessionTick) { if (stopSessionTick > 0) disconnect() }
         fun connect() {
             if (btAccess != AccessStatus.GRANTED) {
                 status = if (btAccess == AccessStatus.BLOCKED) BluetoothAccess.message(btAccess)
