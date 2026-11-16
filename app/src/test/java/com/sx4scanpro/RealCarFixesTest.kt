@@ -121,7 +121,7 @@ class RealCarFixesTest {
             (0x23 to PollPlan.extraIntervalMs(0x23)) + (0x42 to PollPlan.extraIntervalMs(0x42)) + (0x49 to PollPlan.extraIntervalMs(0x49))
         for ((pid, iv) in plan) {
             val realistic = if (pid == 0x0C || pid == 0x0D) 1_300L else maxOf(iv, 5_000L).coerceAtMost(20_000L)
-            assertTrue("PID %02X fresh window ${PollPlan.freshMs(iv)} ms vs update $realistic ms".format(pid), PollPlan.freshMs(iv) >= realistic)
+            assertTrue("PID %02X blank window ${PollPlan.blankMs(pid)} ms vs update $realistic ms".format(pid), PollPlan.blankMs(pid) >= realistic)
         }
         assertTrue(PollPlan.BARO_MAX_AGE_MS > 2 * PollPlan.BARO_INTERVAL_MS)
     }
