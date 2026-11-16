@@ -6,22 +6,33 @@ internal data class LiveGauge(val label: String, val value: String, val unit: St
 internal object PollPlan {
     /** label, PID, unit, interval ms. Order is the dashboard order (boost is inserted after manifold pressure). */
     val core = listOf(
-        Quad("Engine RPM", 0x0C, "rpm", 600L),
-        Quad("Vehicle speed", 0x0D, "km/h", 1000L),
-        Quad("Coolant temperature", 0x05, "°C", 3500L),
-        Quad("Intake air temperature", 0x0F, "°C", 3500L),
-        Quad("Manifold pressure", 0x0B, "kPa", 1000L),
-        Quad("MAF airflow", 0x10, "g/s", 1500L),
-        Quad("Calculated engine load", 0x04, "%", 2000L),
-        Quad("Throttle position", 0x11, "%", 2000L),
-        Quad("EGR commanded", 0x2C, "%", 3500L)
+        Quad("Engine RPM", 0x0C, "rpm", 800L),
+        Quad("Vehicle speed", 0x0D, "km/h", 1200L),
+        Quad("Coolant temperature", 0x05, "°C", 8000L),
+        Quad("Intake air temperature", 0x0F, "°C", 20000L),
+        Quad("Manifold pressure", 0x0B, "kPa", 2000L),
+        Quad("MAF airflow", 0x10, "g/s", 2500L),
+        Quad("Calculated engine load", 0x04, "%", 2500L),
+        Quad("Throttle position", 0x11, "%", 2500L),
+        Quad("EGR commanded", 0x2C, "%", 10000L)
     )
     data class Quad(val label: String, val pid: Int, val unit: String, val intervalMs: Long)
 
     const val BARO_PID = 0x33
-    const val BARO_INTERVAL_MS = 10_000L
-    const val BARO_MAX_AGE_MS = 60_000L
-    const val EXTRA_INTERVAL_MS = 3500L
+    const val BARO_INTERVAL_MS = 30_000L
+    const val BARO_MAX_AGE_MS = 90_000L
+    const val EXTRA_INTERVAL_MS = 8000L
+
+    /**
+     * Extra PIDs with their own pace. Fuel rail pressure is what the data-check monitor watches most, so it is read much more often than
+     * the other extras; battery voltage changes slowly.
+     */
+    fun extraIntervalMs(pid: Int): Long = when (pid) {
+        0x23 -> RAIL_INTERVAL_MS
+        0x42 -> 15_000L
+        else -> EXTRA_INTERVAL_MS
+    }
+    const val RAIL_INTERVAL_MS = 3_000L
 
     /**
      * Per-sensor ages, set from the real car log (K-line: about 330 ms per request, so low-priority sensors refresh every 5-21 s).
@@ -40,18 +51,18 @@ internal object PollPlan {
         else -> 60_000L
     }
 
-    /** 0: RPM and speed. 1: coolant and engine load. 2: MAP and MAF (boost and fuelling). 3: everything else the owner enabled, and baro. */
+    /** 0: RPM and speed. 1: coolant and engine load. 2: MAP, MAF and fuel rail pressure (boost, fuelling, rail checks). 3: everything else the owner enabled, and baro. */
     fun priorityOf(pid: Int): Int = when (pid) {
         0x0C, 0x0D -> 0
         0x05, 0x04 -> 1
-        0x0B, 0x10 -> 2
+        0x0B, 0x10, 0x23 -> 2
         else -> 3
     }
 
     fun configure(s: PollScheduler, extras: Set<Int>) {
         core.forEach { s.set(it.pid, it.intervalMs) }
         s.set(BARO_PID, BARO_INTERVAL_MS)
-        extras.filter { it != BARO_PID && core.none { c -> c.pid == it } }.forEach { s.set(it, EXTRA_INTERVAL_MS) }
+        extras.filter { it != BARO_PID && core.none { c -> c.pid == it } }.forEach { s.set(it, extraIntervalMs(it)) }
         s.pids().forEach { s.setPriority(it, priorityOf(it)) }
     }
 }

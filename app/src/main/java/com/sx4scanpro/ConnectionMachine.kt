@@ -122,7 +122,7 @@ internal object ConnectionPresenter {
         FailureKind.BLUETOOTH_DISCONNECTED -> "Bluetooth link to the adapter was lost"
         FailureKind.ADAPTER_TIMEOUT -> "The adapter stopped answering"
         FailureKind.ELM_TIMEOUT -> "The adapter did not finish a request in time"
-        FailureKind.REPEATED_NO_DATA -> "The ECU stopped answering (ignition off?)"
+        FailureKind.REPEATED_NO_DATA -> "The ECU stopped answering (engine stopped or ignition off)"
         FailureKind.ECU_COMMUNICATION_FAILURE -> "The ECU is not responding"
         FailureKind.UNEXPECTED_ADAPTER_RESPONSE -> "The adapter sent an unexpected reply"
         FailureKind.POLLING_STALLED -> "Live polling stalled"

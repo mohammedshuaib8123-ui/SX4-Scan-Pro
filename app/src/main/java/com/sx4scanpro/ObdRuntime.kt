@@ -225,6 +225,7 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
         config.initCommands().forEach { sendCommand(it) }
         // Facts for the session log only; a failed query here never blocks connecting.
         sessionLog.append("EVT", "connect: adapter=" + chosen.name + " " + chosen.address)
+        adapterNameForScan = chosen.name
         adapterIdText = runCatching { sendCommand("ATI", 3000) }.getOrDefault("")
         adapterVoltageText = runCatching { sendCommand("ATRV", 3000) }.getOrDefault("")
         connection.ecuInitializing()
@@ -243,6 +244,8 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
         if (!reconnecting) {
             pollingLive = false
             runCatching { requestDiscovery("connect") }
+            // Mode 09 identity (VIN, calibration IDs, ECU name) once, when none is saved yet or it is old. Polling has not started.
+            autoEcuScanAtConnect()
         }
         return (device.name ?: "Bluetooth OBD adapter") to Unit
     }
@@ -381,7 +384,12 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
             when (val ev = poller.step(System.currentTimeMillis())) {
                 is PollEvent.Recovery -> { sessionLog.append("EVT", "ECU recovery " + ev.step + (if (ev.recovered) " succeeded" else " no answer")); return ev }
                 is PollEvent.Idle -> return null
-                is PollEvent.Polled -> {}
+                is PollEvent.Polled -> {
+                    // Real replies feed the capability registry (VERIFIED / DECODED); the file is written rarely, see RegistrySaveGate.
+                    liveFeed.onPolled(ev.pid, ev.reading, ev.kind)
+                    if (liveFeed.takeDirty()) registrySaveGate.markDirty()
+                    if (registrySaveGate.shouldSave(System.currentTimeMillis())) flushRegistry()
+                }
             }
             if (poller.monitor.state != LinkState.COMMUNICATING) return null
         }
@@ -389,6 +397,83 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
     }
 
     val registryStore by lazy { RegistryStore(java.io.File(filesDir, "registry/parameters.json")) }
+    val liveFeed = LiveRegistryFeed({ parameterRegistry })
+    val registrySaveGate = RegistrySaveGate()
+
+    // ---- data check (sensor sanity, learned normal values, trip tally) and fuel log ----
+    val dataCheck by lazy {
+        DataCheckMonitor(Baselines.fromJson(runCatching { java.io.File(filesDir, "datacheck/baselines.json").takeIf { it.exists() }?.readText() }.getOrNull()))
+    }
+    var dataFindings by mutableStateOf<List<DataFinding>>(emptyList())
+    var dataTally by mutableStateOf<List<TallyRow>>(emptyList())
+    var dataBaselines by mutableStateOf<List<BaselineRow>>(emptyList())
+    var dataSummary by mutableStateOf(TripSummary(0, 0, 0, 0, 0, null))
+    var dataCheckBanner by mutableStateOf("")
+    var fuelFills by mutableStateOf<List<FillUp>>(emptyList())
+    val announcedFindings = mutableSetOf<String>()
+    var lastBaselineSaveMs = 0L
+    /** Audio hook for a data-check ALERT; null with no Activity (the finding still shows and is logged). */
+    var onDataAlert: (() -> Unit)? = null
+
+    /** Called about once a second while the ECU is answering. Only readings that are still fresh are given to the monitor. */
+    fun runDataCheck(nowMs: Long, poller: LivePoller) {
+        val values = HashMap<Int, Double>()
+        for ((pid, _, _) in DataCheckMonitor.TALLIED) {
+            val r = poller.reading(pid) ?: continue
+            val maxAge = when (pid) { 0x0C, 0x0D -> 5_000L; 0x33 -> 90_000L; else -> 25_000L }
+            if (nowMs - r.atMs <= maxAge) values[pid] = r.value
+        }
+        dataCheck.update(nowMs, values)
+        val found = dataCheck.findings()
+        dataFindings = found
+        dataSummary = dataCheck.summary()
+        if (nowMs - dataTallyMs >= 3_000L) { dataTallyMs = nowMs; dataTally = dataCheck.tally(); dataBaselines = dataCheck.baselineRows() }
+        dataCheckBanner = found.firstOrNull { it.level >= CheckLevel.WARN }?.let { "CHECK: " + it.title } ?: ""
+        announcedFindings.retainAll(found.map { it.id }.toSet())
+        for (f in found) if (announcedFindings.add(f.id)) {
+            sessionLog.append("EVT", "data check ${f.level} ${f.id}: ${f.detail}")
+            if (f.level == CheckLevel.ALERT) onDataAlert?.invoke()
+        }
+        if (nowMs - lastBaselineSaveMs >= 60_000L) saveBaselines(nowMs)
+    }
+    var dataTallyMs = 0L
+
+    fun saveBaselines(nowMs: Long = System.currentTimeMillis()) {
+        lastBaselineSaveMs = nowMs
+        val json = dataCheck.baselinesJsonIfDirty() ?: return
+        runCatching {
+            val f = java.io.File(filesDir, "datacheck/baselines.json"); f.parentFile?.mkdirs()
+            val tmp = java.io.File(f.parentFile, "baselines.json.tmp"); tmp.writeText(json); tmp.renameTo(f)
+        }.onFailure { sessionLog.append("EVT", "data check references could not be saved") }
+    }
+
+    fun resetDataCheckLearning() {
+        dataCheck.resetLearning(); saveBaselines()
+        runCatching { java.io.File(filesDir, "datacheck/baselines.json").delete() }
+        dataBaselines = dataCheck.baselineRows()
+        sessionLog.append("EVT", "data check: learned normal values were reset by the owner")
+    }
+
+    fun addFillUp(odoKm: Double?, litres: Double?): String? {
+        FuelLog.validate(fuelFills, odoKm, litres)?.let { return it }
+        fuelFills = (fuelFills + FillUp(odoKm!!, litres!!, System.currentTimeMillis(), true)).sortedBy { it.odoKm }
+        prefs.edit().putString("fuel_log", FuelLog.serialize(fuelFills)).apply()
+        return null
+    }
+
+    fun removeLastFillUp() {
+        fuelFills = fuelFills.dropLast(1)
+        prefs.edit().putString("fuel_log", FuelLog.serialize(fuelFills)).apply()
+    }
+
+    /** Writes the registry now if a live state change is waiting to be saved. Safe to call from any thread, cheap when nothing changed. */
+    @Synchronized
+    fun flushRegistry() {
+        if (!registrySaveGate.hasPending()) return
+        val ok = runCatching { registryStore.save(parameterRegistry) }.getOrDefault(false)
+        registrySaveGate.saved(System.currentTimeMillis())
+        if (!ok) sessionLog.append("EVT", "parameter registry could not be saved")
+    }
     /** Persisted capability states (P2). Loaded at start; nothing writes to it until the discovery phase. */
     var parameterRegistry: ParameterRegistry = ParameterRegistry.withBuiltInDefinitions()
 
@@ -449,26 +534,42 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
         }
     }
 
+    /** Runs the read-only identity scan and stores the profile (latest + previous). Blocking: call from a background thread. */
+    fun performEcuScan(): EcuProfile {
+        val facts = AdapterFacts(adapterNameForScan, adapterIdText, adapterVoltageText, protocolText)
+        val profile = EcuScan.run(elmPort, facts, supportedPids, "v0.8.0 build 26", System.currentTimeMillis()) { sessionLog.append("EVT", "ecu scan: $it") }
+        val dir = ecuDir()
+        val latest = java.io.File(dir, "profile_latest.json")
+        if (latest.exists()) latest.copyTo(java.io.File(dir, "profile_previous.json"), overwrite = true)
+        latest.writeText(profile.toJson())
+        ecuPrevious = ecuProfile
+        ecuProfile = profile
+        sessionLog.append("EVT", "ecu scan done: vin=" + profile.vin.status + " cal=" + profile.calIds.status + " cvn=" + profile.cvns.status)
+        return profile
+    }
+
+    /** Once per fresh connection, when there is no saved profile or it is more than a day old (see [EcuScanPolicy]). Never decides whether the connection succeeds. */
+    fun autoEcuScanAtConnect() {
+        if (ecuScanning || !EcuScanPolicy.dueAtConnect(ecuProfile, System.currentTimeMillis())) return
+        ecuScanning = true
+        try {
+            ecuNote = "Reading ECU identity (read-only)…"
+            performEcuScan()
+            ecuNote = "Scan finished."
+        } catch (e: Exception) {
+            sessionLog.append("EVT", "ecu scan at connect failed: " + (e.message ?: e.javaClass.simpleName))
+            ecuNote = "Scan failed: " + (e.message ?: "communication error")
+            if (socket?.isConnected != true) throw e        // a lost socket must reach the normal connection handling
+        } finally { ecuScanning = false }
+    }
+
     fun runEcuScan(scope: kotlinx.coroutines.CoroutineScope) {
         if (ecuScanning || discoveryController.isRunning()) return
         scope.launch {
             ecuScanning = true
             ecuNote = "Scanning the ECU (read-only)…"
             try {
-                val facts = AdapterFacts(adapterNameForScan, adapterIdText, adapterVoltageText, protocolText)
-                val profile = withContext(Dispatchers.IO) {
-                    EcuScan.run(elmPort, facts, supportedPids, "v0.8.0 build 26", System.currentTimeMillis()) { step ->
-                        sessionLog.append("EVT", "ecu scan: $step")
-                        ecuNote = "Scanning the ECU (read-only): $step…"
-                    }
-                }
-                val dir = ecuDir()
-                val latest = java.io.File(dir, "profile_latest.json")
-                if (latest.exists()) latest.copyTo(java.io.File(dir, "profile_previous.json"), overwrite = true)
-                latest.writeText(profile.toJson())
-                ecuPrevious = ecuProfile
-                ecuProfile = profile
-                sessionLog.append("EVT", "ecu scan done: vin=" + profile.vin.status + " cal=" + profile.calIds.status + " cvn=" + profile.cvns.status)
+                withContext(Dispatchers.IO) { performEcuScan() }
                 ecuNote = EcuReport.scanSummary(profile)
             } catch (e: Exception) {
                 sessionLog.append("EVT", "ecu scan failed: " + (e.message ?: e.javaClass.simpleName))
@@ -539,6 +640,7 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
         } else {
             endTrip()
             val name = "trip-" + java.text.SimpleDateFormat("yyyyMMdd-HHmmss", java.util.Locale.US).format(java.util.Date()) + ".csv"
+            dataCheck.startTrip(); announcedFindings.clear(); dataFindings = emptyList(); dataTally = emptyList(); dataCheckBanner = ""
             tripSession.begin(now, name)
             openTripWriter(java.io.File(tripDir(), name))
         }
@@ -600,6 +702,8 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
 
     /** The driver's Stop: closes the file, folds distance into the lifetime total once, clears the saved session. */
     fun endTrip(hideService: Boolean = true) {
+        flushRegistry()
+        saveBaselines()
         try { tripWriter?.flush(); tripWriter?.close() } catch (_: Exception) { }
         tripWriter = null
         if (tripSession.hasTrip()) {
@@ -742,6 +846,7 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
                             gauges.forEach { g -> history.record(g.label, if (g.available) g.value.toDoubleOrNull() else null) }
                             historyVersion++
                             recordTrip(gauges)
+                            if (connection.snapshot.ecuAvailable) runDataCheck(nowMs, poller)
                         }
                         val rpmGauge = gauges.firstOrNull { it.label == "Engine RPM" }
                         val sensorReadings = gauges.mapNotNull { gauge ->
@@ -807,6 +912,8 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
     }
 
     init {
+        fuelFills = FuelLog.parse(prefs.getString("fuel_log", null))
+        dataBaselines = dataCheck.baselineRows()
         trackedKm = prefs.getFloat("tracked_km", 0f).toDouble()
         // A trip saved before the process died comes back paused; it resumes only when live data returns.
         TripCodec.decode(prefs.getString("trip_active", null))?.let { tripSession.restore(it); tripStartMs = it.startMs }

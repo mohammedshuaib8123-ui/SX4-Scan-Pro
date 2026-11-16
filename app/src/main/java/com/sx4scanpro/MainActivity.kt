@@ -253,6 +253,27 @@ class MainActivity : ComponentActivity() {
     private val elmPort: ElmPort get() = rt.elmPort
     private val discoveryController: DiscoveryController get() = rt.discoveryController
     private val registryStore: RegistryStore get() = rt.registryStore
+    private var dataFindings: List<DataFinding>
+        get() = rt.dataFindings
+        set(v) { rt.dataFindings = v }
+    private var dataTally: List<TallyRow>
+        get() = rt.dataTally
+        set(v) { rt.dataTally = v }
+    private var dataBaselines: List<BaselineRow>
+        get() = rt.dataBaselines
+        set(v) { rt.dataBaselines = v }
+    private var dataSummary: TripSummary
+        get() = rt.dataSummary
+        set(v) { rt.dataSummary = v }
+    private var dataCheckBanner: String
+        get() = rt.dataCheckBanner
+        set(v) { rt.dataCheckBanner = v }
+    private var fuelFills: List<FillUp>
+        get() = rt.fuelFills
+        set(v) { rt.fuelFills = v }
+    private fun resetDataCheckLearning() = rt.resetDataCheckLearning()
+    private fun addFillUp(odoKm: Double?, litres: Double?): String? = rt.addFillUp(odoKm, litres)
+    private fun removeLastFillUp() = rt.removeLastFillUp()
     private fun closeSocket() = rt.closeSocket()
     private fun sendCommand(command: String, timeoutMs: Long = 5000, keepLines: Boolean = false, timedOut: TimeoutFlag? = null): String = rt.sendCommand(command, timeoutMs, keepLines, timedOut)
     internal fun requestDiscovery(reason: String = "manual"): DiscoveryOutcome = rt.requestDiscovery(reason)
@@ -425,6 +446,7 @@ class MainActivity : ComponentActivity() {
         // Audio hooks only; the session keeps running if this Activity goes away.
         rt.onConnected = { if (welcomeSettings.shouldPlay(welcomePlayedOnce)) playEngineWelcome(); welcomePlayedOnce = true }
         rt.onAlert = { sensors -> playAlert(sensors) }
+        rt.onDataAlert = { chime?.startTone(ToneGenerator.TONE_PROP_NACK, 520) }
         setContent { MaterialTheme { Dashboard() } }
     }
 
@@ -600,9 +622,9 @@ class MainActivity : ComponentActivity() {
                                     }
                                 }
                             }
-                            AnimatedVisibility(visible = warningPreview || warningMessage.isNotBlank(), enter = fadeIn(tween(220)) + slideInHorizontally(tween(260)) { -it / 8 }, exit = fadeOut(tween(180))) {
+                            AnimatedVisibility(visible = warningPreview || warningMessage.isNotBlank() || dataCheckBanner.isNotBlank(), enter = fadeIn(tween(220)) + slideInHorizontally(tween(260)) { -it / 8 }, exit = fadeOut(tween(180))) {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF4B171D)), border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFF5252))) {
-                                    Text(if (warningMessage.isNotBlank()) warningMessage else "WARNING SYSTEM PREVIEW — NOT A LIVE VEHICLE FAULT", Modifier.padding(12.dp), color = Color.White, fontWeight = FontWeight.Black)
+                                    Text(if (warningMessage.isNotBlank()) warningMessage else if (dataCheckBanner.isNotBlank()) dataCheckBanner else "WARNING SYSTEM PREVIEW — NOT A LIVE VEHICLE FAULT", Modifier.padding(12.dp), color = Color.White, fontWeight = FontWeight.Black)
                                 }
                             }
                             if (showWall) {
@@ -689,6 +711,12 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                         1 -> LazyColumn(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            item {
+                                DataCheckCard(dataFindings, dataTally, dataBaselines, dataSummary, connected, panel, cyan, muted) { resetDataCheckLearning() }
+                            }
+                            item {
+                                FuelLogCard(fuelFills, nowMs, panel, cyan, muted, { o, l -> addFillUp(o, l) }, { removeLastFillUp() })
+                            }
                             item {
                                 val tick = tripTick
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
@@ -1813,6 +1841,7 @@ class MainActivity : ComponentActivity() {
         // Detach UI hooks. A live session (socket, poll loop, trip) belongs to ObdRuntime and keeps recording.
         rt.onConnected = null
         rt.onAlert = null
+        rt.onDataAlert = null
         if (!rt.sessionActive()) { rt.holdTrip(); TripService.hide(this) }
         runCatching { if (BluetoothAdapter.getDefaultAdapter()?.isDiscovering == true) BluetoothAdapter.getDefaultAdapter()?.cancelDiscovery() }
         mainHandler.removeCallbacksAndMessages(null)
