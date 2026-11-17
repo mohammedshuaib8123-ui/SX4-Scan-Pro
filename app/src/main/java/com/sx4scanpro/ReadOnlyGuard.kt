@@ -33,8 +33,9 @@ internal class ExtendedAllowlist private constructor(val entries: Map<String, St
 
 /**
  * Default-deny policy for everything that reaches the adapter. Allowed: the AT commands the app needs to initialise and
- * read the adapter, SAE J1979 read services (01, 02, 03, 06, 07, 09, 0A) and the sourced extended reads above.
- * Refused: clearing, resets, actuator and routine control, session control, security access, writes, coding, programming,
+ * read the adapter, SAE J1979 read services (01, 02, 03, 06, 07, 09, 0A), the sourced extended reads above, and Mode 04
+ * only while [WorkshopPermit] is open for the clear-codes procedure.
+ * Refused: resets, actuator and routine control, session control, security access, other writes, coding, programming,
  * and the adapter commands that rewrite its stored settings or sleep it.
  */
 internal object ReadOnlyGuard {
@@ -73,6 +74,11 @@ internal object ReadOnlyGuard {
         }
         if (allowedObd.any { it.matches(c) }) return GuardVerdict.Allowed
         if (c in extended.entries) return GuardVerdict.Allowed
+        // Mode 04 is the one standard write. It is sent only while the clear-codes procedure holds the permit.
+        if (c == "04") {
+            return if (WorkshopPermit.allows("04")) GuardVerdict.Allowed
+            else GuardVerdict.Blocked("service 04 clears DTCs and is sent only by the clear-codes procedure")
+        }
         val service = c.take(2)
         blockedServices[service]?.let { return GuardVerdict.Blocked("service $service $it") }
         return GuardVerdict.Blocked("not on the read-only allowlist")

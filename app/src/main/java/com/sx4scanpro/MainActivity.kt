@@ -292,6 +292,7 @@ class MainActivity : ComponentActivity() {
     private fun sendCommand(command: String, timeoutMs: Long = 5000, keepLines: Boolean = false, timedOut: TimeoutFlag? = null): String = rt.sendCommand(command, timeoutMs, keepLines, timedOut)
     internal fun requestDiscovery(reason: String = "manual"): DiscoveryOutcome = rt.requestDiscovery(reason)
     private fun readTroubleCodes(): DtcScanReport = rt.readTroubleCodes()
+    private fun clearEngineCodes(speedKmh: Double?): ClearReport = rt.clearEngineCodes(speedKmh)
     private fun readFreezeFrameBlocking(): FreezeFrameResult = rt.readFreezeFrameBlocking()
     private fun runEcuScan(scope: kotlinx.coroutines.CoroutineScope) = rt.runEcuScan(scope)
     private fun startTrip(forceNew: Boolean = false) = rt.startTrip(forceNew)
@@ -481,6 +482,8 @@ class MainActivity : ComponentActivity() {
         var dtcCodes by remember { mutableStateOf<List<TroubleCodeResult>>(emptyList()) }
         var dtcScanned by remember { mutableStateOf(false) }
         var scanningCodes by remember { mutableStateOf(false) }
+        var clearingCodes by remember { mutableStateOf(false) }
+        var confirmClear by remember { mutableStateOf(false) }
         var headUnitStatus by remember { mutableStateOf("Open Headunit runs as a separate receiver app.") }
         var readiness by remember { mutableStateOf(computeHeadUnitReadiness()) }
         var logPreview by remember { mutableStateOf<List<String>>(emptyList()) }
@@ -570,6 +573,27 @@ class MainActivity : ComponentActivity() {
                     // A lost adapter is picked up by the poll loop, which reconnects; the scan only reports its own failure.
                     if (socket?.isConnected != true) sessionLog.append("EVT", "DTC scan lost the adapter; connection recovery takes over")
                 } finally { scanningCodes = false }
+            }
+        }
+        fun clearFaultCodes() {
+            if (!connected || clearingCodes || scanningCodes) return
+            val speed = gauges.firstOrNull { it.label == "Vehicle speed" && it.available }?.value?.toDoubleOrNull()
+            clearingCodes = true
+            scope.launch {
+                dtcStatus = "Saving the current engine codes, then sending Mode 04…"
+                try {
+                    val report = withContext(Dispatchers.IO) { clearEngineCodes(speed) }
+                    val shown = report.after ?: report.before
+                    if (shown != null) {
+                        dtcReport = shown
+                        dtcCodes = shown.codes.map { TroubleCodeResult(it.category, it.code) }
+                        dtcScanned = shown.hasAnyAnswer
+                    }
+                    dtcStatus = report.headline()
+                } catch (e: Exception) {
+                    dtcStatus = "Clear failed: " + (e.message ?: "communication error")
+                    if (socket?.isConnected != true) sessionLog.append("EVT", "clear codes lost the adapter; connection recovery takes over")
+                } finally { clearingCodes = false }
             }
         }
 
@@ -780,11 +804,25 @@ class MainActivity : ComponentActivity() {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                         Text("ENGINE ECU • OBD-II", color = cyan, style = MaterialTheme.typography.titleMedium)
-                                        Text("Read-only standard diagnostic modes: stored (03), pending (07), permanent (0A). Not a full vehicle scan.", color = muted)
-                                        Button(onClick = { scanFaultCodes() }, enabled = connected && !scanningCodes) {
-                                            Text(if (scanningCodes) "SCANNING…" else "SCAN ENGINE ECU")
+                                        Text("Stored (03), pending (07) and permanent (0A). Clear sends Mode 04 to this engine ECU only, after the current codes are saved. Not a full vehicle scan.", color = muted)
+                                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                            Button(onClick = { scanFaultCodes() }, enabled = connected && !scanningCodes && !clearingCodes) {
+                                                Text(if (scanningCodes) "SCANNING…" else "SCAN ENGINE ECU")
+                                            }
+                                            OutlinedButton(onClick = { confirmClear = true }, enabled = connected && !scanningCodes && !clearingCodes) {
+                                                Text(if (clearingCodes) "CLEARING…" else "CLEAR ENGINE CODES")
+                                            }
                                         }
-                                        if (scanningCodes) LinearProgressIndicator(Modifier.fillMaxWidth(), color = cyan)
+                                        if (confirmClear) {
+                                            AlertDialog(
+                                                onDismissRequest = { if (!clearingCodes) confirmClear = false },
+                                                title = { Text("Clear engine codes?") },
+                                                text = { Text("This sends SAE Mode 04 to the engine ECU only. Stored OBD codes and the freeze frame on that ECU are erased. ABS, airbag and body modules are not cleared. Stop the car with the ignition on. The codes are read and kept on this screen first.") },
+                                                confirmButton = { Button(onClick = { confirmClear = false; clearFaultCodes() }) { Text("CLEAR") } },
+                                                dismissButton = { OutlinedButton(onClick = { confirmClear = false }) { Text("CANCEL") } }
+                                            )
+                                        }
+                                        if (scanningCodes || clearingCodes) LinearProgressIndicator(Modifier.fillMaxWidth(), color = cyan)
                                         Text(dtcStatus, color = muted)
                                         dtcReport?.let { rep ->
                                             Text(DtcScanReport.SCOPE, color = muted, fontSize = 12.sp)
@@ -792,6 +830,21 @@ class MainActivity : ComponentActivity() {
                                             rep.modes.forEach { m ->
                                                 Text(DtcScanText.modeLine(m), color = if (m.status.answered && m.status != DtcModeStatus.PARTIAL) Color.White else Color(0xFFFFB84D), fontSize = 13.sp)
                                             }
+                                        }
+                                    }
+                                }
+                            }
+                            item {
+                                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
+                                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text("WORKSHOP FUNCTIONS", color = cyan, style = MaterialTheme.typography.titleMedium)
+                                        Text(AssumedEcu.SUMMARY, color = muted, fontSize = 13.sp)
+                                        AssumedEcu.functions.forEach { fn ->
+                                            Text(
+                                                (if (fn.sent) "READY" else "HELD") + "  " + fn.group + "  •  " + fn.name + " — " + fn.note,
+                                                color = if (fn.sent) Color.White else Color(0xFFFFB84D),
+                                                fontSize = 13.sp
+                                            )
                                         }
                                     }
                                 }

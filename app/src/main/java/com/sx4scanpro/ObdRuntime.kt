@@ -618,6 +618,33 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
         return DtcScanReport(System.currentTimeMillis(), protocolText, modes)
     }
 
+    /**
+     * Reads the engine codes, sends Mode 04 once, then reads them again. Refuses while speed is above
+     * [ClearCodes.MAX_SPEED_KMH]. Does not retry the clear and does not send any other service.
+     */
+    @Synchronized
+    fun clearEngineCodes(speedKmh: Double?): ClearReport {
+        if (ClearCodes.moving(speedKmh)) return ClearReport.notSent("Not cleared. Vehicle speed is above ${ClearCodes.MAX_SPEED_KMH.toInt()} km/h. Stop the car first.")
+        if (socket?.isConnected != true) return ClearReport.notSent("Not connected. Nothing was sent.")
+        val before = try {
+            readTroubleCodes()
+        } catch (e: Exception) {
+            return ClearReport.notSent("Could not read the codes before clearing, so nothing was sent. " + (e.message ?: "communication error"))
+        }
+        if (socket?.isConnected != true) return ClearReport.notSent("The link dropped while reading codes. Nothing was cleared.", before)
+        val raw = try {
+            WorkshopPermit.open(ClearCodes.COMMAND) { sendCommand(ClearCodes.COMMAND, 10000, keepLines = true) }
+        } catch (e: Exception) {
+            return ClearReport(before, null, ClearOutcome.TRANSPORT, e.message ?: "the clear was not acknowledged", "")
+        }
+        val outcome = ClearCodes.classify(raw)
+        val after = if (socket?.isConnected == true) {
+            try { readTroubleCodes() } catch (_: Exception) { null }
+        } else null
+        sessionLog.append("EVT", "clear codes: ${outcome.name} raw=${raw.replace("\n", " ")}")
+        return ClearReport(before, after, outcome, "", raw)
+    }
+
     fun tripDir() = java.io.File(filesDir, "trips").apply { mkdirs() }
 
     fun openTripWriter(file: java.io.File) {
