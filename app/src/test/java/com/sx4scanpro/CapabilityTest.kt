@@ -13,7 +13,7 @@ class CapabilityTest {
         assertEquals(listOf("Boost pressure"), r.incomplete.filter { it == "Boost pressure" })
     }
     @Test fun incompleteBitsAreReadPerMonitor() {
-        val r = ReadinessDecoder.decode("4101000700000000".replace("0700", "0710"))!!   // spark, misfire supported (b bit0) and incomplete (bit4)
+        val r = ReadinessDecoder.decode("41 01 00 17 00 00")!!   // spark; B=0x17: misfire/fuel/components supported, misfire bit4 = incomplete
         assertFalse(r.monitors.first { it.name == "Misfire" }.complete)
     }
     @Test fun malformedReadinessIsNull() {
