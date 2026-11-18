@@ -292,6 +292,7 @@ class MainActivity : ComponentActivity() {
     private fun sendCommand(command: String, timeoutMs: Long = 5000, keepLines: Boolean = false, timedOut: TimeoutFlag? = null): String = rt.sendCommand(command, timeoutMs, keepLines, timedOut)
     internal fun requestDiscovery(reason: String = "manual"): DiscoveryOutcome = rt.requestDiscovery(reason)
     private fun readTroubleCodes(): DtcScanReport = rt.readTroubleCodes()
+    private fun clearEngineDtcs(ownerConfirmed: Boolean): ClearResult = rt.clearEngineDtcs(ownerConfirmed)
     private fun readFreezeFrameBlocking(): FreezeFrameResult = rt.readFreezeFrameBlocking()
     private fun runEcuScan(scope: kotlinx.coroutines.CoroutineScope) = rt.runEcuScan(scope)
     private fun startTrip(forceNew: Boolean = false) = rt.startTrip(forceNew)
@@ -488,6 +489,32 @@ class MainActivity : ComponentActivity() {
         var warningMessage by rt::warningMessage
         val scope = rememberCoroutineScope()
         var exportChoice by remember { mutableStateOf(false) }
+        var clearConfirm by remember { mutableStateOf(false) }
+        var clearing by remember { mutableStateOf(false) }
+        fun clearFaultCodes() {
+            scope.launch {
+                clearing = true
+                dtcStatus = "Saving the codes, then clearing them on the engine ECU…"
+                try {
+                    val result = withContext(Dispatchers.IO) { clearEngineDtcs(true) }
+                    result.after?.let { rep -> dtcReport = rep; dtcCodes = rep.codes.map { TroubleCodeResult(it.category, it.code) }; dtcScanned = rep.hasAnyAnswer }
+                    dtcStatus = result.message()
+                } catch (e: Exception) {
+                    dtcStatus = "Clearing failed: " + (e.message ?: "communication error")
+                } finally { clearing = false }
+            }
+        }
+        if (clearConfirm) {
+            AlertDialog(
+                onDismissRequest = { clearConfirm = false },
+                title = { Text("Clear fault codes?") },
+                text = {
+                    Text("This erases the stored fault codes, the freeze frame and the emissions monitor results on the engine ECU only. Switch the engine OFF with the key ON first. The codes are saved on this tablet before anything is cleared. A fault that is still present will set its code again, and the emissions monitors need a drive cycle to complete again.")
+                },
+                confirmButton = { Button(onClick = { clearConfirm = false; clearFaultCodes() }) { Text("CLEAR CODES") } },
+                dismissButton = { OutlinedButton(onClick = { clearConfirm = false }) { Text("CANCEL") } }
+            )
+        }
         if (exportChoice) {
             AlertDialog(
                 onDismissRequest = { exportChoice = false },
@@ -780,11 +807,14 @@ class MainActivity : ComponentActivity() {
                                 Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = panel)) {
                                     Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                         Text("ENGINE ECU • OBD-II", color = cyan, style = MaterialTheme.typography.titleMedium)
-                                        Text("Read-only standard diagnostic modes: stored (03), pending (07), permanent (0A). Not a full vehicle scan.", color = muted)
+                                        Text("Standard diagnostic modes: read stored (03), pending (07), permanent (0A); clear codes (04) after confirmation. Engine ECU only, not a full vehicle scan.", color = muted)
                                         Button(onClick = { scanFaultCodes() }, enabled = connected && !scanningCodes) {
                                             Text(if (scanningCodes) "SCANNING…" else "SCAN ENGINE ECU")
                                         }
-                                        if (scanningCodes) LinearProgressIndicator(Modifier.fillMaxWidth(), color = cyan)
+                                        OutlinedButton(onClick = { clearConfirm = true }, enabled = connected && !scanningCodes && !clearing) {
+                                            Text(if (clearing) "CLEARING…" else "CLEAR CODES")
+                                        }
+                                        if (scanningCodes || clearing) LinearProgressIndicator(Modifier.fillMaxWidth(), color = cyan)
                                         Text(dtcStatus, color = muted)
                                         dtcReport?.let { rep ->
                                             Text(DtcScanReport.SCOPE, color = muted, fontSize = 12.sp)

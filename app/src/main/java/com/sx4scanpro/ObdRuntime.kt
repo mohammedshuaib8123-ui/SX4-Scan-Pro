@@ -274,9 +274,11 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
     }
 
     @Synchronized
-    fun sendCommand(command: String, timeoutMs: Long = 5000, keepLines: Boolean = false, timedOut: TimeoutFlag? = null): String {
-        // Single policy gate for every command: anything not on the read-only allowlist never reaches the adapter.
-        ReadOnlyGuard.check(command).let { v ->
+    fun sendCommand(command: String, timeoutMs: Long = 5000, keepLines: Boolean = false, timedOut: TimeoutFlag? = null, change: ChangeAuthorization? = null): String {
+        // Single policy gate for every command: anything not on the read-only allowlist never reaches the adapter, except the one
+        // action a valid, unused ChangeAuthorization names (see ChangeTier.kt).
+        ReadOnlyGuard.check(command).let { first ->
+            val v = if (first is GuardVerdict.Blocked && change != null) ChangeGuard.check(command, change, System.currentTimeMillis()) else first
             if (v is GuardVerdict.Blocked) {
                 logTraffic("BLOCKED", "$command: ${v.reason}")
                 recordExchange(command, "", RawExchange.STATUS_BLOCKED, System.currentTimeMillis(), v.reason)
@@ -620,6 +622,37 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
             modes += DtcScanClassifier.classify(mode, category, raw, framing)
         }
         return DtcScanReport(System.currentTimeMillis(), protocolText, modes)
+    }
+
+    /**
+     * Clears the engine ECU's stored fault codes (service 04) after every safety check. Order: read engine speed, save the codes and freeze
+     * frame as they are now, check the preconditions and the owner's confirmation, send the one authorised command, then read the codes
+     * back. The saved snapshot stays on the tablet. Blocking: call from a background thread.
+     */
+    @Synchronized
+    fun clearEngineDtcs(ownerConfirmed: Boolean): ClearResult {
+        val rpm = runCatching { sendCommand("010C", 5000) }.getOrNull()?.let { ObdPidResponseDecoder.decode("010C", it)?.toDoubleOrNull() }
+        val before = readTroubleCodes()
+        val frozen = runCatching { readFreezeFrameBlocking().headline() }.getOrNull()
+        val now = System.currentTimeMillis()
+        val saved = runCatching {
+            val dir = java.io.File(filesDir, "clear_snapshots").apply { mkdirs() }
+            java.io.File(dir, "before_clear_$now.txt").writeText(ClearSnapshot.text(now, before, frozen)); true
+        }.getOrDefault(false)
+        val decision = ClearDtcPolicy.decide(ClearPreconditions(linkState == LinkState.COMMUNICATING, rpm, saved, ownerConfirmed), now)
+        if (decision is ClearDecision.Refused) {
+            sessionLog.append("EVT", "clear codes refused: " + decision.reason)
+            return ClearResult(ClearOutcome.REFUSED_BY_APP, "", decision.reason, before, null)
+        }
+        val auth = (decision as ClearDecision.Authorized).auth
+        val raw = try { sendCommand("04", 10000, change = auth) } catch (e: Exception) {
+            sessionLog.append("EVT", "clear codes failed: " + (e.message ?: e.javaClass.simpleName))
+            return ClearResult(ClearOutcome.NO_ANSWER, "", e.message ?: "communication error", before, null)
+        }
+        val (outcome, detail) = ClearReplyClassifier.classify(raw)
+        sessionLog.append("EVT", "clear codes: outcome=$outcome reply=$raw")
+        val after = if (outcome == ClearOutcome.CLEARED) runCatching { readTroubleCodes() }.getOrNull() else null
+        return ClearResult(outcome, raw, detail, before, after)
     }
 
     fun tripDir() = java.io.File(filesDir, "trips").apply { mkdirs() }
