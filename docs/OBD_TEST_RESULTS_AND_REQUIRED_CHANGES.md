@@ -1,5 +1,7 @@
 # SX4 Scan Pro — OBD Test Results & Required Changes
 
+> **Correction (2026-11-18):** the CAN addresses and module names in this document's sample code and screens (engine 0x7E0/0x7E8 "MJD 6F3.S3", ABS 0x720/0x728 "ISO 14230 CAN", and the Marelli / Bosch part names) are **invented**. The real capture (`docs/REAL_CAR_SESSION_2026-11-15.md`) shows ISO 14230-4 KWP fast-init on K-line with the engine ECU at address 0x11. Do not use those addresses or names anywhere. The app code does not use them.
+
 **Document status:** Investigation and implementation brief — approval required before coding  
 **Test date:** 4 November 2026  
 **Vehicle:** 2012 Maruti Suzuki SX4 ZDi, 1.3 DDiS, manual  
