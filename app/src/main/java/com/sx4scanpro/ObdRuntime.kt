@@ -539,7 +539,7 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
     /** Runs the read-only identity scan and stores the profile (latest + previous). Blocking: call from a background thread. */
     fun performEcuScan(): EcuProfile {
         val facts = AdapterFacts(adapterNameForScan, adapterIdText, adapterVoltageText, protocolText)
-        val profile = EcuScan.run(elmPort, facts, supportedPids, "v0.8.0 build 26", System.currentTimeMillis()) { sessionLog.append("EVT", "ecu scan: $it") }
+        val profile = EcuScan.run(elmPort, facts, supportedPids, BuildInfo.LABEL, System.currentTimeMillis()) { sessionLog.append("EVT", "ecu scan: $it") }
         val dir = ecuDir()
         val latest = java.io.File(dir, "profile_latest.json")
         if (latest.exists()) latest.copyTo(java.io.File(dir, "profile_previous.json"), overwrite = true)
@@ -615,7 +615,15 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
             // failed or empty answer can never be shown as "no codes".
             modes += DtcScanClassifier.classify(mode, category, raw, framing)
         }
-        return DtcScanReport(System.currentTimeMillis(), protocolText, modes)
+        // Lamp and readiness: one read-only Mode 01 PID 01 request, only when the ECU advertised it. Part of the same transaction.
+        val monitor = when {
+            linkGone -> MonitorStatus.failure("link lost earlier in this scan")
+            supportedPids.isEmpty() -> MonitorStatus.notAttempted("the ECU's PID support list was not read")
+            0x01 !in supportedPids -> MonitorStatus.notAttempted("PID 01 is not advertised by the ECU")
+            else -> try { MonitorStatus.parse(sendCommand("0101", 10000, keepLines = true)) }
+                catch (e: IOException) { MonitorStatus.failure(e.message ?: "communication error") }
+        }
+        return DtcScanReport(System.currentTimeMillis(), protocolText, modes, monitor)
     }
 
     fun tripDir() = java.io.File(filesDir, "trips").apply { mkdirs() }

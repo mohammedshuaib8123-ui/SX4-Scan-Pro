@@ -44,7 +44,9 @@ internal data class DtcModeScan(
 internal data class DtcScanReport(
     val capturedAtMs: Long,
     val protocol: String,
-    val modes: List<DtcModeScan>
+    val modes: List<DtcModeScan>,
+    /** One-off Mode 01 PID 01 read taken with the scan (null = not part of this scan). */
+    val monitor: MonitorStatus? = null
 ) {
     /** Every code the ECU returned, per service, in service order, without duplicates inside a service. */
     val codes: List<ReportedDtc> get() = modes.flatMap { m -> m.codes.distinct().map { ReportedDtc(m.category, it) } }

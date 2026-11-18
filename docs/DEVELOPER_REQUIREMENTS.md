@@ -1533,3 +1533,12 @@ Verified by automated tests and CI only; nothing below is validated on the targe
 - **Not implemented, blocked by evidence (not hidden as an ECU limit):** Suzuki-specific ECU identifiers and enhanced PIDs (no sourced KWP/UDS identifiers in the repo; `ExtendedAllowlist` holds no invented entries), advanced diesel parameters beyond Mode 01 (target rail pressure, target boost and DPF data have not been seen advertised in the sessions available; one or two scans do not prove the ECU lacks them), and multi-module discovery (no verified addresses; `ModuleCatalog` lists them as unverified).
 - **Not yet done:** cross-session history/trends (warm-up trend, boost response, cranking behaviour need a time-series rule set over the exported session), and the Advanced Live Data and Diagnostic History UI pass.
 - **Needs the Realme Pad 2 / SX4:** all `ValidationPlan` checks and validation of every heuristic above.
+
+### 26.21 Lamp and readiness (Mode 01 PID 01) in the full diagnosis report (branch `claude/v1-readiness-status`)
+
+- **Implemented (read-only):** `readTroubleCodes` now also sends one `0101` after the three DTC services, only when the ECU advertised PID 01 (otherwise "not read" with the reason). `MonitorStatus.parse` decodes only a single exact verbatim `4101` reply: lamp (MIL) state, the ECU's emission-code count, the three continuous monitors, and for the compression-ignition (diesel) layout the other monitors by name. No reply, NO DATA, `7F 01`, malformed, truncated, or two differing replies each keep their own status and produce no lamp or monitor value. A spark-ignition layout is not decoded; its raw bytes are shown.
+- **Report:** a "Lamp and readiness" block in the full report's fault-code section (`HealthReport.dtcSection`, `MonitorStatusText`). "Test complete" is worded as the ECU having finished that self-test since codes were last cleared, not as a pass. A difference between the PID 01 count and the number of codes from service 03 is shown, not resolved. No UI change; the data also sits in the capture ZIP as the raw exchange.
+- **Also fixed:** `performEcuScan` stamped profiles "v0.8.0 build 26"; it now uses `BuildInfo.LABEL`.
+- **Source and limits:** layout follows SAE J1979 / ISO 15031-5 (standard, not Suzuki-specific); the diesel monitor bit names were written from the standard and are NOT yet checked against the specification text or a real reply from this ECU. Nothing was run on the car.
+- **Tests:** `MonitorStatusTest` (9); 681 JVM tests pass locally (Android-dependent files excluded; CI compiles everything).
+

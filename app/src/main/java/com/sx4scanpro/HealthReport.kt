@@ -95,6 +95,8 @@ internal object HealthReport {
         add("  Scanned: ${time(scan.capturedAtMs)}" + if (scan.protocol.isNotBlank()) "   Protocol: ${scan.protocol}" else "")
         add("  Scope: ${DtcScanReport.SCOPE}")
         add("  Result: ${scan.headline()}")
+        add("  Lamp and readiness:")
+        MonitorStatusText.lines(scan.monitor, scan.mode("03")?.takeIf { it.status.answered }?.codes?.distinct()?.size).forEach { add("    $it") }
         add("  Services:")
         scan.modes.forEach { add("    " + DtcScanText.modeLine(it)) }
         add("  Codes reported by the ECU:")
