@@ -423,6 +423,8 @@ Do not copy V2 source into the original repository merely to make this document 
 
 ## 11. V2 diagnostic-explorer source snapshots — reference only
 
+> **WARNING (added 2026-11-18, invalid sample data).** The snapshots below come from the V2 prototype and contain addresses and names that are NOT facts about this car: the engine ECU on CAN IDs 0x7E0 / 0x7E8 labelled "MJD 6F3.S3 CAN", and an ABS "Bosch ABS 8.0" on 0x720 / 0x728 labelled "ISO 14230 CAN". The real-car capture (`docs/REAL_CAR_SESSION_2026-11-15.md`) shows ISO 14230-4 KWP fast-init on the K-line with the engine ECU answering from 0x11, and "ISO 14230 CAN" is a contradiction in terms (ISO 14230 is K-line, CAN is ISO 15765). The ECU label read by the owner on 2026-11-18 says "MJD 6S3.S1", not "6F3.S3". No module other than the engine ECU is known to be fitted or reachable. Do not copy these headers, names or labels into V1.
+
 The following six Kotlin source files are reproduced from the code supplied in this conversation. They belong to the separate V2 diagnostic-explorer workstream. They are preserved for review, not as proof that this implementation exists in or has been validated in the original SX4 Scan Pro app.
 
 **Important:** The VIN in the sample profile/mock data is a dummy example, not the user's vehicle VIN. The mock engine returns simulated data. Hard-coded ECU identities, addresses, DTCs, telemetry values and module statuses are examples only until verified against actual raw vehicle responses. The source comments' use of “verified” is not proof of validation.

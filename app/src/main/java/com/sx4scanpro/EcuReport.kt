@@ -75,6 +75,7 @@ internal object EcuReport {
             add("Scanned: $ts   App: ${p.appVersion}")
             add("")
             addAll(identityLines(p))
+            add(""); addAll(OwnerEcuLabel.lines())
             if (diff != null) { add(""); add("Compared with previous scan:"); diffText(diff).forEach { add("  $it") } }
             add("")
             add("Read-only scan. Values are exactly what the ECU reported; missing items were not offered or not answered.")
