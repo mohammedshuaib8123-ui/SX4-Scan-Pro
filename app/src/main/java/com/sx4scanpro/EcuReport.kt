@@ -68,7 +68,7 @@ internal object EcuReport {
     }
 
     /** Plain-text lines used for the PDF. Every value comes from the profile; absent values say why. */
-    fun lines(p: EcuProfile, diff: ProfileDiff?): List<String> {
+    fun lines(p: EcuProfile, diff: ProfileDiff?, capability: CapabilitySnapshot? = null): List<String> {
         val ts = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date(p.capturedAtMs))
         return buildList {
             add("SX4 Scan Pro - ECU information")
@@ -76,9 +76,10 @@ internal object EcuReport {
             add("")
             addAll(identityLines(p))
             add(""); addAll(OwnerEcuLabel.lines())
+            add(""); addAll(CapabilityInventory.lines(p, capability))
             if (diff != null) { add(""); add("Compared with previous scan:"); diffText(diff).forEach { add("  $it") } }
             add("")
-            add("Read-only scan. Values are exactly what the ECU reported; missing items were not offered or not answered.")
+            add("Values are exactly what the ECU reported; missing items were not offered or not answered. This report only reads; the app's one change action (clearing codes) is separate and logged.")
         }
     }
 }

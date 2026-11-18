@@ -1392,7 +1392,7 @@ class MainActivity : ComponentActivity() {
                 "csv" -> { file.writeText(p.toCsv()); mime = "text/csv" }
                 else -> {
                     val diff = ecuPrevious?.let { ProfileDiff.compare(it, p) }
-                    val lines = EcuReport.lines(p, diff).flatMap { it.chunked(88) }
+                    val lines = EcuReport.lines(p, diff, rt.capability).flatMap { it.chunked(88) }
                     val doc = android.graphics.pdf.PdfDocument()
                     val paint = android.graphics.Paint().apply { textSize = 10f; typeface = android.graphics.Typeface.MONOSPACE }
                     var pageNo = 1

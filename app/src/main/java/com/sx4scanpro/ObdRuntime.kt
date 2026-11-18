@@ -552,8 +552,21 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
         latest.writeText(profile.toJson())
         ecuPrevious = ecuProfile
         ecuProfile = profile
+        runCatching { readCapabilityProbe() }.onFailure { sessionLog.append("EVT", "capability probe failed: " + (it.message ?: it.javaClass.simpleName)) }
         sessionLog.append("EVT", "ecu scan done: vin=" + profile.vin.status + " cal=" + profile.calIds.status + " cvn=" + profile.cvns.status)
         return profile
+    }
+
+    /** Latest readiness (01 01) and Mode 06 probe (06 00) of this app run. Both are plain reads. */
+    @Volatile var capability: CapabilitySnapshot? = null
+
+    fun readCapabilityProbe(): CapabilitySnapshot {
+        val rRaw = sendCommand("0101", 6000)
+        val mRaw = sendCommand("0600", 6000)
+        val snap = CapabilitySnapshot(System.currentTimeMillis(), ReadinessDecoder.decode(rRaw), rRaw, Mode06Probe.classify(mRaw))
+        capability = snap
+        sessionLog.append("EVT", "capability: readiness raw=" + rRaw.replace("\n", " ") + " | mode06 " + snap.mode06.outcome + " raw=" + mRaw.replace("\n", " "))
+        return snap
     }
 
     /** Once per fresh connection, when there is no saved profile or it is more than a day old (see [EcuScanPolicy]). Never decides whether the connection succeeds. */
