@@ -228,6 +228,10 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
         adapterNameForScan = chosen.name
         adapterIdText = runCatching { sendCommand("ATI", 3000) }.getOrDefault("")
         adapterVoltageText = runCatching { sendCommand("ATRV", 3000) }.getOrDefault("")
+        // Adapter self-description for the session log only (helps tell a genuine ELM327 from a clone). Read-only AT queries; a failure here never blocks connecting.
+        sessionLog.append("EVT", "adapter ATI=" + adapterIdText)
+        sessionLog.append("EVT", "adapter AT@1=" + runCatching { sendCommand("AT@1", 3000) }.getOrElse { "failed: " + (it.message ?: it.javaClass.simpleName) })
+        sessionLog.append("EVT", "adapter AT@2=" + runCatching { sendCommand("AT@2", 3000) }.getOrElse { "failed: " + (it.message ?: it.javaClass.simpleName) })
         connection.ecuInitializing()
         // "Connected" must mean the ECU answered, not just that the adapter did.
         val negotiation = EcuNegotiation { command, timeoutMs -> sendCommand(command, timeoutMs) }
@@ -539,7 +543,7 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
     /** Runs the read-only identity scan and stores the profile (latest + previous). Blocking: call from a background thread. */
     fun performEcuScan(): EcuProfile {
         val facts = AdapterFacts(adapterNameForScan, adapterIdText, adapterVoltageText, protocolText)
-        val profile = EcuScan.run(elmPort, facts, supportedPids, "v0.8.0 build 26", System.currentTimeMillis()) { sessionLog.append("EVT", "ecu scan: $it") }
+        val profile = EcuScan.run(elmPort, facts, supportedPids, BuildInfo.LABEL, System.currentTimeMillis()) { sessionLog.append("EVT", "ecu scan: $it") }
         val dir = ecuDir()
         val latest = java.io.File(dir, "profile_latest.json")
         if (latest.exists()) latest.copyTo(java.io.File(dir, "profile_previous.json"), overwrite = true)

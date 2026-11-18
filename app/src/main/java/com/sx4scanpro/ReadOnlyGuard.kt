@@ -42,7 +42,7 @@ internal object ReadOnlyGuard {
 
     private val hex2 = "[0-9A-F]{2}"
     private val allowedAt = listOf(
-        "ATZ", "ATWS", "ATE[01]", "ATL[01]", "ATS[01]", "ATH[01]", "ATAT[012]", "ATSP[0-9A-C]", "ATPC", "ATI", "AT@1", "ATRV",
+        "ATZ", "ATWS", "ATE[01]", "ATL[01]", "ATS[01]", "ATH[01]", "ATAT[012]", "ATSP[0-9A-C]", "ATPC", "ATI", "AT@1", "AT@2", "ATRV",
         "ATDP", "ATDPN", "ATIGN", "ATST$hex2", "ATSH[0-9A-F]{3}", "ATSH[0-9A-F]{6}", "ATSH[0-9A-F]{8}", "ATCRA[0-9A-F]{0,8}",
         "ATCF[0-9A-F]{3,8}", "ATCM[0-9A-F]{3,8}", "ATCAF[01]", "ATAL", "ATNL", "ATMA", "ATMR$hex2"
     ).map { Regex("^$it$") }

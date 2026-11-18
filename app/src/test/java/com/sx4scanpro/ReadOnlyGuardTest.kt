@@ -12,7 +12,7 @@ class ReadOnlyGuardTest {
         ok("ATZ")
         for (p in ObdProtocol.values()) for (t in listOf(null, 1, 0x20, 255))
             ConnectionConfig(protocol = p, timeoutByte = t).initCommands().forEach { ok(it) }
-        listOf("ATI", "ATRV", "ATDP", "ATPC", "ATSP0", "ATSP3", "ATSP4", "ATSP5", "ATSP6", "ATSPA", "ATSP9", "0100", "0120", "0140", "0133").forEach { ok(it) }
+        listOf("ATI", "AT@1", "AT@2", "ATRV", "ATDP", "ATPC", "ATSP0", "ATSP3", "ATSP4", "ATSP5", "ATSP6", "ATSPA", "ATSP9", "0100", "0120", "0140", "0133").forEach { ok(it) }
         PidCatalog.all.forEach { ok(it.command) }
         PidCatalog.all.forEach { ok(FreezeFrame.command(it.pid)) }
         listOf("03", "07", "0A", "0900", "0902", "0904", "0906", "090A").forEach { ok(it) }
