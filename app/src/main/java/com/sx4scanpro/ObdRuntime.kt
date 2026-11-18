@@ -149,6 +149,8 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
     var tripNote by mutableStateOf("")
 
     var socket: BluetoothSocket? = null
+    /** Sourced read-only extended requests (KWP 1A, UDS 22) the gate may let through. Empty: no entry exists until a source is supplied. */
+    @Volatile var extendedAllowlist: ExtendedAllowlist = ExtendedAllowlist.EMPTY
     var supportedPids: Set<Int> = emptySet()
     @Volatile var protocolText: String = ""
     var ecuProfile by mutableStateOf<EcuProfile?>(null)
@@ -272,7 +274,7 @@ internal class ObdRuntime private constructor(app: Context) : ContextWrapper(app
     @Synchronized
     fun sendCommand(command: String, timeoutMs: Long = 5000, keepLines: Boolean = false, timedOut: TimeoutFlag? = null): String {
         // Single policy gate for every command: anything not on the read-only allowlist never reaches the adapter.
-        ReadOnlyGuard.check(command).let { v ->
+        ReadOnlyGuard.check(command, extendedAllowlist).let { v ->
             if (v is GuardVerdict.Blocked) {
                 logTraffic("BLOCKED", "$command: ${v.reason}")
                 recordExchange(command, "", RawExchange.STATUS_BLOCKED, System.currentTimeMillis(), v.reason)

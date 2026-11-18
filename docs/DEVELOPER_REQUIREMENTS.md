@@ -1533,3 +1533,11 @@ Verified by automated tests and CI only; nothing below is validated on the targe
 - **Not implemented, blocked by evidence (not hidden as an ECU limit):** Suzuki-specific ECU identifiers and enhanced PIDs (no sourced KWP/UDS identifiers in the repo; `ExtendedAllowlist` holds no invented entries), advanced diesel parameters beyond Mode 01 (target rail pressure, target boost and DPF data have not been seen advertised in the sessions available; one or two scans do not prove the ECU lacks them), and multi-module discovery (no verified addresses; `ModuleCatalog` lists them as unverified).
 - **Not yet done:** cross-session history/trends (warm-up trend, boost response, cranking behaviour need a time-series rule set over the exported session), and the Advanced Live Data and Diagnostic History UI pass.
 - **Needs the Realme Pad 2 / SX4:** all `ValidationPlan` checks and validation of every heuristic above.
+
+### 26.20 ECU identification gate (branch `claude/v1-ecu-identification-gate`)
+
+- **Approved plan (2026-11-18):** identification, a separate Mode 04 tier for the engine ECU only, KWP 18/13 after proof, module discovery from supplied addresses only, and a professional ECU report. `ReadOnlyGuard` is not weakened.
+- **Done in this chunk:** `ObdRuntime.extendedAllowlist` (empty by default) is now passed to `ReadOnlyGuard.check` in `sendCommand`, so a sourced `1A xx` / `22 xxxx` entry can pass the single gate. No entry exists, so behaviour is unchanged: every extended request is still refused. `ReadOnlyGuard.kt` is unchanged. A correction note marks the invented CAN addresses in `docs/OBD_TEST_RESULTS_AND_REQUIRED_CHANGES.md`.
+- **Already present, not yet proven on the car:** Mode 09 scan (`EcuScan`) once per connection (`autoEcuScanAtConnect`).
+- **Pending:** KWP `1A` requests (blocked: no cited source for any option byte), Mode 04 tier and snapshot, KWP 18/13, module addressing, readiness (PID 01), real-car validation of each.
+
