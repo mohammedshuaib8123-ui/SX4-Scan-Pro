@@ -26,4 +26,22 @@ class RealCaptureReplayTest {
         assertNull(ReadinessDecoder.decode("7F0111"))
         assertEquals(Mode06Outcome.NOT_SUPPORTED, Mode06Probe.classify("7F0611").outcome)
     }
+
+    // ---- 2026-11-18 engine-idle capture ----
+    @Test fun theRealReadinessReplyDecodes() {
+        val r = ReadinessDecoder.decode("410100068000")!!
+        assertFalse(r.milOn); assertEquals(0, r.storedDtcCount)
+        assertEquals(listOf("Fuel system", "Comprehensive components", "EGR / VVT"), r.monitors.map { it.name })
+        assertTrue(r.incomplete.isEmpty())
+    }
+
+    @Test fun theRealModeSixReplyIsRecordedAsOffered() {
+        val p = Mode06Probe.classify("4600FF00000001")
+        assertEquals(Mode06Outcome.SUPPORTED, p.outcome); assertEquals((1..8).toSet(), p.ids)
+    }
+
+    @Test fun theRealMode01BitmapsDecodeToTheNineteenAdvertisedPids() {
+        val s = ObdPidSupport.decode("4100983B0011 4120A0102001 4140C0C00000")
+        assertEquals(setOf(0x01, 0x04, 0x05, 0x0B, 0x0C, 0x0D, 0x0F, 0x10, 0x1C, 0x20, 0x21, 0x23, 0x2C, 0x33, 0x40, 0x41, 0x42, 0x49, 0x4A), s.filter { it !in setOf(0x60) }.toSet())
+    }
 }

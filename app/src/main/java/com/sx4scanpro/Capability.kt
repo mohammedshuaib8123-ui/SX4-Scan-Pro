@@ -67,7 +67,7 @@ internal object CapabilityInventory {
         val r = snap.readiness
         if (r == null) add("  Readiness (PID 01): not read or reply unreadable (raw: ${snap.readinessRaw.ifBlank { "none" }})")
         else {
-            add("  Warning lamp: " + (if (r.milOn) "ON" else "off") + "   Stored codes counted by the ECU: ${r.storedDtcCount}   Engine type flag: " + (if (r.compressionIgnition) "compression ignition (diesel)" else "spark ignition"))
+            add("  Warning lamp: " + (if (r.milOn) "ON" else "off") + "   Stored codes counted by the ECU: ${r.storedDtcCount}   Ignition-type bit as the ECU sets it: " + (if (r.compressionIgnition) "compression" else "spark") + "   Raw: ${r.raw}")
             if (r.monitors.isEmpty()) add("  Monitors: none reported as supported")
             else r.monitors.forEach { add("    " + it.name + ": " + (if (it.complete) "complete" else "not complete")) }
         }

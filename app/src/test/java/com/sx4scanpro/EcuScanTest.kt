@@ -38,6 +38,15 @@ class EcuScanTest {
         assertEquals(listOf(0x0C), p.mode01Supported)
     }
 
+    @Test fun theRealFiveByteSupportReplyDoesNotStopTheItemRequests() {
+        val port = FakeScanPort(mapOf("0900" to "49000130000000", "0902" to vin, "0904" to cal))
+        val p = run(port)
+        assertEquals(ScanStatus.MALFORMED, p.mode09Supported.status)
+        assertEquals(listOf("0900", "0902", "0904", "0906", "090A"), port.sent)
+        assertEquals(listOf("MA3EYB81S00123456"), p.vin.items)
+        assertTrue(p.notes.any { it.contains("directly") })
+    }
+
     @Test fun onlyReadOnlyMode09RequestsAreSent() {
         val port = FakeScanPort(mapOf("0900" to allAdvertised, "0902" to vin))
         run(port)

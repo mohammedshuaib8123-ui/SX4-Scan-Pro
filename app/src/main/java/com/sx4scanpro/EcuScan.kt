@@ -24,9 +24,15 @@ internal object EcuScan {
         val notes = mutableListOf<String>()
         if (framing == Framing.UNKNOWN) notes += "Protocol was not reported by the adapter, so multi-frame replies were decoded with K-line rules only."
         val advertised: Set<Int>? = if (support.status == ScanStatus.READ) support.items.mapNotNull { it.toIntOrNull(16) }.toSet() else null
-        if (advertised == null) notes += "The ECU did not report its Mode 09 support list, so no Mode 09 items were requested."
+        // Real car (2026-11-18): the ECU answered 0900 with five data bytes (49 00 01 30 00 00 00), not four. Whether the first byte is a line
+        // index (as on its other Mode 09 replies) or part of the bitmap cannot be told from one reply, so the list is not trusted either way and the
+        // four standard items are simply asked for; the ECU's own answer to each (data, NO DATA or 7F) is the evidence.
+        val ambiguousList = support.status == ScanStatus.MALFORMED && support.rawHex.filterNot { it.isWhitespace() }.let { it.startsWith("4900") && it.length == 14 }
+        if (advertised == null && ambiguousList) notes += "The ECU's Mode 09 support list had an extra byte and could not be read safely, so each standard item was requested directly."
+        else if (advertised == null) notes += "The ECU did not report its Mode 09 support list, so no Mode 09 items were requested."
         val got = ITEMS.associateWith { pid ->
             when {
+                advertised == null && ambiguousList -> toField(ask(pid))
                 advertised == null -> ProfileField(ScanStatus.NOT_ATTEMPTED, note = "Mode 09 support list unavailable")
                 pid !in advertised -> ProfileField(ScanStatus.NOT_ADVERTISED)
                 else -> toField(ask(pid))
